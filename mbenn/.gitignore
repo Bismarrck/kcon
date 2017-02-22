@@ -1,0 +1,6 @@
+# Ignore the generated files
+saves/*
+events.*
+*.html
+*.hdf5
+
