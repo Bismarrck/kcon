@@ -3,4 +3,5 @@ saves/*
 events.*
 *.html
 *.hdf5
+*.bak
 
