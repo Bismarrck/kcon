@@ -86,7 +86,7 @@ def print_activations(t):
     t: a Tensor.
 
   """
-  dims = ",".join(["%5d" % dim for dim in t.get_shape().as_list()])
+  dims = ",".join(["%7d" % dim for dim in t.get_shape().as_list()])
   print("%-21s : [%s]" % (t.op.name, dims))
 
 
@@ -247,8 +247,8 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
   )
 
 
-def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
-              dense_keep_prob, verbose=True):
+def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dropouts=(),
+              conv_keep_prob=1.0, dense_keep_prob=1.0, verbose=True):
   """
   Return the infered MBE-NN-M-FC deep neural network model:
     1. conv1/tanh
@@ -289,16 +289,18 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
 
   # Construct the convolutional layers.
   conv = mbe_conv2d(input_tensor, ck2, conv_dims[0], "Conv1")
+  num_layers = 1
 
   for i, major_dim in enumerate(conv_dims[1:]):
     k = i + 1
+    num_layers += 1
     nonlinear = tf.nn.tanh if k <= 2 else tf.nn.softplus
     dropout = (k in dropouts)
-    scope = "Conv{}".format(k + 1)
+    scope = "Conv{}".format(num_layers)
     conv = mbe_conv2d(
       conv,
-      conv_dims[k - 1],
-      conv_dims[k],
+      conv_dims[i],
+      conv_dims[i + 1],
       scope,
       activate=nonlinear,
       dropout=dropout,
@@ -311,6 +313,7 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
   dense = tf.contrib.layers.flatten(conv)
   if verbose:
     print_activations(dense)
+  num_layers += 1
 
   # Use the default dense dimensions if it is not provided.
   if dense_dims is None:
@@ -320,10 +323,13 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
 
   # Construct the dense layers
   for i, dim in enumerate(dense_dims):
+    name = "Dense%d" % num_layers
+    num_layers += 1
     dense = tf.layers.dense(
       dense,
       dim,
-      activation=tf.nn.softplus
+      activation=tf.nn.softplus,
+      name=name
     )
     if i + len(conv_dims) in dropouts:
       dense = tf.nn.dropout(dense, keep_prob=dense_keep_prob, seed=SEED)
@@ -331,4 +337,30 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
       print_activations(dense)  
 
   # Return the final estimates
-  return tf.layers.dense(dense, 1, use_bias=False)
+  pred = tf.layers.dense(dense, 1, use_bias=False, name="Output")
+  if verbose:
+    print_activations(pred)
+  return pred
+
+
+if __name__ == "__main__":
+
+  def test_inference():
+    x_batch = tf.placeholder(tf.float32, [50, 1, 715, 6], name="x_batch")
+    keep_prob = tf.placeholder(tf.float32, name="conv_keep_prob")
+    dense_keep_prob = tf.placeholder(tf.float32, name="dense_keep_prob")
+    _ = inference(
+      x_batch,
+      "mbe-nn-m-fc",
+      dropouts=[2],
+      conv_keep_prob=keep_prob,
+      dense_keep_prob=dense_keep_prob,
+      verbose=True
+    )
+    nparams = 0
+    for var in tf.trainable_variables():
+      nparams += np.prod(var.get_shape().as_list(), dtype=int)
+    print("")
+    print("Total number of parameters: %d" % nparams)
+
+  test_inference()
