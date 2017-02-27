@@ -14,22 +14,47 @@ NP_TYPE = np.float32
 CUDA_ON = True
 
 
-def inference(input_tensor, keep_prob, model, **kwargs):
+def inference(input_tensor, model, **kwargs):
   """
 
   Args:
     input_tensor: a Tensor of shape [None, 1, C(N,k), C(k,2)].
-    keep_prob: the dropout keep probility.
     model: a string, the name of this model.
     **kwargs: addtional arguments for this model.
 
   """
   if model.lower() == "mbe-nn-m-6":
-    if "dims" in kwargs:
-      dims = kwargs["dims"]
-    else:
-      dims = None
-    return mbe_nn_m_6(input_tensor, keep_prob, dims=dims)
+
+    dims = kwargs.get("dims")
+    keep_prob = kwargs.get("keep_prob", 1.0)
+    verbose = kwargs.get("verbose", False)
+
+    return mbe_nn_m_6(
+      input_tensor,
+      keep_prob,
+      dims=dims,
+      verbose=verbose
+    )
+
+  elif model.lower() == "mbe-nn-m-fc":
+
+    conv_dims = kwargs.get("conv_dims")
+    dense_dims = kwargs.get("dense_dims")
+    dropouts = kwargs.get("dropouts", [])
+    conv_keep_prob = kwargs.get("conv_keep_prob", 1.0)
+    dense_keep_prob = kwargs.get("dense_keep_prob", 1.0)
+    verbose = kwargs.get("verbose", False)
+
+    return mbe_nn_fc(
+      input_tensor,
+      conv_dims,
+      dense_dims,
+      dropouts,
+      conv_keep_prob,
+      dense_keep_prob,
+      verbose=verbose
+    )
+
   else:
     raise ValueError("The model %s is not supported!" % model)
 
@@ -65,16 +90,21 @@ def print_activations(t):
   print("%-21s : [%s]" % (t.op.name, dims))
 
 
-def mbe_conv2d(tensor, n_in, n_out, name, activate=tf.tanh, verbose=True):
-  """ A lazy inner function to create a `tf.nn.conv2d` Tensor.
+def mbe_conv2d(tensor, n_in, n_out, name, activate=tf.tanh, verbose=True,
+               dropout=False, keep_prob=0.5):
+  """ A lazy function to create a `tf.nn.conv2d` Tensor.
 
   Args:
-    tensor: a Tensor, [index, 1, w, n_in]
+    tensor: a Tensor of shape [-1, 1, height, n_in]
     n_in: the number of input channels.
     n_out: the number of output channels.
     name: the name of this layer.
     activate: the activation function, defaults to `tf.tanh`.
-    verbose: print the layer if True
+    verbose: a bool, if True the layer settings will be printed.
+    dropout: a bool, If True a droput tensor will be operated on this layer with
+      keep probability `keep_prob`.
+    keep_prob: A scalar Tensor with the same type as x. The probability that
+      each element is kept.
 
   Returns:
     activated: a Tensor of activated `tf.nn.conv2d`.
@@ -94,10 +124,13 @@ def mbe_conv2d(tensor, n_in, n_out, name, activate=tf.tanh, verbose=True):
         tf.zeros([n_out], dtype=TF_TYPE), name="biases")
       variable_summaries(biases)
     bias = tf.nn.bias_add(conv, biases)
-    activated = activate(bias)
+    x = activate(bias)
     if verbose:
-      print_activations(activated)
-  return activated
+      print_activations(x)
+    if dropout:
+      return tf.nn.dropout(x, keep_prob=keep_prob, name="drop", seed=SEED)
+    else:
+      return x
 
 
 def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
@@ -150,12 +183,13 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
     dims[0],
     dims[1],
     "Conv2",
-    activate=tf.nn.tanh
+    activate=tf.nn.tanh,
+    dropout=True,
+    keep_prob=keep_prob
   )
-  drop = tf.nn.dropout(conv2, keep_prob=keep_prob, name="drop2")
 
   conv3 = mbe_conv2d(
-    drop,
+    conv2,
     dims[1],
     dims[2],
     "Conv3",
@@ -167,9 +201,10 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
     dims[2],
     dims[3],
     "Conv4",
-    activate=tf.nn.softplus
+    activate=tf.nn.softplus,
+    dropout=True,
+    keep_prob=keep_prob
   )
-  drop = tf.nn.dropout(conv4, keep_prob=keep_prob, name="drop4")
 
   # Then we build the three mixing layers.
   # The mixing part is used to fit G. Within this part the NN connection is
@@ -178,7 +213,7 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
   # different indices of the second dimension. In this work, the mixing part is
   # composed of two layers with the following sizes:
   # (C(N, k), 2) - (40, 2) - (10, 2).
-  reshape = tf.reshape(drop, (-1, 1, dims[3], cnk), name="h2dep")
+  reshape = tf.reshape(conv4, (-1, 1, dims[3], cnk), name="switch")
 
   conv5 = mbe_conv2d(
     reshape,
@@ -192,9 +227,10 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
     dims[4],
     dims[5],
     "Conv6",
-    activate=tf.nn.softplus
+    activate=tf.nn.softplus,
+    dropout=True,
+    keep_prob=keep_prob
   )
-  drop = tf.nn.dropout(conv6, keep_prob=keep_prob, name="drop6")
 
   # The last part is used to transform the output of mixing part to a single
   # value, representing the energy. The average-pooling is used, which means
@@ -202,7 +238,7 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
   # layer as the final output. In this work, the pooling part is composed of one
   # layer of the size:
   # (10, 2) - (1).
-  flat = tf.contrib.layers.flatten(drop)
+  flat = tf.contrib.layers.flatten(conv6)
   return tf.reduce_mean(
     flat,
     axis=1,
@@ -211,8 +247,8 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
   )
 
 
-def mbe_nn_fc(input_tensor, keep_prob, conv_dims, fc_dims, dropouts,
-              verbose=True):
+def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
+              dense_keep_prob, verbose=True):
   """
   Return the infered MBE-NN-M-FC deep neural network model:
     1. conv1/tanh
@@ -227,10 +263,11 @@ def mbe_nn_fc(input_tensor, keep_prob, conv_dims, fc_dims, dropouts,
 
   Args:
     input_tensor: a Tensor of shape [-1, 1, C(N,k), C(k,2)] as the input layer.
-    keep_prob: a float as the keep probability of dropout tensors.
     conv_dims: List[int], the major dims of the conv layers.
-    fc_dims: List[int], the size of the dense layers.
+    dense_dims: List[int], the size of the dense layers.
     dropouts: List[int], the indices of the layers to add dropouts.
+    conv_keep_prob: a float as the keep probability of conv layers.
+    dense_keep_prob: a float as the keep probability of dense layers.
     verbose: a bool.
 
   Returns:
@@ -241,6 +278,51 @@ def mbe_nn_fc(input_tensor, keep_prob, conv_dims, fc_dims, dropouts,
     print("-> Inference the MBE-NN-M-FC model ...")
     print("")
 
+  # Get the height and depth from the input tensor
   cnk, ck2 = input_tensor.get_shape().as_list()[-2:]
 
+  # Switch to the default dimensions if `conv_dims` is not provided.
+  if conv_dims is None:
+    conv_dims = [40, 70, 60, 2, cnk // 2, cnk // 4]
+  else:
+    assert len(conv_dims) >= 6
 
+  # Construct the convolutional layers.
+  conv = mbe_conv2d(input_tensor, ck2, conv_dims[0], "Conv1")
+
+  for i, major_dim in enumerate(conv_dims[1:]):
+    nonlinear = tf.nn.tanh if i <= 2 else tf.nn.softplus
+    dropout = (i in dropouts)
+    scope = "Conv{}".format(i)
+    conv = mbe_conv2d(
+      conv,
+      conv_dims[i - 1],
+      conv_dims[i],
+      scope,
+      activate=nonlinear,
+      dropout=dropout,
+      keep_prob=conv_keep_prob
+    )
+
+  # Flatten the last convolutional layer so that we can build fully-connected
+  # layers.
+  dense = tf.contrib.layers.flatten(conv)
+
+  # Use the default dense dimensions if it is not provided.
+  if dense_dims is None:
+    dense_dims = [cnk // 4, cnk // 4]
+  else:
+    assert len(dense_dims) >= 2
+
+  # Construct the dense layers
+  for i, dim in enumerate(dense_dims):
+    dense = tf.layers.dense(
+      dense,
+      dim,
+      activation=tf.nn.softplus
+    )
+    if i + len(conv_dims) in dropouts:
+      dense = tf.nn.dropout(dense, keep_prob=dense_keep_prob, seed=SEED)
+
+  # Return the final estimates
+  return tf.layers.dense(dense, 1, use_bias=False)
