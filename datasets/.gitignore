@@ -1,0 +1,7 @@
+# Ignore zip files in this directory
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
