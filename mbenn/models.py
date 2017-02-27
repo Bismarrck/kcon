@@ -157,9 +157,9 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
     print("")
 
   if dims is None:
-    dims = [40, 60, 70, 2, 40, 10]
+    dims = [40, 70, 60, 2, 40, 10]
 
-  cnk, ck2 = input_tensor.get_shape().as_list()[:-2]
+  cnk, ck2 = input_tensor.get_shape().as_list()[-2:]
 
   # Build the first three MBE layers.
   # The shape of the input data tensor is [n, 1, C(N,k), C(k,2)].
@@ -291,22 +291,26 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
   conv = mbe_conv2d(input_tensor, ck2, conv_dims[0], "Conv1")
 
   for i, major_dim in enumerate(conv_dims[1:]):
-    nonlinear = tf.nn.tanh if i <= 2 else tf.nn.softplus
-    dropout = (i in dropouts)
-    scope = "Conv{}".format(i)
+    k = i + 1
+    nonlinear = tf.nn.tanh if k <= 2 else tf.nn.softplus
+    dropout = (k in dropouts)
+    scope = "Conv{}".format(k + 1)
     conv = mbe_conv2d(
       conv,
-      conv_dims[i - 1],
-      conv_dims[i],
+      conv_dims[k - 1],
+      conv_dims[k],
       scope,
       activate=nonlinear,
       dropout=dropout,
-      keep_prob=conv_keep_prob
+      keep_prob=conv_keep_prob,
+      verbose=verbose
     )
 
   # Flatten the last convolutional layer so that we can build fully-connected
   # layers.
   dense = tf.contrib.layers.flatten(conv)
+  if verbose:
+    print_activations(dense)
 
   # Use the default dense dimensions if it is not provided.
   if dense_dims is None:
@@ -323,6 +327,8 @@ def mbe_nn_fc(input_tensor, conv_dims, dense_dims, dropouts, conv_keep_prob,
     )
     if i + len(conv_dims) in dropouts:
       dense = tf.nn.dropout(dense, keep_prob=dense_keep_prob, seed=SEED)
+    if verbose:
+      print_activations(dense)  
 
   # Return the final estimates
   return tf.layers.dense(dense, 1, use_bias=False)
