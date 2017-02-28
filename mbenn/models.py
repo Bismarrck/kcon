@@ -3,6 +3,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 from itertools import repeat
+from tensorflow.python.ops import init_ops
 
 __author__ = 'Xin Chen'
 __email__ = "Bismarrck@me.com"
@@ -111,16 +112,16 @@ def variable_summaries(tensor):
     tf.summary.histogram('histogram', tensor)
 
 
-def print_activations(t):
+def print_activations(tensor):
   """
   Print the name and shape of the input Tensor.
 
   Args:
-    t: a Tensor.
+    tensor: a Tensor.
 
   """
-  dims = ",".join(["%7d" % dim for dim in t.get_shape().as_list()])
-  print("%-21s : [%s]" % (t.op.name, dims))
+  dims = ",".join(["%7d" % dim for dim in tensor.get_shape().as_list()])
+  print("%-21s : [%s]" % (tensor.op.name, dims))
 
 
 def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
@@ -210,6 +211,7 @@ def mbe_dense(input_tensor, units, activation=None, use_bias=True,
     activation=activation,
     use_bias=use_bias,
     trainable=True,
+    kernel_initializer=init_ops.TruncatedNormal(stddev=0.1, seed=SEED),
     name=name
   )
   if verbose:
@@ -330,8 +332,8 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
     4. conv4/softplus
     5. conv5/softplus
     6. conv6/softplus
-    7. fc1/relu
-    8. fc2/relu
+    7. dense1/tanh
+    8. dense2/tanh
     9. output
 
   Args:
@@ -339,7 +341,7 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
     conv_dims: List[int], the major dims of the conv layers.
     dense_dims: List[int], the size of the dense layers.
     dense_funcs: List, the activation functions of each dense layer. 
-      Defaults to ``tf.nn.relu``.
+      Defaults to ``tf.nn.tanh``.
     dropouts: List[int], the indices of the layers to add dropouts.
     conv_keep_prob: a float as the keep probability of conv layers.
     dense_keep_prob: a float as the keep probability of dense layers.
@@ -379,7 +381,7 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
   if dense_dims is None:
     dense_dims = list(repeat(conv_dims[-1], 2))
   if dense_funcs is None:
-    dense_funcs = list(repeat(tf.nn.relu, len(dense_dims)))
+    dense_funcs = list(repeat(tf.nn.tanh, len(dense_dims)))
 
   # Construct the dense layers
   for i, dim in enumerate(dense_dims):
