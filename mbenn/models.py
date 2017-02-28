@@ -2,6 +2,7 @@ from __future__ import print_function, absolute_import
 
 import tensorflow as tf
 import numpy as np
+from itertools import repeat
 
 __author__ = 'Xin Chen'
 __email__ = "Bismarrck@me.com"
@@ -40,6 +41,7 @@ def inference(input_tensor, model, **kwargs):
 
     conv_dims = kwargs.get("conv_dims")
     dense_dims = kwargs.get("dense_dims")
+    dense_funcs = kwargs.get("dense_funcs")
     dropouts = kwargs.get("dropouts", [])
     conv_keep_prob = kwargs.get("conv_keep_prob", 1.0)
     dense_keep_prob = kwargs.get("dense_keep_prob", 1.0)
@@ -49,6 +51,7 @@ def inference(input_tensor, model, **kwargs):
       input_tensor,
       conv_dims,
       dense_dims,
+      dense_funcs,
       dropouts,
       conv_keep_prob,
       dense_keep_prob,
@@ -127,10 +130,10 @@ def mbe_conv2d(tensor, n_in, n_out, name, activate=tf.tanh, verbose=True,
     x = activate(bias)
     if verbose:
       print_activations(x)
-    if dropout:
-      return tf.nn.dropout(x, keep_prob=keep_prob, name="drop", seed=SEED)
-    else:
-      return x
+  if dropout:
+    return tf.nn.dropout(x, keep_prob=keep_prob, name="drop", seed=SEED)
+  else:
+    return x
 
 
 def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
@@ -242,13 +245,13 @@ def mbe_nn_m_6(input_tensor, keep_prob, dims=None, verbose=True):
   return tf.reduce_mean(
     flat,
     axis=1,
-    name="y_predictions",
+    name="Output",
     keep_dims=True
   )
 
 
-def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dropouts=(),
-              conv_keep_prob=1.0, dense_keep_prob=1.0, verbose=True):
+def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
+              dropouts=(), conv_keep_prob=1.0, dense_keep_prob=1.0, verbose=True):
   """
   Return the infered MBE-NN-M-FC deep neural network model:
     1. conv1/tanh
@@ -265,6 +268,8 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dropouts=(),
     input_tensor: a Tensor of shape [-1, 1, C(N,k), C(k,2)] as the input layer.
     conv_dims: List[int], the major dims of the conv layers.
     dense_dims: List[int], the size of the dense layers.
+    dense_funcs: List, the activation functions of each dense layer. 
+      Defaults to ``tf.nn.relu``.
     dropouts: List[int], the indices of the layers to add dropouts.
     conv_keep_prob: a float as the keep probability of conv layers.
     dense_keep_prob: a float as the keep probability of dense layers.
@@ -320,6 +325,11 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dropouts=(),
     dense_dims = [cnk // 4, cnk // 4]
   else:
     assert len(dense_dims) >= 2
+  
+  if dense_funcs is None:
+    dense_funcs = list(repeat(tf.nn.relu, len(dense_dims)))
+  else:
+    assert len(dense_funcs) == len(dense_dims)
 
   # Construct the dense layers
   for i, dim in enumerate(dense_dims):
@@ -328,19 +338,19 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dropouts=(),
     dense = tf.layers.dense(
       dense,
       dim,
-      activation=tf.nn.softplus,
+      activation=tf.nn.relu,
       name=name
     )
+    if verbose:
+      print_activations(dense)
     if i + len(conv_dims) in dropouts:
       dense = tf.nn.dropout(dense, keep_prob=dense_keep_prob, seed=SEED)
-    if verbose:
-      print_activations(dense)  
 
   # Return the final estimates
-  pred = tf.layers.dense(dense, 1, use_bias=False, name="Output")
+  dense = tf.layers.dense(dense, 1, use_bias=False, name="Dense%d" % num_layers)
   if verbose:
-    print_activations(pred)
-  return pred
+    print_activations(dense)
+  return dense
 
 
 if __name__ == "__main__":
