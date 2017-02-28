@@ -3,6 +3,9 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 from itertools import repeat
+from tensorflow.contrib.layers.python.layers import summaries as summary_lib
+from tensorflow.python.framework.ops import GraphKeys
+
 
 __author__ = 'Xin Chen'
 __email__ = "Bismarrck@me.com"
@@ -36,7 +39,6 @@ def get_number_of_trainable_parameters(verbose=False):
 
   print("")
   print("Total number of parameters: %d" % ntotal)
-  print("")
 
 
 def inference(input_tensor, model, **kwargs):
@@ -111,16 +113,16 @@ def variable_summaries(tensor):
     tf.summary.histogram('histogram', tensor)
 
 
-def print_activations(t):
+def print_activations(tensor):
   """
   Print the name and shape of the input Tensor.
 
   Args:
-    t: a Tensor.
+    tensor: a Tensor.
 
   """
-  dims = ",".join(["%7d" % dim for dim in t.get_shape().as_list()])
-  print("%-21s : [%s]" % (t.op.name, dims))
+  dims = ",".join(["%7d" % dim for dim in tensor.get_shape().as_list()])
+  print("%-21s : [%s]" % (tensor.op.name, dims))
 
 
 def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
@@ -155,7 +157,7 @@ def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
         ),
         name="kernel"
       )
-      variable_summaries(kernel)
+      summary_lib.summarize_weights(kernel)
     conv = tf.nn.conv2d(
       tensor,
       kernel,
@@ -168,7 +170,7 @@ def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
         tf.zeros([n_out], dtype=TF_TYPE),
         name="biases"
       )
-      variable_summaries(biases)
+      summary_lib.summarize_biases(biases)
     bias = tf.nn.bias_add(conv, biases)
     x = activate(bias)
     if verbose:
@@ -186,7 +188,8 @@ def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
 def mbe_dense(input_tensor, units, activation=None, use_bias=True,
               dropout=True, keep_prob=0.5, name="Dense", verbose=True):
   """
-  A lazy function to create a `tf.layers.dense` Tensor.
+  A helper function to create a fully-connected layer. The weights will be added
+  to the collection `GraphKeys.REGULARIZATION_LOSSES` automatically.
 
   Args:
     input_tensor: a Tensor of shape [batch, num_in] as the input.
@@ -204,16 +207,31 @@ def mbe_dense(input_tensor, units, activation=None, use_bias=True,
     dense: a `tf.layers.dense` Tensor.
 
   """
-  dense = tf.layers.dense(
-    input_tensor,
-    units,
-    activation=activation,
-    use_bias=use_bias,
-    trainable=True,
-    name=name
-  )
-  if verbose:
-    print_activations(dense)
+
+  batch, nodes = input_tensor.get_shape().as_list()
+
+  with tf.name_scope(name):
+    with tf.name_scope("kernel"):
+      weights = tf.Variable(
+        tf.truncated_normal([nodes, units], stddev=0.1, seed=SEED),
+        trainable=True,
+        collections=[GraphKeys.REGULARIZATION_LOSSES]
+      )
+      summary_lib.summarize_weights(weights)
+    dense = tf.matmul(input_tensor, weights)
+
+    if use_bias:
+      with tf.name_scope("bias"):
+        biases = tf.Variable(
+          tf.zeros([units]),
+          trainable=True
+        )
+        summary_lib.summarize_biases(biases)
+      dense = tf.add(dense, biases)
+    if activation is not None:
+      dense = activation(dense)
+    if verbose:
+      print_activations(dense)
 
   if dropout:
     name = "drop{}".format(name)
@@ -330,8 +348,8 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
     4. conv4/softplus
     5. conv5/softplus
     6. conv6/softplus
-    7. fc1/relu
-    8. fc2/relu
+    7. dense1/tanh
+    8. dense2/tanh
     9. output
 
   Args:
@@ -339,7 +357,7 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
     conv_dims: List[int], the major dims of the conv layers.
     dense_dims: List[int], the size of the dense layers.
     dense_funcs: List, the activation functions of each dense layer. 
-      Defaults to ``tf.nn.relu``.
+      Defaults to ``tf.nn.tanh``.
     dropouts: List[int], the indices of the layers to add dropouts.
     conv_keep_prob: a float as the keep probability of conv layers.
     dense_keep_prob: a float as the keep probability of dense layers.
@@ -379,7 +397,7 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
   if dense_dims is None:
     dense_dims = list(repeat(conv_dims[-1], 2))
   if dense_funcs is None:
-    dense_funcs = list(repeat(tf.nn.relu, len(dense_dims)))
+    dense_funcs = list(repeat(tf.nn.tanh, len(dense_dims)))
 
   # Construct the dense layers
   for i, dim in enumerate(dense_dims):
@@ -414,11 +432,18 @@ def test_mbe_nn_m_fc():
     dense_keep_prob=dense_keep_prob,
     verbose=True
   )
-  print("")
 
+  print("")
   print("Calculate the number of parameters: ")
   print("")
   get_number_of_trainable_parameters(verbose=True)
+
+  print("")
+  print("The variables that should be regularized:")
+  print("")
+  regvars = tf.get_collection(GraphKeys.REGULARIZATION_LOSSES)
+  for regvar in regvars:
+    print(regvar.name)
 
 
 def test_mbe_nn_m():
@@ -437,8 +462,8 @@ def test_mbe_nn_m():
     keep_prob=keep_prob,
     verbose=True
   )
-  print("")
 
+  print("")
   print("Calculate the number of parameters: ")
   print("")
   get_number_of_trainable_parameters(verbose=True)
