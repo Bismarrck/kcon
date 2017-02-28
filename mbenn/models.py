@@ -374,7 +374,6 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
   dense = tf.contrib.layers.flatten(conv)
   if verbose:
     print_activations(dense)
-  num_layers += 1
 
   # Load the default dimensions and activation functions if not provided.
   if dense_dims is None:
@@ -399,7 +398,9 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
 def test_mbe_nn_m_fc():
   tf.reset_default_graph()
 
-  print("MBE-NN-M Inference Test")
+  print("--------------------------")
+  print("MBE-NN-M-FC Inference Test")
+  print("--------------------------")
   print("")
 
   x_batch = tf.placeholder(tf.float32, [50, 1, 715, 6], name="x_batch")
@@ -423,7 +424,9 @@ def test_mbe_nn_m_fc():
 def test_mbe_nn_m():
   tf.reset_default_graph()
 
+  print("-----------------------")
   print("MBE-NN-M Inference Test")
+  print("-----------------------")
   print("")
 
   x_batch = tf.placeholder(tf.float32, [50, 1, 715, 6], name="x_batch")
@@ -443,5 +446,5 @@ def test_mbe_nn_m():
 
 if __name__ == "__main__":
 
-  # test_mbe_nn_m()
+  test_mbe_nn_m()
   test_mbe_nn_m_fc()
