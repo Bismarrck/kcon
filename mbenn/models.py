@@ -157,7 +157,7 @@ def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
         ),
         name="kernel"
       )
-      summary_lib.summarize_weights(kernel)
+      variable_summaries(kernel)
     conv = tf.nn.conv2d(
       tensor,
       kernel,
@@ -170,7 +170,7 @@ def mbe_conv2d(tensor, n_in, n_out, name="Conv", activate=tf.tanh, verbose=True,
         tf.zeros([n_out], dtype=TF_TYPE),
         name="biases"
       )
-      summary_lib.summarize_biases(biases)
+      variable_summaries(biases)
     bias = tf.nn.bias_add(conv, biases)
     x = activate(bias)
     if verbose:
@@ -215,9 +215,10 @@ def mbe_dense(input_tensor, units, activation=None, use_bias=True,
       weights = tf.Variable(
         tf.truncated_normal([nodes, units], stddev=0.1, seed=SEED),
         trainable=True,
-        collections=[GraphKeys.REGULARIZATION_LOSSES]
+        collections=[GraphKeys.REGULARIZATION_LOSSES, 
+                     GraphKeys.GLOBAL_VARIABLES],
       )
-      summary_lib.summarize_weights(weights)
+      variable_summaries(weights)
     dense = tf.matmul(input_tensor, weights)
 
     if use_bias:
@@ -226,7 +227,7 @@ def mbe_dense(input_tensor, units, activation=None, use_bias=True,
           tf.zeros([units]),
           trainable=True
         )
-        summary_lib.summarize_biases(biases)
+        variable_summaries(biases)
       dense = tf.add(dense, biases)
     if activation is not None:
       dense = activation(dense)
@@ -402,15 +403,14 @@ def mbe_nn_fc(input_tensor, conv_dims=None, dense_dims=None, dense_funcs=None,
   # Construct the dense layers
   for i, dim in enumerate(dense_dims):
     drop = bool(num_layers in dropouts)
-    name = "Dense{:d}".format(num_layers)
+    name = "Dense{:d}".format(num_layers + 1)
     dense = mbe_dense(dense, dim, activation=dense_funcs[i], use_bias=True,
                       dropout=drop, keep_prob=dense_keep_prob, name=name,
                       verbose=verbose)
     num_layers += 1
 
   # Return the final estimates
-  return mbe_dense(dense, 1, activation=None, use_bias=False, dropout=False,
-                   name="Dense{:d}".format(num_layers), verbose=verbose)
+  return tf.reduce_mean(dense, axis=1, name="Output", keep_dims=True)
 
 
 def test_mbe_nn_m_fc():
