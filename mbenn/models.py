@@ -278,6 +278,7 @@ def mbe_nn_m(input_tensor, dims=None, activations=None, dropouts=(),
     assert len(dims) >= 6
   dims = [ck2] + list(dims[:4]) + [cnk] + list(dims[4:])
   activations = {} if activations is None else activations
+  dropouts = () if dropouts is None else dropouts
   conv = input_tensor
 
   for i in range(len(dims) - 1):
@@ -295,7 +296,10 @@ def mbe_nn_m(input_tensor, dims=None, activations=None, dropouts=(),
       # dimension, so that the fitted function form of Fk is kept consistent
       # among different k-body terms.
       if i < 4:
-        activation = activations.get(i, tf.nn.tanh)
+        if i == 3:
+          activation = activations.get(i, tf.nn.softplus)
+        else:
+          activation = activations.get(i, tf.nn.tanh)
         drop = bool(i in dropouts)
         name = "Conv{:d}".format(i + 1)
       # Then we build the three mixing layers.
