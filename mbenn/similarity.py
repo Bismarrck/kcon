@@ -92,6 +92,7 @@ def remove_duplicates(coords, energies, hdf5_file, threshold=0.995, verbose=True
         sys.stdout.write("\rProgress: %7d  /  %7d" % (i, n))
       v[i] = get_usr_features(coords[i])
     if verbose:
+      print("")
       print("Time for computing USR features: %.3f s\n" % (time.time() - tic))
     hdb[group].create_dataset("usr", data=v)
 
