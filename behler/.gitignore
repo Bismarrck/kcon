@@ -1,0 +1,5 @@
+# Ignore Tensorflow outputs
+events/*
+
+# Ignore npz files
+*.npz
