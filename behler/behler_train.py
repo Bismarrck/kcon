@@ -30,7 +30,8 @@ def train_model(*args):
     # inference model.
     pred_energies, atomic_energies = behler.inference(
       features,
-      hidden_sizes=(100, 100)
+      hidden_sizes=(100, 100),
+      verbose=True
     )
 
     # Setup the loss function
