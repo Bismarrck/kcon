@@ -15,8 +15,10 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import behler_input
+from behler_input import SEED
 from os.path import join
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
+from tensorflow.contrib.layers.python.layers import initializers
 
 __author__ = "Xin Chen"
 __email__ = "Bismarrck@me.com"
@@ -31,8 +33,8 @@ tf.app.flags.DEFINE_integer('batch_size', 20,
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999     # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 50.0       # Epochs after which learning rate decays.
-LEARNING_RATE_DECAY_FACTOR = 0.1  # Learning rate decay factor.
-INITIAL_LEARNING_RATE = 0.1       # Initial learning rate.
+LEARNING_RATE_DECAY_FACTOR = 0.5  # Learning rate decay factor.
+INITIAL_LEARNING_RATE = 0.01      # Initial learning rate.
 MOMENTUM_FACTOR = 0.7
 
 
@@ -142,7 +144,8 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
       activation_fn=activation,
       stride=stride,
       padding=padding,
-      scope="Hidden{:d}".format(i + 1)
+      scope="Hidden{:d}".format(i + 1),
+      weights_initializer=initializers.xavier_initializer(seed=SEED)
     )
     if verbose:
       print_activations(conv)
@@ -153,6 +156,7 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
     kernel_size,
     activation_fn=None,
     biases_initializer=None,
+    weights_initializer=initializers.xavier_initializer(seed=SEED),
     stride=stride,
     padding=padding,
     scope="AtomEnergy"
@@ -175,7 +179,7 @@ def _add_loss_summaries(total_loss):
   visualizing the performance of the network.
 
   Args:
-    total_loss: Total loss from loss().
+    total_loss: Total loss from `get_total_loss()`.
   Returns:
     loss_averages_op: op for generating moving averages of losses.
   """
@@ -193,6 +197,24 @@ def _add_loss_summaries(total_loss):
     tf.summary.scalar(l.op.name, loss_averages.average(l))
 
   return loss_averages_op
+
+
+def get_total_loss(energies, pred_energies):
+  """
+  Return the total loss tensor.
+
+  Args:
+    energies: the desired energies.
+    pred_energies: the predicted energies.
+
+  Returns:
+    loss: the total loss tensor.
+
+  """
+  with tf.name_scope("RMSE"):
+    loss = tf.losses.mean_squared_error(energies, pred_energies, scope="RMS")
+    loss = tf.sqrt(loss, name="SQRT")
+    return loss
 
 
 def get_train_op(total_loss, global_step):

@@ -301,26 +301,45 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     # We run this in two threads to avoid being a bottleneck.
     if shuffle:
       features, energies = tf.train.shuffle_batch(
-        [behlers, energy], batch_size=batch_size, num_threads=8,
+        [behlers, energy], batch_size=batch_size, num_threads=2,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000)
     else:
       features, energies = tf.train.batch(
-        [behlers, energy], batch_size=batch_size, num_threads=8,
+        [behlers, energy], batch_size=batch_size, num_threads=2,
         capacity=1000 + 3 * batch_size)
     return features, energies
 
 
-def test_read_and_decode():
+def test_read_and_decode(*args):
+  """
+  A naive test function. The function `read_and_decode` is working. But this
+  function shall be fixed.
+  """
 
   with tf.Session() as sess:
 
-    features, energies = inputs(True, 1, 1, shuffle=False)
-    f = sess.run([features])
-    print(f)
+    features, energies = inputs(True, 1, None, shuffle=False)
+    tf.train.start_queue_runners(sess=sess)
+    tftrain0 = sess.run(features)
+
+    ar = np.load(NPZ_FILE)
+    features, energies = ar["features"], ar["energies"]
+    X_train, _, _, _ = train_test_split(
+      features,
+      energies,
+      random_state=SEED,
+      test_size=TEST_SIZE
+    )
+    nptrain0 = X_train[0]
+
+    diff = tftrain0.flatten() - nptrain0.flatten()
+    if np.linalg.norm(diff) < 1e-6:
+      print("Test is passed!")
+    else:
+      print("Test is failed! Please check your codes!")
 
 
 if __name__ == "__main__":
-  # may_build_dataset(verbose=True)
-  test_read_and_decode()
+  may_build_dataset(verbose=True)

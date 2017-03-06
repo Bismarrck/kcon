@@ -34,8 +34,7 @@ def train_model(*args):
     )
 
     # Setup the loss function
-    loss = tf.sqrt(tf.losses.mean_squared_error(energies, pred_energies),
-                   name="RMSE")
+    loss = behler.get_total_loss(energies, pred_energies)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
@@ -55,15 +54,14 @@ def train_model(*args):
       def after_run(self, run_context, run_values):
         duration = time.time() - self._start_time
         loss_value = run_values.results
-        if self._step % 10 == 0:
+        if self._step % 100 == 0:
           num_examples_per_step = FLAGS.batch_size
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
-
-          format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
-                        'sec/batch)')
-          print(format_str % (datetime.now(), self._step, loss_value,
-                              examples_per_sec, sec_per_batch))
+          fstr = ('%s: step %6d, loss = %10.6f (%6.1f examples/sec; %7.3f '
+                  'sec/batch)')
+          print(fstr % (datetime.now(), self._step, loss_value,
+                        examples_per_sec, sec_per_batch))
 
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
