@@ -121,7 +121,8 @@ def print_activations(tensor):
     tensor: a Tensor.
 
   """
-  dims = ",".join(["%7d" % dim for dim in tensor.get_shape().as_list()])
+  dims = ",".join(["{:7d}".format(dim if dim is not None else -1) 
+                   for dim in tensor.get_shape().as_list()])
   print("%-21s : [%s]" % (tensor.op.name, dims))
 
 
