@@ -14,7 +14,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 100000,
+tf.app.flags.DEFINE_integer('max_steps', 10000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")

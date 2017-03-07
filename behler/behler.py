@@ -89,12 +89,12 @@ def get_number_of_trainable_parameters(verbose=False):
   for var in tf.trainable_variables():
     nvar = np.prod(var.get_shape().as_list(), dtype=int)
     if verbose:
-      print("{:25s}  {:d}".format(var.name, nvar))
+      print("{:25s}   {:d}".format(var.name, nvar))
     ntotal += nvar
   print("Total number of parameters: %d" % ntotal)
 
 
-def inputs(train=True):
+def inputs(train=True, shuffle=True):
   """
   Construct input for Behler evaluation using the Reader ops.
 
@@ -109,7 +109,8 @@ def inputs(train=True):
   """
   features, energies = behler_input.inputs(train=train,
                                            batch_size=FLAGS.batch_size,
-                                           num_epochs=None)
+                                           num_epochs=None,
+                                           shuffle=shuffle)
   return features, energies
 
 
