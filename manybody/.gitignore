@@ -1,2 +1,5 @@
 # Ignore binary files
 binary/*
+
+# Ignore tensorflow events
+events/*
