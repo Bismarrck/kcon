@@ -54,17 +54,18 @@ tf.app.flags.DEFINE_integer('eval_interval_secs', 2,
                             """How often to run the eval.""")
 tf.app.flags.DEFINE_integer('num_examples', 480,
                             """Number of examples to run.""")
-tf.app.flags.DEFINE_boolean('run_once', False,
+tf.app.flags.DEFINE_boolean('run_once', True,
                          """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, rmse, summary_op):
+def eval_once(saver, summary_writer, rmse, total_energy, summary_op):
   """Run Eval once.
 
   Args:
     saver: Saver.
     summary_writer: Summary writer.
     rmse: The Root-Mean-Squared-Error op.
+    total_energy: The op for getting estimated energies.
     summary_op: Summary op.
   """
   with tf.Session() as sess:
@@ -92,9 +93,12 @@ def eval_once(saver, summary_writer, rmse, summary_op):
       true_count = 0  # Counts the number of correct predictions.
       total_sample_count = num_iter * FLAGS.batch_size
       rmses = np.zeros((num_iter,), dtype=np.float32)
+      energies = []
       step = 0
       while step < num_iter and not coord.should_stop():
-        rmses[step] = sess.run(rmse)
+        rmse_step, estimates = sess.run([rmse, total_energy])
+        rmses[step] = rmse_step
+        energies.extend(estimates.tolist())
         step += 1
 
       # Compute precision @ 1.
@@ -105,6 +109,7 @@ def eval_once(saver, summary_writer, rmse, summary_op):
       summary.ParseFromString(sess.run(summary_op))
       summary.value.add(tag='Precision @ 1', simple_value=precision)
       summary_writer.add_summary(summary, global_step)
+
     except Exception as e:  # pylint: disable=broad-except
       coord.request_stop(e)
 
@@ -116,13 +121,14 @@ def evaluate():
   """Eval CIFAR-10 for a number of steps."""
   with tf.Graph().as_default() as g:
     # Get images and labels for CIFAR-10.
-    features, energies = behler.inputs(train=False)
+    features, energies = behler.inputs(train=False, shuffle=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
     total_energies, atomic_energies = behler.inference(
       features,
-      hidden_sizes=(100, 100))
+      hidden_sizes=(100, 100)
+    )
 
     # Calculate predictions.
     rmse = tf.sqrt(tf.losses.mean_squared_error(energies, total_energies))
@@ -138,7 +144,7 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
     while True:
-      eval_once(saver, summary_writer, rmse, summary_op)
+      eval_once(saver, summary_writer, rmse, total_energies, summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

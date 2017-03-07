@@ -82,18 +82,19 @@ def get_number_of_trainable_parameters(verbose=False):
     ntotal: the total number of trainable parameters.
 
   """
+  print("")
+  print("Compute the total number of trainable parameters ...")
+  print("")
   ntotal = 0
   for var in tf.trainable_variables():
     nvar = np.prod(var.get_shape().as_list(), dtype=int)
     if verbose:
-      print("{:25s}  {:d}".format(var.name, nvar))
+      print("{:25s}   {:d}".format(var.name, nvar))
     ntotal += nvar
-
-  print("")
   print("Total number of parameters: %d" % ntotal)
 
 
-def inputs(train=True):
+def inputs(train=True, shuffle=True):
   """
   Construct input for Behler evaluation using the Reader ops.
 
@@ -108,7 +109,8 @@ def inputs(train=True):
   """
   features, energies = behler_input.inputs(train=train,
                                            batch_size=FLAGS.batch_size,
-                                           num_epochs=None)
+                                           num_epochs=None,
+                                           shuffle=shuffle)
   return features, energies
 
 
@@ -118,7 +120,7 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
   Infer the Behler's model for a monoatomic cluster.
 
   Args:
-    conv: a `[-1, N, M]` Tensor as the input. N is the number of atoms in
+    conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
       the monoatomic cluster and M is the number of features.
     activation: the activation function. Defaults to `tf.nn.tanh`.
     hidden_sizes: List[int], the number of units of each hidden layer.
@@ -165,9 +167,15 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
     print_activations(atomic_energies)
 
   flat = flatten(atomic_energies)
+  if verbose:
+    print_activations(flat)
+
   total_energy = tf.reduce_sum(flat, axis=1, keep_dims=False)
   if verbose:
     print_activations(total_energy)
+
+  if verbose:
+    get_number_of_trainable_parameters(verbose=verbose)
 
   return total_energy, atomic_energies
 
