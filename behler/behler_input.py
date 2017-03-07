@@ -13,6 +13,13 @@ __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
 
 
+FLAGS = tf.app.flags.FLAGS
+
+tf.app.flags.DEFINE_boolean('use_fp64', False,
+                            """Use double precision floats if True.""")
+tf.app.flags.DEFINE_boolean('run_test', False,
+                            """Run the unit test for this module if True.""")
+
 # The number of atoms is 20
 NATOMS = 20
 
@@ -43,6 +50,25 @@ TEST_FILE = "B20test.tfrecords"
 SEED = 218
 
 
+def get_float_type(convert=False):
+  """
+  Return the type of floats to use.
+
+  Args:
+    convert: boolean indicating whether the return type should be converted to
+      TensorFlow datatype.
+
+  """
+  if FLAGS.use_fp64:
+    dt = np.float64
+  else:
+    dt = np.float32
+  if convert:
+    return tf.as_dtype(dt)
+  else:
+    return dt
+
+
 def extract_xyz(filename, verbose=True):
   """
   Extract symbols, coordiantes and forces (for later usage) from the file.
@@ -57,8 +83,9 @@ def extract_xyz(filename, verbose=True):
     coordinates: Array[N, 17, 3], a 3D array of the atomic coordinates.
 
   """
-  energies = np.zeros((TOTAL_SIZE,), dtype=np.float32)
-  coordinates = np.zeros((TOTAL_SIZE, NATOMS, 3), dtype=np.float32)
+  dtype = get_float_type()
+  energies = np.zeros((TOTAL_SIZE,), dtype=dtype)
+  coordinates = np.zeros((TOTAL_SIZE, NATOMS, 3), dtype=dtype)
   species = []
   parse_species = True
   parse_forces = False
@@ -133,23 +160,21 @@ def write_to_records(features, energies, filename):
   Write the Numpy arrays of `features` and `energies` to tfrecords.
 
   Args:
-    features: a `[-1, N, M]` array as the Behler features.
-    energies: a `[-1, 1]` array as the desired energies.
+    features: a `[-1, N, M]` 3D array as the Behler features.
+    energies: a `[-1, ]` 1D array as the desired energies.
     filename: a stirng, the file to write.
 
   """
-  ntotal, height, depth = features.shape[:]
   width = 1
+  ntotal, height, depth = features.shape[:]
   features = np.reshape(features, (-1, width, height, depth))
   writer = tf.python_io.TFRecordWriter(filename)
   for index in range(ntotal):
     x = features[index].tostring()
+    y = np.atleast_2d(energies[index]).tostring()
     example = tf.train.Example(
       features=tf.train.Features(
-        feature={
-          'energy': _float_feature(energies[index]),
-          'behlers': _bytes_feature(x)
-      }))
+        feature={'energy': _bytes_feature(y), 'behlers': _bytes_feature(x)}))
     writer.write(example.SerializeToString())
   writer.close()
 
@@ -195,8 +220,9 @@ def may_build_dataset(verbose=True):
 
     _, energies, coordinates = extract_xyz(XYZ_FILE, verbose=verbose)
     ntotal = len(energies)
-    features = np.zeros((ntotal, NATOMS, NDIMS), dtype=np.float32)
-    energies = energies.astype(np.float32)
+    dtype = get_float_type()
+    features = np.zeros((ntotal, NATOMS, NDIMS), dtype=dtype)
+    energies = energies.astype(dtype)
 
     print("Building Behler's fingerprints ...")
     tic = time.time()
@@ -210,7 +236,7 @@ def may_build_dataset(verbose=True):
     print("")
 
     # Scale the energies and features to [0, 1].
-    scales = np.zeros((NDIMS + 1, 2))
+    scales = np.zeros((NDIMS + 1, 2), dtype=dtype)
     for l in range(NDIMS):
       lmax, lmin = features[:, :, l].max(), features[:, :, l].min()
       features[:, :, l] = (features[:, :, l] - lmin) / (lmax - lmin)
@@ -239,6 +265,7 @@ def may_build_dataset(verbose=True):
 
 
 def read_and_decode(filename_queue):
+  dtype = get_float_type(convert=True)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
   features = tf.parse_single_example(
@@ -246,16 +273,18 @@ def read_and_decode(filename_queue):
       # Defaults are not specified since both keys are required.
       features={
           'behlers': tf.FixedLenFeature([], tf.string),
-          'energy': tf.FixedLenFeature([], tf.float32),
+          'energy': tf.FixedLenFeature([], tf.string),
       })
 
   # Convert from a scalar string tensor (whose single string has
   # length mnist.IMAGE_PIXELS) to a uint8 tensor with shape
   # [mnist.IMAGE_PIXELS].
-  behlers = tf.decode_raw(features['behlers'], tf.float32)
+  behlers = tf.decode_raw(features['behlers'], dtype)
   behlers.set_shape([NATOMS * NDIMS])
   behlers = tf.reshape(behlers, [1, NATOMS, NDIMS])
-  energy = features['energy']
+  energy = tf.decode_raw(features['energy'], dtype)
+  energy.set_shape([1])
+  energy = tf.squeeze(energy)
 
   return behlers, energy
 
@@ -312,7 +341,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     return features, energies
 
 
-def test_read_and_decode(*args):
+def test_read_and_decode():
   """
   A naive test function. The function `read_and_decode` is working. But this
   function shall be fixed.
@@ -322,24 +351,29 @@ def test_read_and_decode(*args):
 
     features, energies = inputs(True, 1, None, shuffle=False)
     tf.train.start_queue_runners(sess=sess)
-    tftrain0 = sess.run(features)
+    X_train_, y_train_ = sess.run([features, energies])
 
     ar = np.load(NPZ_FILE)
     features, energies = ar["features"], ar["energies"]
-    X_train, _, _, _ = train_test_split(
+    X_train, y_train, _, _ = train_test_split(
       features,
       energies,
       random_state=SEED,
       test_size=TEST_SIZE
     )
-    nptrain0 = X_train[0]
 
-    diff = tftrain0.flatten() - nptrain0.flatten()
+    diff = X_train_.flatten() - X_train[0].flatten()
     if np.linalg.norm(diff) < 1e-6:
       print("Test is passed!")
     else:
       print("Test is failed! Please check your codes!")
 
 
-if __name__ == "__main__":
+def main(*args):
   may_build_dataset(verbose=True)
+  if FLAGS.run_test:
+    test_read_and_decode()
+
+
+if __name__ == "__main__":
+  tf.app.run()

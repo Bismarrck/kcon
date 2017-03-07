@@ -19,6 +19,7 @@ from behler_input import SEED
 from os.path import join
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
+from tensorflow.python.ops import init_ops
 
 __author__ = "Xin Chen"
 __email__ = "Bismarrck@me.com"
@@ -137,6 +138,7 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
   kernel_size = 1
   stride = 1
   padding = 'SAME'
+  dtype = behler_input.get_float_type(convert=True)
 
   for i, units in enumerate(hidden_sizes):
     conv = conv2d(
@@ -147,7 +149,9 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
       stride=stride,
       padding=padding,
       scope="Hidden{:d}".format(i + 1),
-      weights_initializer=initializers.xavier_initializer(seed=SEED)
+      weights_initializer=initializers.xavier_initializer(
+        seed=SEED, dtype=dtype),
+      biases_initializer=init_ops.zeros_initializer(dtype=dtype)
     )
     if verbose:
       print_activations(conv)
@@ -158,7 +162,8 @@ def inference(conv, activation=tf.nn.tanh, hidden_sizes=(10, 10),
     kernel_size,
     activation_fn=None,
     biases_initializer=None,
-    weights_initializer=initializers.xavier_initializer(seed=SEED),
+    weights_initializer=initializers.xavier_initializer(
+      seed=SEED, dtype=dtype),
     stride=stride,
     padding=padding,
     scope="AtomEnergy"
