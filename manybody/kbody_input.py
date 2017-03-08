@@ -41,6 +41,8 @@ tf.app.flags.DEFINE_string("dataset", "TaB20opted",
                            of the xyz file to load.""")
 tf.app.flags.DEFINE_string("format", "xyz",
                            """The format of the xyz file.""")
+tf.app.flags.DEFINE_boolean("run_input_test", False,
+                            """Run the input unit test if True.""")
 
 # Set the random state
 SEED = 218
@@ -227,8 +229,8 @@ def may_build_dataset(verbose=True):
 
   # Determine the unique atomic symbol combinations.
   k = max(FLAGS.many_body_k, len(set(species)))
-  orders = list(set(
-    [",".join(sorted(c)) for c in itertools.combinations(species, k)]))
+  orders = sorted(list(set(
+    [",".join(sorted(c)) for c in itertools.combinations(species, k)])))
 
   # Split the energies and coordinates into two sets: a training set and a
   # testing set.
@@ -290,8 +292,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     batch_size: Number of examples per returned batch.
     num_epochs: Number of times to read the input data, or 0/None to
        train forever.
-    num_groups:
-    shuffle:
+    shuffle: boolean indicating whether the batches shall be shuffled or not.
 
   Returns:
     A tuple (features, energies, offsets), where:
@@ -311,7 +312,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
   filename, cfgfile = get_filenames(train=train)
 
   with open(cfgfile) as f:
-    offsets = dict(json.load(f))["chunk_sizes"]
+    offsets = dict(json.load(f))["kbody_term_sizes"]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -341,5 +342,73 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     return batch_features, batch_energies, offsets
 
 
+def test(*args):
+  """
+  This is the unit test of this module. The file `TaB2Oopted.xyz` is used.
+  """
+  from sklearn.metrics import pairwise_distances
+
+  xyzfile = join("..", "datasets", "TaB20opted.xyz")
+  if not isfile(xyzfile):
+    raise IOError("The dataset file %s can not be accessed!" % xyzfile)
+
+  species, energies, coordinates, forces = extract_xyz(
+    xyzfile,
+    verbose=False,
+    xyz_format=FLAGS.format,
+    unit=hartree_to_ev
+  )
+
+  coords_train, _, energies_train, _ = train_test_split(
+    coordinates,
+    energies,
+    test_size=0.2,
+    random_state=SEED
+  )
+
+  dists = pairwise_distances(coords_train[0])
+  pyykko_bb = 1.7 * 1.5
+  pyykko_tb = 2.31 * 1.5
+
+  train_file = join(FLAGS.binary_dir, "TaB20opted-train.tfrecords")
+  if not isfile(train_file):
+    orders = sorted(list(set(
+      [",".join(sorted(c)) for c in itertools.combinations(species, 4)])))
+    transform_and_save(coords_train, energies_train, species, orders,
+                       train_file)
+
+  with tf.Session() as sess:
+    features, energies, offsets = inputs(
+      train=True, batch_size=1, num_epochs=None, shuffle=False
+    )
+    tf.train.start_queue_runners(sess=sess)
+
+    try:
+      # The shape of `values` is [1, 1, 5985, 6].
+      # The first part, [:, :, :4845, 6] represents the 4-body term of B-B-B-B.
+      # The indices of Borons are from 1 to 20, so the first element should be
+      # the scaled distance between B_1 and B_2.
+      values = sess.run(features)
+
+      r = values[0, 0, 0, 0]
+      y = np.exp(-np.linalg.norm(dists[1, 2]) / pyykko_bb)
+      assert np.linalg.norm(r - y) < 0.00001
+
+      # The second part, [:, :, 4845:5985, 6], represents the 4-body term of
+      # Ta-B-B-B. The index of Ta is 0, so the last element should be the scaled
+      # distance of Ta_0 and B_20.
+      r = values[0, 0, -1, -1]
+      y = np.exp(-np.linalg.norm(dists[0, 20]) / pyykko_tb)
+      assert np.linalg.norm(r - y) < 0.00001
+
+    except AssertionError:
+      print("The tests are failed!")
+    else:
+      print("The tests are passed!")
+
+
 if __name__ == "__main__":
-  tf.app.run(may_build_dataset, argv=(True, ))
+  if tf.app.flags.FLAGS.run_input_test:
+    tf.app.run(test)
+  else:
+    tf.app.run(may_build_dataset, argv=(True, ))

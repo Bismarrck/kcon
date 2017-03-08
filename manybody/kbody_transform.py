@@ -65,7 +65,7 @@ def get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
     return lmat
 
 
-def _map_indices(species, orders):
+def map_indices(species, orders):
   """
   Build the mapping from interatomic distances matrix to the [C(N,k), C(k,2)]
   feature matrix.
@@ -138,7 +138,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
 
   """
 
-  mapping = _map_indices(species, orders)
+  mapping = map_indices(species, orders)
   writer = tf.python_io.TFRecordWriter(filename)
   offsets = [0]
   cnk = 0
@@ -147,7 +147,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
     cnk += mapping[order].shape[1]
     if not ck2:
       ck2 = mapping[order].shape[0]
-    offsets.append(offsets[-1] + cnk)
+    offsets.append(cnk)
   offsets.append(-1)
   offsets = np.asarray(offsets, dtype=np.int64)
   sizes = np.diff(offsets[:-1])
@@ -155,6 +155,11 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
   num_traj = len(coordinates)
   lmat = get_pyykko_bonds_matrix(species, flatten=True)
+
+  print("k-body terms: ")
+  for order in orders:
+    print("%11s : %d" % (order, mapping[order].shape[1]))
+  print("")
 
   print("Start transforming %s ... " % filename)
 
@@ -186,14 +191,15 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   )
   print("Save configs to %s" % cfgfile)
   with open(cfgfile, "w+") as f:
-    json.dump({"chunk_sizes": sizes.tolist()}, f)
+    json.dump({"kbody_term_sizes": sizes.tolist(),
+               "kbody_terms": orders}, f)
   print("")
 
 
 def _test_map_indices():
   species = ["Li"] + list(repeat("B", 6))
   orders = list(set([",".join(sorted(c)) for c in combinations(species, 4)]))
-  mapping = _map_indices(species, orders)
+  mapping = map_indices(species, orders)
   assert mapping['B,B,B,Li'][0, 0] == 9
 
 
