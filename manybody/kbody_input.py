@@ -11,6 +11,7 @@ import re
 import time
 import sys
 import itertools
+import json
 from kbody_transform import transform_and_save
 from os.path import join, isfile, isdir
 from os import makedirs
@@ -47,6 +48,9 @@ SEED = 218
 # Hartree to kcal/mol
 hartree_to_kcal = 627.509
 
+# Hartree to eV
+hartree_to_ev = 27.211
+
 
 def get_float_type(convert=False):
   """
@@ -64,7 +68,7 @@ def get_float_type(convert=False):
       return np.float32
 
 
-def extract_xyz(filename, verbose=True, xyz_format='grendel', use_kcal=True):
+def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
   """
   Extract atomic symbols, DFT energies and atomic coordiantes (and forces) from
   the file.
@@ -73,7 +77,7 @@ def extract_xyz(filename, verbose=True, xyz_format='grendel', use_kcal=True):
     filename: a `str`, the file to parse.
     verbose: a `bool`.
     xyz_format: a `str` representing the format of the given xyz file.
-    use_kcal: a `bool`, converting energies to kcal/mol if True.
+    unit: a float represents the scaling of the energies.
 
   Returns
     species: `List[str]`, a list of the atomic symbols.
@@ -86,14 +90,8 @@ def extract_xyz(filename, verbose=True, xyz_format='grendel', use_kcal=True):
   dtype = get_float_type(convert=False)
   num_examples = FLAGS.num_examples
   num_atoms = FLAGS.num_atoms
-
   energies = np.zeros((num_examples,), dtype=dtype)
   coordinates = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
-
-  if use_kcal:
-    unit = hartree_to_kcal
-  else:
-    unit = 1.0
 
   if FLAGS.parse_forces:
     forces = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
@@ -171,13 +169,17 @@ def extract_xyz(filename, verbose=True, xyz_format='grendel', use_kcal=True):
   return species, energies, coordinates, forces
 
 
-def get_filename(train=True):
+def get_filenames(train=True):
   """
+  Return the binary data file and the config file.
 
   Args:
-    train:
+    train: boolean indicating whether the training data file or the testing file
+      should be returned.
 
   Returns:
+    (binfile, jsonfile): the binary file to read data and the json file to read
+      configs..
 
   """
 
@@ -186,8 +188,10 @@ def get_filename(train=True):
     makedirs(binary_dir)
 
   fname = FLAGS.dataset
-  records = {"train": join(binary_dir, "%s-train.tfrecords" % fname),
-             "test": join(binary_dir, "%s-test.tfrecords" % fname)}
+  records = {"train": (join(binary_dir, "%s-train.tfrecords" % fname),
+                       join(binary_dir, "%s-train.json" % fname)),
+             "test": (join(binary_dir, "%s-test.tfrecords" % fname),
+                      join(binary_dir, "%s-test.json" % fname))}
 
   if train:
     return records['train']
@@ -204,8 +208,8 @@ def may_build_dataset(verbose=True):
       or not.
 
   """
-  train_file = get_filename(train=True)
-  test_file = get_filename(train=False)
+  train_file, _ = get_filenames(train=True)
+  test_file, _ = get_filenames(train=False)
 
   # Check if the xyz file is accessible.
   xyzfile = join("..", "datasets", "%s.xyz" % FLAGS.dataset)
@@ -217,7 +221,8 @@ def may_build_dataset(verbose=True):
   species, energies, coordinates, forces = extract_xyz(
     xyzfile,
     verbose=verbose,
-    xyz_format=FLAGS.format
+    xyz_format=FLAGS.format,
+    unit=hartree_to_ev
   )
 
   # Determine the unique atomic symbol combinations.
@@ -246,11 +251,10 @@ depth = comb(FLAGS.many_body_k, 2, exact=True)
 
 def read_and_decode(filename_queue):
   """
+  Read and decode the binary dataset file.
 
   Args:
-    filename_queue:
-
-  Returns:
+    filename_queue: an input queue.
 
   """
 
@@ -269,6 +273,7 @@ def read_and_decode(filename_queue):
   features = tf.decode_raw(example['features'], dtype)
   features.set_shape([height * depth])
   features = tf.reshape(features, [1, height, depth])
+
   energy = tf.decode_raw(example['energy'], dtype)
   energy.set_shape([1])
   energy = tf.squeeze(energy)
@@ -285,14 +290,17 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     batch_size: Number of examples per returned batch.
     num_epochs: Number of times to read the input data, or 0/None to
        train forever.
+    num_groups:
     shuffle:
 
   Returns:
-    A tuple (images, labels), where:
-    * images is a float tensor with shape [batch_size, mnist.IMAGE_PIXELS]
+    A tuple (features, energies, offsets), where:
+    * features is a float tensor with shape [batch_size, mnist.IMAGE_PIXELS]
       in the range [-0.5, 0.5].
     * labels is an int32 tensor with shape [batch_size] with the true label,
       a number in the range [0, mnist.NUM_CLASSES).
+    * offsets
+
     Note that an tf.train.QueueRunner is added to the graph, which
     must be run using e.g. tf.train.start_queue_runners().
 
@@ -300,7 +308,10 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
   if not num_epochs:
     num_epochs = None
 
-  filename = get_filename(train=train)
+  filename, cfgfile = get_filenames(train=train)
+
+  with open(cfgfile) as f:
+    offsets = dict(json.load(f))["chunk_sizes"]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -310,22 +321,24 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    x, y = read_and_decode(filename_queue)
+    features, energies = read_and_decode(filename_queue,)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
     if shuffle:
-      features, energies = tf.train.shuffle_batch(
-        [x, y], batch_size=batch_size, num_threads=2,
+      batch_features, batch_energies = tf.train.shuffle_batch(
+        [features, energies], batch_size=batch_size, num_threads=2,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
-        min_after_dequeue=1000)
+        min_after_dequeue=1000
+      )
     else:
-      features, energies = tf.train.batch(
-        [x, y], batch_size=batch_size, num_threads=2,
-        capacity=1000 + 3 * batch_size)
-    return features, energies
+      batch_features, batch_energies = tf.train.batch(
+        [features, energies], batch_size=batch_size, num_threads=2,
+        capacity=1000 + 3 * batch_size
+      )
+    return batch_features, batch_energies, offsets
 
 
 if __name__ == "__main__":

@@ -83,6 +83,7 @@ def get_number_of_trainable_parameters(verbose=False):
       print("{:25s}   {:d}".format(var.name, nvar))
     ntotal += nvar
   print("Total number of parameters: %d" % ntotal)
+  print("")
 
 
 def inputs(train=True, shuffle=True):
@@ -99,22 +100,21 @@ def inputs(train=True, shuffle=True):
     energies: the dedired energies. 2D tensor of shape [batch_size, 1].
 
   """
-  features, energies = kbody_input.inputs(train=train,
-                                          batch_size=FLAGS.batch_size,
-                                          num_epochs=None,
-                                          shuffle=shuffle)
-  return features, energies
+  features, energies, offsets = kbody_input.inputs(
+    train=train,
+    batch_size=FLAGS.batch_size,
+    num_epochs=None,
+    shuffle=shuffle)
+  return features, energies, offsets
 
 
-def inference(conv, verbose=True):
+def _inference(conv, verbose=True):
   """
   Infer the Behler's model for a monoatomic cluster.
 
   Args:
     conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
       the monoatomic cluster and M is the number of features.
-    activation: the activation function. Defaults to `tf.nn.tanh`.
-    hidden_sizes: List[int], the number of units of each hidden layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
   Returns:
@@ -124,28 +124,27 @@ def inference(conv, verbose=True):
 
   """
 
-  hidden_sizes = (40, 100, 400, 100, 20)
+  hidden_sizes = (40, 100, 200, 100, 20)
+  hidden_fn = (
+    tf.nn.tanh, tf.nn.tanh, tf.nn.tanh, tf.nn.softplus, tf.nn.softplus
+  )
   kernel_size = 1
   stride = 1
   padding = 'SAME'
   dtype = kbody_input.get_float_type(convert=True)
 
   for i, units in enumerate(hidden_sizes):
-    if i == len(hidden_sizes) - 1:
-      activation = tf.nn.relu
-    else:
-      activation = tf.nn.tanh
     conv = conv2d(
       conv,
       units,
       kernel_size,
-      activation_fn=activation,
+      activation_fn=hidden_fn[i],
       stride=stride,
       padding=padding,
       scope="Hidden{:d}".format(i + 1),
       weights_initializer=initializers.xavier_initializer(
         seed=SEED, dtype=dtype),
-      biases_initializer=init_ops.zeros_initializer(dtype=dtype)
+      biases_initializer=init_ops.zeros_initializer(dtype=dtype),
     )
     if verbose:
       print_activations(conv)
@@ -169,14 +168,43 @@ def inference(conv, verbose=True):
   if verbose:
     print_activations(flat)
 
-  total_energy = tf.reduce_sum(flat, axis=1, keep_dims=False)
+  total_energies = tf.reduce_sum(flat, axis=1, keep_dims=False)
   if verbose:
-    print_activations(total_energy)
+    print_activations(total_energies)
 
   if verbose:
     get_number_of_trainable_parameters(verbose=verbose)
 
-  return total_energy, k_body_energies
+  return total_energies, k_body_energies
+
+
+def inference(input_tensor, offsets, verbose=True):
+  """
+  The general inference function.
+
+  Args:
+    input_tensor:
+    offsets:
+    verbose:
+
+  Returns:
+    total_energies: a Tensor representing the estimated total energies.
+
+  """
+
+  input_convs = tf.split(input_tensor, offsets, axis=2, name="Partition")
+
+  total_energies = []
+  kbody_energies = []
+  scopes = ["BBBB", "BBBTa"]
+
+  for i, conv in enumerate(input_convs):
+    with tf.variable_scope(scopes[i]):
+      net_total_energies, net_kbody_energies = _inference(conv, verbose=verbose)
+      total_energies.append(net_total_energies)
+      kbody_energies.append(net_kbody_energies)
+
+  return tf.multiply(tf.add_n(total_energies), -1.0)
 
 
 def _add_loss_summaries(total_loss):

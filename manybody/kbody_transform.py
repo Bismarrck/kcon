@@ -9,10 +9,12 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import sys
+import json
 from scipy.misc import comb
 from itertools import combinations, product, repeat, chain
 from sklearn.metrics import pairwise_distances
 from collections import Counter
+from os.path import basename, dirname, join, splitext
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -148,6 +150,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
     offsets.append(offsets[-1] + cnk)
   offsets.append(-1)
   offsets = np.asarray(offsets, dtype=np.int64)
+  sizes = np.diff(offsets[:-1])
 
   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
   num_traj = len(coordinates)
@@ -166,7 +169,8 @@ def transform_and_save(coordinates, energies, species, orders, filename):
     y = np.atleast_2d(energies[i]).tostring()
     example = tf.train.Example(
       features=tf.train.Features(
-        feature={'energy': _bytes_feature(y), 'features': _bytes_feature(x)}))
+        feature={'energy': _bytes_feature(y),
+                 'features': _bytes_feature(x)}))
     writer.write(example.SerializeToString())
 
     if i % 100 == 0:
@@ -174,8 +178,16 @@ def transform_and_save(coordinates, energies, species, orders, filename):
 
   print("")
   print("Transforming %s finished!" % filename)
-  print("")
   writer.close()
+
+  cfgfile = join(
+    dirname(filename),
+    "%s.json" % basename(splitext(filename)[0])
+  )
+  print("Save configs to %s" % cfgfile)
+  with open(cfgfile, "w+") as f:
+    json.dump({"chunk_sizes": sizes.tolist()}, f)
+  print("")
 
 
 def _test_map_indices():
@@ -185,5 +197,23 @@ def _test_map_indices():
   assert mapping['B,B,B,Li'][0, 0] == 9
 
 
+def _test_split_tensor():
+
+  raw_inputs = np.arange(36, dtype=np.float32).reshape((1, 1, 6, 6))
+  raw_offsets = [4, 2]
+
+  inputs = tf.constant(raw_inputs)
+  partitions = tf.split(inputs, raw_offsets, axis=2)
+
+  with tf.Session() as sess:
+
+    values = sess.run(partitions)
+
+    assert len(values) == 2
+    assert np.linalg.norm(values[0] - raw_inputs[:, :, 0:4, :]) == 0.0
+    assert np.linalg.norm(values[0] - raw_inputs[:, :, 4:6, :]) == 0.0
+
+
 if __name__ == "__main__":
   _test_map_indices()
+  _test_split_tensor()

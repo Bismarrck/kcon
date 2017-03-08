@@ -28,12 +28,13 @@ def train_model(*args):
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Get features and energies.
-    features, energies = kbody.inputs(train=True)
+    features, energies, offsets = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies, _ = kbody.inference(
+    pred_energies = kbody.inference(
       features,
+      offsets,
       verbose=True
     )
 
@@ -58,7 +59,7 @@ def train_model(*args):
       def after_run(self, run_context, run_values):
         duration = time.time() - self._start_time
         loss_value = run_values.results
-        if self._step % 100 == 0:
+        if self._step % 1 == 0:
           num_examples_per_step = FLAGS.batch_size
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
