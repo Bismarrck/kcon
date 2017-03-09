@@ -92,7 +92,7 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
   dtype = get_float_type(convert=False)
   num_examples = FLAGS.num_examples
   num_atoms = FLAGS.num_atoms
-  energies = np.zeros((num_examples,), dtype=dtype)
+  energies = np.zeros((num_examples,), dtype=np.float64)
   coordinates = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
 
   if FLAGS.parse_forces:
@@ -224,7 +224,7 @@ def may_build_dataset(verbose=True):
     xyzfile,
     verbose=verbose,
     xyz_format=FLAGS.format,
-    unit=hartree_to_ev
+    unit=1.0
   )
 
   # Determine the unique atomic symbol combinations.
@@ -244,7 +244,7 @@ def may_build_dataset(verbose=True):
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
   transform_and_save(coords_test, energies_test, species, orders, test_file)
-  transform_and_save(coords_train, energies_train,  species, orders, train_file)
+  transform_and_save(coords_train, energies_train, species, orders, train_file)
 
 
 height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
@@ -276,7 +276,7 @@ def read_and_decode(filename_queue):
   features.set_shape([height * depth])
   features = tf.reshape(features, [1, height, depth])
 
-  energy = tf.decode_raw(example['energy'], dtype)
+  energy = tf.decode_raw(example['energy'], tf.float64)
   energy.set_shape([1])
   energy = tf.squeeze(energy)
 
@@ -329,14 +329,14 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     # We run this in two threads to avoid being a bottleneck.
     if shuffle:
       batch_features, batch_energies = tf.train.shuffle_batch(
-        [features, energies], batch_size=batch_size, num_threads=2,
+        [features, energies], batch_size=batch_size, num_threads=1,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000
       )
     else:
       batch_features, batch_energies = tf.train.batch(
-        [features, energies], batch_size=batch_size, num_threads=2,
+        [features, energies], batch_size=batch_size, num_threads=1,
         capacity=1000 + 3 * batch_size
       )
     return batch_features, batch_energies, offsets
@@ -356,17 +356,16 @@ def test(*args):
     xyzfile,
     verbose=False,
     xyz_format=FLAGS.format,
-    unit=hartree_to_ev
+    unit=1.0
   )
 
-  coords_train, _, energies_train, _ = train_test_split(
+  coords_train, coords_test, energies_train, energies_test = train_test_split(
     coordinates,
     energies,
     test_size=0.2,
     random_state=SEED
   )
 
-  dists = pairwise_distances(coords_train[0])
   pyykko_bb = 1.7 * 1.5
   pyykko_tb = 2.31 * 1.5
 
@@ -378,33 +377,51 @@ def test(*args):
                        train_file)
 
   with tf.Session() as sess:
-    features, energies, offsets = inputs(
-      train=True, batch_size=1, num_epochs=None, shuffle=False
+    features_op, energies_op, offsets = inputs(
+      train=True, batch_size=5, num_epochs=None, shuffle=False
     )
     tf.train.start_queue_runners(sess=sess)
 
+    # --------
+    # Features
+    # --------
     try:
       # The shape of `values` is [1, 1, 5985, 6].
       # The first part, [:, :, :4845, 6] represents the 4-body term of B-B-B-B.
       # The indices of Borons are from 1 to 20, so the first element should be
       # the scaled distance between B_1 and B_2.
-      values = sess.run(features)
+      features, energies = sess.run([features_op, energies_op])
 
-      r = values[0, 0, 0, 0]
-      y = np.exp(-np.linalg.norm(dists[1, 2]) / pyykko_bb)
-      assert np.linalg.norm(r - y) < 0.00001
+      for i in range(5):
+        dists = pairwise_distances(coords_train[i])
+        r = features[i, 0, 0, 0]
+        y = np.exp(-np.linalg.norm(dists[1, 2]) / pyykko_bb)
+        assert np.linalg.norm(r - y) < 0.00001
 
-      # The second part, [:, :, 4845:5985, 6], represents the 4-body term of
-      # Ta-B-B-B. The index of Ta is 0, so the last element should be the scaled
-      # distance of Ta_0 and B_20.
-      r = values[0, 0, -1, -1]
-      y = np.exp(-np.linalg.norm(dists[0, 20]) / pyykko_tb)
-      assert np.linalg.norm(r - y) < 0.00001
+        # The second part, [:, :, 4845:5985, 6], represents the 4-body term of
+        # Ta-B-B-B. The index of Ta is 0, so the last element should be the scaled
+        # distance of Ta_0 and B_20.
+        r = features[i, 0, -1, -1]
+        y = np.exp(-np.linalg.norm(dists[0, 20]) / pyykko_tb)
+        assert np.linalg.norm(r - y) < 0.00001
 
     except AssertionError:
-      print("The tests are failed!")
+      print("The `features` tests are failed!")
     else:
-      print("The tests are passed!")
+      print("The `features` tests are passed!")
+
+    # --------
+    # Energies
+    # --------
+    try:
+      r = energies[0:5]
+      y = energies_train[0:5]
+      assert np.max(np.abs(r + y)) < 0.00001
+
+    except AssertionError:
+      print("The `energies` tests are failed!")
+    else:
+      print("The `energies` tests are passed!")
 
 
 if __name__ == "__main__":

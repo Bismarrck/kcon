@@ -65,18 +65,19 @@ def get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
     return lmat
 
 
-def map_indices(species, orders):
+def map_indices(species, kbody_terms):
   """
   Build the mapping from interatomic distances matrix to the [C(N,k), C(k,2)]
   feature matrix.
 
   Args:
     species: a list of str as the ordered atomic symbols.
-    orders: a list of comma-separated elements string as the ordered many-body
+    kbody_terms: a list of comma-separated elements string as the ordered k-body
       atomic symbol combinations.
 
   Returns:
     mapping: a dict
+    selection: a dict
 
   """
   natoms = len(species)
@@ -87,8 +88,9 @@ def map_indices(species, orders):
       if species[i] == element:
         indices[element] = indices.get(element, []) + [i]
   mapping = {}
-  for order in orders:
-    elements = order.split(",")
+  selections = {}
+  for term in kbody_terms:
+    elements = term.split(",")
     ck2 = comb(len(elements), 2, exact=True)
     c = Counter(elements)
     keys = sorted(c.keys())
@@ -96,12 +98,13 @@ def map_indices(species, orders):
                   for e in keys]
     # All k-order combinations of elements
     pairs = [list(chain(*o)) for o in product(*candidates)]
+    selections[kbody_terms] = pairs
     cnk = len(pairs)
-    mapping[order] = np.zeros((ck2, cnk), dtype=int)
+    mapping[term] = np.zeros((ck2, cnk), dtype=int)
     for i in range(cnk):
       for j, (vi, vj) in enumerate(combinations(pairs[i], 2)):
-        mapping[order][j, i] = vi * natoms + vj
-  return mapping
+        mapping[term][j, i] = vi * natoms + vj
+  return mapping, selections
 
 
 def _exponential(d, s):
@@ -138,7 +141,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
 
   """
 
-  mapping = map_indices(species, orders)
+  mapping, selections = map_indices(species, orders)
   writer = tf.python_io.TFRecordWriter(filename)
   offsets = [0]
   cnk = 0
@@ -155,6 +158,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
   num_traj = len(coordinates)
   lmat = get_pyykko_bonds_matrix(species, flatten=True)
+  energies *= -1.0
 
   print("k-body terms: ")
   for order in orders:
@@ -192,7 +196,8 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   print("Save configs to %s" % cfgfile)
   with open(cfgfile, "w+") as f:
     json.dump({"kbody_term_sizes": sizes.tolist(),
-               "kbody_terms": orders}, f)
+               "kbody_terms": orders,
+               "kbody_selections": selections}, f)
   print("")
 
 
