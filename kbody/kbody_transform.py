@@ -98,7 +98,7 @@ def map_indices(species, kbody_terms):
                   for e in keys]
     # All k-order combinations of elements
     pairs = [list(chain(*o)) for o in product(*candidates)]
-    selections[kbody_terms] = pairs
+    selections[term] = pairs
     cnk = len(pairs)
     mapping[term] = np.zeros((ck2, cnk), dtype=int)
     for i in range(cnk):
@@ -197,7 +197,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   with open(cfgfile, "w+") as f:
     json.dump({"kbody_term_sizes": sizes.tolist(),
                "kbody_terms": orders,
-               "kbody_selections": selections}, f)
+               "kbody_selections": selections}, f, indent=2)
   print("")
 
 

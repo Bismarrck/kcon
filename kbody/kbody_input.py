@@ -296,11 +296,9 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
 
   Returns:
     A tuple (features, energies, offsets), where:
-    * features is a float tensor with shape [batch_size, mnist.IMAGE_PIXELS]
-      in the range [-0.5, 0.5].
-    * labels is an int32 tensor with shape [batch_size] with the true label,
-      a number in the range [0, mnist.NUM_CLASSES).
-    * offsets
+    * features is a float tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
+      the range [0.0, 1.0].
+    * energies is a float tensor with shape [batch_size, ].
 
     Note that an tf.train.QueueRunner is added to the graph, which
     must be run using e.g. tf.train.start_queue_runners().
@@ -309,10 +307,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
   if not num_epochs:
     num_epochs = None
 
-  filename, cfgfile = get_filenames(train=train)
-
-  with open(cfgfile) as f:
-    offsets = dict(json.load(f))["kbody_term_sizes"]
+  filename, _ = get_filenames(train=train)
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -339,7 +334,24 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
         [features, energies], batch_size=batch_size, num_threads=1,
         capacity=1000 + 3 * batch_size
       )
-    return batch_features, batch_energies, offsets
+    return batch_features, batch_energies
+
+
+def inputs_settings(train=True):
+  """
+  Return the global settings for inputs.
+
+  Args:
+    train: boolean indicating if one should return settings for training or
+      validation.
+
+  Returns:
+    settings: a dict of settings.
+
+  """
+  _, cfgfile = get_filenames(train=train)
+  with open(cfgfile) as f:
+    return dict(json.load(f))
 
 
 def test(*args):
