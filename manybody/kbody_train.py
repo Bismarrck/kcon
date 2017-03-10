@@ -8,6 +8,8 @@ import tensorflow as tf
 import time
 import kbody
 from datetime import datetime
+from tensorflow.python.client.timeline import Timeline
+from os.path import join
 
 __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
@@ -27,9 +29,12 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_boolean('restart', True,
                             """Restore the latest checkpoint if possible.""")
+tf.app.flags.DEFINE_boolean('timeline', False,
+                            """Enable timeline profiling if True.""")
 
 
 def train_model(*args):
+
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
@@ -57,10 +62,12 @@ def train_model(*args):
     train_op = kbody.get_train_op(loss, global_step, scale=scale, clip=False)
 
     class _LoggerHook(tf.train.SessionRunHook):
-      """Logs loss and runtime."""
+      """ Logs loss and runtime."""
 
       def __init__(self):
         super(_LoggerHook, self).__init__()
+        self._step = -1
+        self._start_time = 0
 
       def begin(self):
         self._step = -1
@@ -91,13 +98,37 @@ def train_model(*args):
             print(" - predicted: %.5f, desired: %.5f" % (y_[i], y[i]))
 
     saver = tf.train.Saver()
+    run_meta = tf.RunMetadata()
+    run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+
+    class _TimelineHook(tf.train.SessionRunHook):
+      """ A hook to output tracing results for further performance analysis. """
+
+      def __init__(self):
+        super(_TimelineHook, self).__init__()
+        self._counter = -1
+
+      def begin(self):
+        self._counter = -1
+
+      def get_ctf(self):
+        return join(FLAGS.train_dir, "prof_%d.json" % self._counter)
+
+      def after_run(self, run_context, run_values):
+        self._counter += 1
+        if FLAGS.timeline and self._counter % 5 == 0:
+            timeline = Timeline(step_stats=run_meta.step_stats)
+            ctf = timeline.generate_chrome_trace_format()
+            with open(self.get_ctf(), "w+") as f:
+              f.write(ctf)
 
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
-               _LoggerHook()],
+               _LoggerHook(),
+               _TimelineHook()],
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
@@ -107,7 +138,10 @@ def train_model(*args):
         if ckpt and ckpt.model_checkpoint_path:
           saver.restore(mon_sess, ckpt.model_checkpoint_path)
       while not mon_sess.should_stop():
-        mon_sess.run(train_op)
+        if FLAGS.timeline:
+          mon_sess.run(train_op, options=run_options, run_metadata=run_meta)
+        else:
+          mon_sess.run(train_op)
 
 
 if __name__ == "__main__":
