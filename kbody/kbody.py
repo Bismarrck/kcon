@@ -130,7 +130,7 @@ def _inference_kbody(conv, kbody_term, verbose=True):
     if verbose:
       print("Inference k-body of %s ..." % kbody_term)
 
-    hidden_sizes = (40, 100, 200, 100, 20)
+    hidden_sizes = (40, 60, 90, 70, 10)
     hidden_fn = (
       tf.nn.tanh, tf.nn.tanh, tf.nn.tanh, tf.nn.tanh, tf.nn.tanh
     )
