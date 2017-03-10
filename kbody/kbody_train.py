@@ -41,8 +41,16 @@ def train_model(*args):
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
+    # Read dataset configurations
+    settings = kbody.inputs_settings(train=True)
+    offsets = settings["kbody_term_sizes"]
+
+    # Remove all commas because tensorflow scope name can not contain such
+    # characters.
+    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+
     # Get features and energies.
-    features, energies, offsets = kbody.inputs(train=True)
+    features, energies = kbody.inputs(train=True)
 
     # Set the scaling factor
     num_kernels = features.get_shape().as_list()[2] * len(offsets)
@@ -53,6 +61,7 @@ def train_model(*args):
     pred_energies = kbody.inference(
       features,
       offsets,
+      kbody_terms=kbody_terms,
       verbose=True,
     )
     energies = tf.cast(energies, tf.float32)
@@ -113,13 +122,16 @@ def train_model(*args):
       def get_ctf(self):
         return join(FLAGS.train_dir, "prof_%d.json" % self._counter)
 
+      def should_save(self):
+        return FLAGS.timeline and self._counter % FLAGS.save_frequency == 0
+
       def after_run(self, run_context, run_values):
         self._counter += 1
-        if FLAGS.timeline and self._counter % 5 == 0:
-            timeline = Timeline(step_stats=run_meta.step_stats)
-            ctf = timeline.generate_chrome_trace_format()
-            with open(self.get_ctf(), "w+") as f:
-              f.write(ctf)
+        if self.should_save():
+          timeline = Timeline(step_stats=run_meta.step_stats)
+          ctf = timeline.generate_chrome_trace_format(show_memory=True)
+          with open(self.get_ctf(), "w+") as f:
+            f.write(ctf)
 
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
