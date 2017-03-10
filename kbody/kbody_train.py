@@ -25,6 +25,9 @@ tf.app.flags.DEFINE_integer('max_steps', 10000,
 tf.app.flags.DEFINE_integer('save_frequency', 20,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
+tf.app.flags.DEFINE_integer('log_frequency', 100,
+                            """The frequency, in number of global steps, that
+                            the training progress wiil be logged.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_boolean('restart', True,
@@ -68,6 +71,7 @@ def train_model(*args):
         super(_LoggerHook, self).__init__()
         self._step = -1
         self._start_time = 0
+        self._log_frequency = FLAGS.log_frequency
 
       def begin(self):
         self._step = -1
@@ -75,27 +79,22 @@ def train_model(*args):
       def before_run(self, run_context):
         self._step += 1
         self._start_time = time.time()
-        return tf.train.SessionRunArgs(
-          {"loss": loss, # Asks for loss value.
-           "energies": energies, # Asks for desired and estimated energies
-           "pred_energies": pred_energies})
+        return tf.train.SessionRunArgs({"loss": loss})
+
+      def should_log(self):
+        return self._step % self._log_frequency == 0
 
       def after_run(self, run_context, run_values):
         duration = time.time() - self._start_time
         loss_value = run_values.results["loss"]
         num_examples_per_step = FLAGS.batch_size
-        if self._step % 10 == 0:
+        if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
           fstr = ('%s: step %6d, loss = %10.6f (%6.1f examples/sec; %7.3f '
                   'sec/batch)')
           print(fstr % (datetime.now(), self._step, loss_value,
                         examples_per_sec, sec_per_batch))
-        if self._step % 200 == 0:
-          y = run_values.results["energies"]
-          y_ = run_values.results["pred_energies"]
-          for i in range(num_examples_per_step):
-            print(" - predicted: %.5f, desired: %.5f" % (y_[i], y[i]))
 
     saver = tf.train.Saver()
     run_meta = tf.RunMetadata()
