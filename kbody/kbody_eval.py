@@ -12,7 +12,6 @@ import time
 import numpy as np
 import tensorflow as tf
 import kbody
-from sklearn.metrics import r2_score
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -74,7 +73,7 @@ def eval_once(saver, summary_writer, mae_op, summary_op):
 
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op))
-      summary.value.add(tag='Precision @ 1', simple_value=precision)
+      summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
       summary_writer.add_summary(summary, global_step)
 
     except Exception as e:  # pylint: disable=broad-except
