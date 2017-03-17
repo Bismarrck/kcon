@@ -107,6 +107,33 @@ def map_indices(species, kbody_terms):
   return mapping, selections
 
 
+def get_sort_indices(orders):
+  """
+  Generate the soring indices.
+
+  Args:
+    orders: a List as the ordered many-body atomic symbol combiantions.
+
+  Returns:
+    indices: a dict of indices for sorting along the last axis of the input
+      features.
+
+  """
+  indices = {}
+  for order in orders:
+    elements = list(sorted(order.split(",")))
+    atom_pairs = list(combinations(elements, r=2))
+    n = len(atom_pairs)
+    counter = Counter(atom_pairs)
+    if max(counter.values()) == 1:
+      continue
+    indices[order] = []
+    for pair, times in counter.items():
+      if times > 1:
+        indices[order].append([i for i in range(n) if atom_pairs[i] == pair])
+  return indices
+
+
 def _exponential(d, s):
   """
   Do the exponential scaling on the given array `d`.
@@ -127,7 +154,8 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def transform_and_save(coordinates, energies, species, orders, filename):
+def transform_and_save(coordinates, energies, species, orders, filename,
+                       sort=False):
   """
   Transform the given atomic coordinates to input features and save them to
   tfrecords files using `tf.TFRecordWriter`.
@@ -138,6 +166,7 @@ def transform_and_save(coordinates, energies, species, orders, filename):
     species: a List as the ordered atomic symboles.
     orders: a List as the ordered many-body atomic symbol combiantions.
     filename: a str, the file to save examples.
+    sort: a boolean indicating whether sorting the input features or not.
 
   """
 
@@ -154,6 +183,11 @@ def transform_and_save(coordinates, energies, species, orders, filename):
   offsets.append(-1)
   offsets = np.asarray(offsets, dtype=np.int64)
   sizes = np.diff(offsets[:-1])
+
+  if sort:
+    sort_indices = get_sort_indices(orders)
+  else:
+    sort_indices = {}
 
   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
   num_traj = len(coordinates)
@@ -174,6 +208,17 @@ def transform_and_save(coordinates, energies, species, orders, filename):
     for j, order in enumerate(orders):
       for k in range(ck2):
         sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+
+    sample -= np.exp(-3.0)
+    sample[sample < 0.0] = 0.0
+
+    if sort:
+      for j, order in enumerate(orders):
+        for ix in sort_indices.get(order, []):
+          z = sample[offsets[j]: offsets[j + 1], ix]
+          z.sort(axis=1)
+          sample[offsets[j]: offsets[j + 1], ix] = z
+
     x = sample.tostring()
     y = np.atleast_2d(energies[i]).tostring()
     example = tf.train.Example(
@@ -225,6 +270,6 @@ def _test_split_tensor():
     assert np.linalg.norm(values[0] - raw_inputs[:, :, 4:6, :]) == 0.0
 
 
-if __name__ == "__main__":
-  _test_map_indices()
-  _test_split_tensor()
+# if __name__ == "__main__":
+#   _test_map_indices()
+#   _test_split_tensor()

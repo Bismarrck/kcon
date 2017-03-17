@@ -9,7 +9,6 @@ import numpy as np
 import kbody_input
 from itertools import repeat
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
-from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from kbody_input import SEED
 
@@ -21,12 +20,15 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
+tf.app.flags.DEFINE_integer('num_epochs_per_decay', 25,
+                            """Epochs after which learning rate decays.""")
+tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.95,
+                          """The learning rate decay factor.""")
+tf.app.flags.DEFINE_float('learning_rate', 0.1,
+                          """The initial learning rate.""")
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
-NUM_EPOCHS_PER_DECAY = 20.0        # Epochs after which learning rate decays.
-LEARNING_RATE_DECAY_FACTOR = 0.98  # Learning rate decay factor.
-INITIAL_LEARNING_RATE = 0.1        # Initial learning rate.
 
 
 def variable_summaries(tensor):
@@ -185,7 +187,7 @@ def _inference_alex_kbody(conv, kbody_term, sizes=(40, 70, 60, 2, 40, 20),
     return energies
 
 
-def _inference_sum_kbody(conv, kbody_term, sizes=(40, 60, 80, 70, 10),
+def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 120),
                          verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
@@ -224,8 +226,8 @@ def _inference_sum_kbody(conv, kbody_term, sizes=(40, 60, 80, 70, 10),
         stride=stride,
         padding=padding,
         scope="Hidden{:d}".format(i + 1),
-        weights_initializer=initializers.xavier_initializer(
-          seed=SEED, dtype=dtype),
+        weights_initializer=init_ops.truncated_normal_initializer(
+          seed=SEED, dtype=dtype, stddev=0.1),
         biases_initializer=init_ops.zeros_initializer(dtype=dtype),
       )
       if verbose:
@@ -235,7 +237,7 @@ def _inference_sum_kbody(conv, kbody_term, sizes=(40, 60, 80, 70, 10),
       conv,
       1,
       kernel_size,
-      activation_fn=None,
+      activation_fn=tf.nn.relu,
       biases_initializer=None,
       weights_initializer=init_ops.truncated_normal_initializer(
         seed=SEED, dtype=dtype, stddev=0.1),
@@ -289,6 +291,8 @@ def inference(input_tensor, offsets, kbody_terms, model='sum-kbody-cnn',
     raise ValueError("The model `{}` is not supported!".format(model))
 
   concat = tf.concat(kbody_energies, axis=1)
+  tf.summary.histogram("kbody_contribs", concat)
+
   if verbose:
     print_activations(concat)
 
@@ -342,9 +346,9 @@ def get_total_loss(energies, pred_energies, atomic=False):
 
   """
   if atomic:
-    scale = tf.constant(FLAGS.num_atoms, tf.float32)
+    scale = tf.constant(FLAGS.num_atoms, tf.float32, name="natoms")
   else:
-    scale = tf.constant(1.0, tf.float32)
+    scale = tf.constant(1.0, tf.float32, name="one")
 
   with tf.name_scope("outputs"):
     with tf.name_scope("batch"):
@@ -365,7 +369,17 @@ def get_total_loss(energies, pred_energies, atomic=False):
   return loss
 
 
-def get_train_op(total_loss, global_step, scale=1.0, clip=False):
+def _get_kbody_scope(var):
+  """
+  Return the kbody scope of the given variable tensor.
+  """
+  if "/" not in var.op.name:
+    return None
+  else:
+    return var.op.name.split("/")[0]
+
+
+def get_train_op(total_loss, global_step, kbody_scales=None):
   """
   Train the Behler model.
 
@@ -376,8 +390,7 @@ def get_train_op(total_loss, global_step, scale=1.0, clip=False):
     total_loss: the total loss Tensor.
     global_step: Integer Variable counting the number of training steps
       processed.
-    num_kernels: a Tensor of `int` as the total number of 1x1 kernels.
-    clip: boolena indicating explicitly clip gradients or not.
+    kbody_scales: a dict, the scale Tensors for the kbody terms.
 
   Returns:
     train_op: op for training.
@@ -387,34 +400,35 @@ def get_train_op(total_loss, global_step, scale=1.0, clip=False):
   # Variables that affect learning rate.
   train_size = FLAGS.num_examples * 0.8
   num_batches_per_epoch = train_size // FLAGS.batch_size
-  decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
+  decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay)
 
   # Decay the learning rate exponentially based on the number of steps.
-  lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
+  lr = tf.train.exponential_decay(FLAGS.learning_rate,
                                   global_step,
                                   decay_steps,
-                                  LEARNING_RATE_DECAY_FACTOR,
+                                  FLAGS.learning_rate_decay_factor,
                                   staircase=True)
   tf.summary.scalar('learning_rate', lr)
 
   # Compute gradients.
-  opt = tf.train.AdamOptimizer(lr)
-  grads = opt.compute_gradients(total_loss)
-
-  # Compute the 2-norm of the gradients
-  # norms = {}
-  # for grad, var in grads:
-  #   norms[var] = tf.norm(grad, name=var.op.name + '/gnorm')
-  # norm = tf.add_n(list(norms.values()), name="gnorm")
-  # scale = tf.minimum(tf.maximum(scale, 1.0 / norm), 1.0)
-  # tf.summary.scalar('grad_scale', scale)
+  opt = tf.train.MomentumOptimizer(lr, 0.8)
 
   # Explicitly scale the gradients.
-  # grads = [(grad * scale, var) for grad, var in grads]
+  if kbody_scales is None:
+    kbody_scales = {}
+  grads = []
+  for grad, var in opt.compute_gradients(total_loss):
+    scope = _get_kbody_scope(var)
+    scale = kbody_scales.get(scope)
+    if scale is None:
+      grads.append((grad, var))
+    else:
+      grads.append((grad * scale, var))
 
-  # Explicitly clip the gradients to avoid explodes!
-  if clip:
-    grads = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in grads]
+  # Add histograms for grandients
+  for grad, var in grads:
+    tf.summary.histogram(var.op.name + "/gradients", grad)
+    tf.summary.scalar(var.op.name + "/grad_norm", tf.norm(grad))
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
@@ -422,12 +436,6 @@ def get_train_op(total_loss, global_step, scale=1.0, clip=False):
   # Add histograms for trainable variables.
   for var in tf.trainable_variables():
     tf.summary.histogram(var.op.name, var)
-
-  # Add histograms and norms for gradients.
-  for grad, var in grads:
-    if grad is not None:
-      tf.summary.histogram(var.op.name + '/gradients', grad)
-      # tf.summary.scalar(var.op.name + '/gnorm', norms[var])
 
   # Track the moving averages of all trainable variables.
   variable_averages = tf.train.ExponentialMovingAverage(

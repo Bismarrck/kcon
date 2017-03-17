@@ -76,7 +76,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
 
       # Compute the Mean-Absolute-Error @ 1.
       precision = maes.mean()
-      print('%s: precision = %10.6f hartree' % (datetime.now(), precision))
+      print('%s: precision = %10.6f' % (datetime.now(), precision))
 
       # Compute the linear coefficient
       score = r2_score(y_true, y_pred)

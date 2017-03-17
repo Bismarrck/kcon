@@ -20,7 +20,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 10000,
+tf.app.flags.DEFINE_integer('max_steps', 50000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_integer('save_frequency', 20,
                             """The frequency, in number of global steps, that
@@ -30,13 +30,14 @@ tf.app.flags.DEFINE_integer('log_frequency', 100,
                             the training progress wiil be logged.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_boolean('restart', True,
-                            """Restore the latest checkpoint if possible.""")
+tf.app.flags.DEFINE_boolean('restart', False,
+                            """Restart the training and reset the global step
+                            and learning rate.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
 
 
-def train_model(*args):
+def train_model(unused):
 
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
@@ -44,17 +45,15 @@ def train_model(*args):
     # Read dataset configurations
     settings = kbody.inputs_settings(train=True)
     offsets = settings["kbody_term_sizes"]
-
-    # Remove all commas because tensorflow scope name can not contain such
-    # characters.
-    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+    kbody_terms = []
+    scales = {}
+    for i, kbody_term in enumerate(settings["kbody_terms"]):
+      scope = kbody_term.replace(",", "")
+      kbody_terms.append(scope)
+      scales[scope] = tf.constant(1.0, name="inv%s" % scope)
 
     # Get features and energies.
     features, energies = kbody.inputs(train=True)
-
-    # Set the scaling factor
-    num_kernels = features.get_shape().as_list()[2] * len(offsets)
-    scale = tf.constant(1.0 / num_kernels, dtype=tf.float32)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -71,7 +70,7 @@ def train_model(*args):
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
-    train_op = kbody.get_train_op(loss, global_step, scale=scale, clip=False)
+    train_op = kbody.get_train_op(loss, global_step, kbody_scales=scales)
 
     class _LoggerHook(tf.train.SessionRunHook):
       """ Logs loss and runtime."""
@@ -80,6 +79,7 @@ def train_model(*args):
         super(_LoggerHook, self).__init__()
         self._step = -1
         self._start_time = 0
+        self._epoch = 0.0
         self._log_frequency = FLAGS.log_frequency
 
       def begin(self):
@@ -87,6 +87,7 @@ def train_model(*args):
 
       def before_run(self, run_context):
         self._step += 1
+        self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
         self._start_time = time.time()
         return tf.train.SessionRunArgs({"loss": loss})
 
@@ -100,12 +101,11 @@ def train_model(*args):
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
-          fstr = ('%s: step %6d, loss = %10.6f (%6.1f examples/sec; %7.3f '
-                  'sec/batch)')
-          print(fstr % (datetime.now(), self._step, loss_value,
-                        examples_per_sec, sec_per_batch))
+          format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
+                       "(%6.1f examples/sec; %7.3f sec/batch)"
+          print(format_str % (datetime.now(), self._step, self._epoch,
+                              loss_value, examples_per_sec, sec_per_batch))
 
-    saver = tf.train.Saver()
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
 
@@ -133,6 +133,13 @@ def train_model(*args):
           with open(self.get_ctf(), "w+") as f:
             f.write(ctf)
 
+    if FLAGS.restart:
+      reset_op = tf.assign(global_step, 0)
+      reset = True
+    else:
+      reset_op = tf.no_op("skip")
+      reset = False
+
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
@@ -140,15 +147,14 @@ def train_model(*args):
                tf.train.NanTensorHook(loss),
                _LoggerHook(),
                _TimelineHook()],
+        scaffold=None,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
-      # Manually restore the previous checkpoint.
-      if FLAGS.restart:
-        ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
-        if ckpt and ckpt.model_checkpoint_path:
-          saver.restore(mon_sess, ckpt.model_checkpoint_path)
       while not mon_sess.should_stop():
+        if reset:
+          mon_sess.run(reset_op)
+          reset = False
         if FLAGS.timeline:
           mon_sess.run(train_op, options=run_options, run_metadata=run_meta)
         else:
