@@ -209,9 +209,6 @@ def transform_and_save(coordinates, energies, species, orders, filename,
       for k in range(ck2):
         sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
 
-    sample -= np.exp(-3.0)
-    sample[sample < 0.0] = 0.0
-
     if sort:
       for j, order in enumerate(orders):
         for ix in sort_indices.get(order, []):
