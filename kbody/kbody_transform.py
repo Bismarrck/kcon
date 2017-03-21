@@ -298,10 +298,8 @@ class Transformer:
     workdir = dirname(filename)
     cfgfile = join(workdir, "{}.json".format(name))
     if indices is not None:
-      if hasattr(indices, "tolist"):
+      if isinstance(indices, np.ndarray):
         indices = indices.tolist()
-      else:
-        assert isinstance(indices, (tuple, list))
     else:
       indices = []
 
@@ -310,7 +308,8 @@ class Transformer:
         "kbody_offsets": self._kbody_offsets,
         "kbody_terms": self._orders,
         "kbody_selections": self._selections,
-        "inverse_indices": indices
+        "kbody_term_sizes": self._kbody_sizes.tolist(),
+        "inverse_indices": list([int(i) for i in indices])
       }, f)
 
 # def transform_and_save(coordinates, energies, species, orders, filename,

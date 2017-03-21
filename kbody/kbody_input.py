@@ -251,8 +251,8 @@ def may_build_dataset(verbose=True):
   # tfrecords file.
   sort = FLAGS.sort_inputs
   clf = Transformer(species, orders, sort=sort)
-  clf.transform(coords_test, energies_test, test_file, indices_test)
-  clf.transform(coords_train, energies_train, train_file, indices_train)
+  clf.transform(coords_test, energies_test, test_file, indices=indices_test)
+  clf.transform(coords_train, energies_train, train_file, indices=indices_train)
 
 
 height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
