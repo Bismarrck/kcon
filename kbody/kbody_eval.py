@@ -12,6 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 import kbody
+from sklearn.metrics import r2_score
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -26,10 +27,10 @@ tf.app.flags.DEFINE_integer('eval_interval_secs', 300,
 tf.app.flags.DEFINE_integer('num_evals', 500,
                             """Number of examples to run.""")
 tf.app.flags.DEFINE_boolean('run_once', False,
-                         """Whether to run eval only once.""")
+                            """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, mae_op, summary_op):
+def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
   """Run Eval once.
 
   Args:
@@ -61,19 +62,39 @@ def eval_once(saver, summary_writer, mae_op, summary_op):
 
       num_iter = int(math.ceil(FLAGS.num_evals / FLAGS.batch_size))
       maes = np.zeros((num_iter,), dtype=np.float32)
+      y_true = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
+      y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       step = 0
       while step < num_iter and not coord.should_stop():
-        val = sess.run(mae_op)
-        maes[step] = val
+        mae_val, y_true_, y_pred_ = sess.run([mae_op, y_true_op, y_pred_op])
+        maes[step] = mae_val
+        istart = step * FLAGS.batch_size
+        istop = min(istart + FLAGS.batch_size, FLAGS.num_evals)
+        y_true[istart: istop] = y_true_
+        y_pred[istart: istop] = y_pred_
         step += 1
 
-      # Compute precision @ 1.
+      # Compute the Mean-Absolute-Error @ 1.
       precision = maes.mean()
-      print('%s: precision = %10.6f hartree' % (datetime.now(), precision))
+      print('%s: precision = %10.6f' % (datetime.now(), precision))
+
+      # Compute the linear coefficient
+      score = r2_score(y_true, y_pred)
+      print(" * R2 score: ", score)
+
+      # Randomly output 10 predictions and true values
+      indices = np.random.choice(range(FLAGS.num_evals), size=10)
+      for i in indices:
+        print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
+
+      # Save the y_true and y_pred to a npz file for plotting
+      if FLAGS.run_once:
+        np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
 
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op))
       summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
+      summary.value.add(tag='R2 Score @ 1', simple_value=score)
       summary_writer.add_summary(summary, global_step)
 
     except Exception as e:  # pylint: disable=broad-except
@@ -86,20 +107,27 @@ def eval_once(saver, summary_writer, mae_op, summary_op):
 def evaluate():
   """Eval CIFAR-10 for a number of steps."""
   with tf.Graph().as_default() as g:
+
+    # Read dataset configurations
+    settings = kbody.inputs_settings(train=False)
+    offsets = settings["kbody_term_sizes"]
+    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+
     # Get features and energies for evaluation.
-    features, energies, offsets = kbody.inputs(train=False)
+    features, energies = kbody.inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
     pred_energies = kbody.inference(
       features,
       offsets,
+      kbody_terms=kbody_terms,
       verbose=True,
     )
     energies = tf.cast(energies, tf.float32)
 
     # Calculate predictions.
-    mae = tf.losses.absolute_difference(energies, pred_energies)
+    mae_op = tf.losses.absolute_difference(energies, pred_energies)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -112,13 +140,15 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
     while True:
-      eval_once(saver, summary_writer, mae, summary_op)
+      eval_once(saver, summary_writer, energies, pred_energies, mae_op,
+                summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)
 
 
-def main(argv=None):  # pylint: disable=unused-argument
+# pylint: disable=unused-argument
+def main(argv=None):
   evaluate()
 
 

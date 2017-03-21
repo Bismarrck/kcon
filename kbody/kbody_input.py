@@ -22,27 +22,31 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-FLAGS = tf.app.flags.FLAGS
+flags = tf.app.flags
 
-tf.app.flags.DEFINE_integer("num_examples", 2500,
-                            """The total number of examples to use.""")
-tf.app.flags.DEFINE_integer("num_atoms", 21,
-                            """The number of atoms in each molecule.""")
-tf.app.flags.DEFINE_integer("many_body_k", 4,
-                            """The many-body-expansion order.""")
-tf.app.flags.DEFINE_boolean("use_fp64", False,
-                            """Use double precision floats if True.""")
-tf.app.flags.DEFINE_boolean("parse_forces", False,
-                            """Parse forces from the xyz file if True.""")
-tf.app.flags.DEFINE_string("binary_dir", "./binary",
-                           """The directory for storing binary datasets.""")
-tf.app.flags.DEFINE_string("dataset", "TaB20opted",
-                           """Define the dataset to use. This is also the name
-                           of the xyz file to load.""")
-tf.app.flags.DEFINE_string("format", "xyz",
-                           """The format of the xyz file.""")
-tf.app.flags.DEFINE_boolean("run_input_test", False,
-                            """Run the input unit test if True.""")
+flags.DEFINE_string("binary_dir", "./binary",
+                    """The directory for storing binary datasets.""")
+flags.DEFINE_string('dataset', 'TaB20opted',
+                    """Define the dataset to use. This is also the name
+                    of the xyz file to load.""")
+flags.DEFINE_string('format', 'xyz',
+                    """The format of the xyz file.""")
+flags.DEFINE_integer('num_examples', 2500,
+                     """The total number of examples to use.""")
+flags.DEFINE_integer('num_atoms', 21,
+                     """The number of atoms in each molecule.""")
+flags.DEFINE_integer('many_body_k', 4,
+                     """The many-body-expansion order.""")
+flags.DEFINE_boolean('use_fp64', False,
+                     """Use double precision floats if True.""")
+flags.DEFINE_boolean('parse_forces', False,
+                     """Parse forces from the xyz file if True.""")
+flags.DEFINE_boolean('sort_inputs', True,
+                     """Sort the input features if True.""")
+flags.DEFINE_boolean('run_input_test', False,
+                     """Run the input unit test if True.""")
+
+FLAGS = flags.FLAGS
 
 # Set the random state
 SEED = 218
@@ -111,7 +115,7 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
     string_patt = re.compile(
       r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
       "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
-    parse_forces = True
+    parse_forces = FLAGS.parse_forces
   elif xyz_format.lower() == 'cp2k':
     energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
     string_patt = re.compile(
@@ -224,7 +228,6 @@ def may_build_dataset(verbose=True):
     xyzfile,
     verbose=verbose,
     xyz_format=FLAGS.format,
-    unit=1.0
   )
 
   # Determine the unique atomic symbol combinations.
@@ -243,8 +246,11 @@ def may_build_dataset(verbose=True):
 
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
-  transform_and_save(coords_test, energies_test, species, orders, test_file)
-  transform_and_save(coords_train, energies_train, species, orders, train_file)
+  sort = FLAGS.sort_inputs
+  transform_and_save(
+    coords_test, energies_test, species, orders, test_file, sort=sort)
+  transform_and_save(
+    coords_train, energies_train, species, orders, train_file, sort=sort)
 
 
 height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
@@ -322,17 +328,19 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
-    if shuffle:
+    if not shuffle:
+      batch_features, batch_energies = tf.train.batch(
+        [features, energies],
+        batch_size=batch_size,
+        capacity=1000 + 3 * batch_size
+      )
+    else:
       batch_features, batch_energies = tf.train.shuffle_batch(
-        [features, energies], batch_size=batch_size, num_threads=1,
+        [features, energies],
+        batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000
-      )
-    else:
-      batch_features, batch_energies = tf.train.batch(
-        [features, energies], batch_size=batch_size, num_threads=1,
-        capacity=1000 + 3 * batch_size
       )
     return batch_features, batch_energies
 
@@ -354,7 +362,7 @@ def inputs_settings(train=True):
     return dict(json.load(f))
 
 
-def test(*args):
+def test():
   """
   This is the unit test of this module. The file `TaB2Oopted.xyz` is used.
   """
@@ -368,7 +376,6 @@ def test(*args):
     xyzfile,
     verbose=False,
     xyz_format=FLAGS.format,
-    unit=1.0
   )
 
   coords_train, coords_test, energies_train, energies_test = train_test_split(
@@ -389,7 +396,7 @@ def test(*args):
                        train_file)
 
   with tf.Session() as sess:
-    features_op, energies_op, offsets = inputs(
+    features_op, energies_op = inputs(
       train=True, batch_size=5, num_epochs=None, shuffle=False
     )
     tf.train.start_queue_runners(sess=sess)
@@ -399,23 +406,26 @@ def test(*args):
     # --------
     try:
       # The shape of `values` is [1, 1, 5985, 6].
-      # The first part, [:, :, :4845, 6] represents the 4-body term of B-B-B-B.
-      # The indices of Borons are from 1 to 20, so the first element should be
-      # the scaled distance between B_1 and B_2.
       features, energies = sess.run([features_op, energies_op])
 
       for i in range(5):
+        # The first part, [:, :, 0:4845, 6] represents the 4-body term of
+        # B-B-B-B. The indices of Borons are from 1 to 20, so the first element
+        # should be the minimum scaled distance within B[1,2,3,4].
         dists = pairwise_distances(coords_train[i])
         r = features[i, 0, 0, 0]
-        y = np.exp(-np.linalg.norm(dists[1, 2]) / pyykko_bb)
+        y = np.min(np.exp(-(dists[1:5, 1:5]) / pyykko_bb))
         assert np.linalg.norm(r - y) < 0.00001
 
         # The second part, [:, :, 4845:5985, 6], represents the 4-body term of
-        # Ta-B-B-B. The index of Ta is 0, so the last element should be the scaled
-        # distance of Ta_0 and B_20.
-        r = features[i, 0, -1, -1]
-        y = np.exp(-np.linalg.norm(dists[0, 20]) / pyykko_tb)
+        # B-B-B-Ta
+        r = features[i, 0, -1, 0]
+        y = np.min(np.exp(-dists[18:21, 18:21] / pyykko_bb))
         assert np.linalg.norm(r - y) < 0.00001
+
+        r = features[i, 0, -1, 2]
+        y = np.min(np.exp(-dists[0, 18:21] / pyykko_tb))
+        assert np.linalg.norm(r - y.min()) < 0.00001
 
     except AssertionError:
       print("The `features` tests are failed!")
@@ -436,8 +446,12 @@ def test(*args):
       print("The `energies` tests are passed!")
 
 
-if __name__ == "__main__":
-  if tf.app.flags.FLAGS.run_input_test:
-    tf.app.run(test)
+def main(unused):
+  if FLAGS.run_input_test:
+    test()
   else:
-    tf.app.run(may_build_dataset, argv=(True, ))
+    may_build_dataset(verbose=True)
+
+
+if __name__ == "__main__":
+  tf.app.run(main=main)
