@@ -87,6 +87,10 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
       for i in indices:
         print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
 
+      # Save the y_true and y_pred to a npz file for plotting
+      if FLAGS.run_once:
+        np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
+
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op))
       summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
