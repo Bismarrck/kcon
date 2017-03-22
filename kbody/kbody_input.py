@@ -119,10 +119,12 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
     energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
   elif xyz_format.lower() == 'xyz':
     energy_patt = re.compile(r"([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
 

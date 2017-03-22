@@ -118,7 +118,7 @@ def evaluate():
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies = kbody.inference(
+    pred_energies, _ = kbody.inference(
       features,
       offsets,
       kbody_terms=kbody_terms,

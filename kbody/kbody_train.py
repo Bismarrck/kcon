@@ -46,18 +46,16 @@ def train_model(unused):
     settings = kbody.inputs_settings(train=True)
     offsets = settings["kbody_term_sizes"]
     kbody_terms = []
-    scales = {}
     for i, kbody_term in enumerate(settings["kbody_terms"]):
       scope = kbody_term.replace(",", "")
       kbody_terms.append(scope)
-      scales[scope] = tf.constant(1.0, name="inv%s" % scope)
 
     # Get features and energies.
     features, energies = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies = kbody.inference(
+    pred_energies, _ = kbody.inference(
       features,
       offsets,
       kbody_terms=kbody_terms,
@@ -70,7 +68,7 @@ def train_model(unused):
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
-    train_op = kbody.get_train_op(loss, global_step, kbody_scales=scales)
+    train_op = kbody.get_train_op(loss, global_step)
 
     class _LoggerHook(tf.train.SessionRunHook):
       """ Logs loss and runtime."""
