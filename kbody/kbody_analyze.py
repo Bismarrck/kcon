@@ -1,53 +1,50 @@
 # coding=-utf8
 """
-Evaluation for k-body CNN.
+Do post-analysis.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 
-from datetime import datetime
 import math
 import time
 import numpy as np
 import tensorflow as tf
 import kbody
-from sklearn.metrics import r2_score
+from scipy.misc import comb
+
+__author__ = "Xin Chen"
+__email__ = "Bismarrck@me.com"
+
 
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('eval_dir', './events/eval',
                            """Directory where to write event logs.""")
-tf.app.flags.DEFINE_string('eval_data', 'test',
-                           """Either 'test' or 'train_eval'.""")
 tf.app.flags.DEFINE_string('checkpoint_dir', './events',
                            """Directory where to read model checkpoints.""")
-tf.app.flags.DEFINE_integer('eval_interval_secs', 300,
-                            """How often to run the eval.""")
 tf.app.flags.DEFINE_integer('num_evals', 500,
                             """Number of examples to run.""")
-tf.app.flags.DEFINE_boolean('run_once', False,
-                            """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
-  """Run Eval once.
+def analyze_once(saver, y_true_op, y_pred_op, kbody_contrib_op, cnks,
+                 test_indices):
+  """
+  Run Eval once.
 
   Args:
     saver: Saver.
-    summary_writer: Summary writer.
-    mae: The `mean-absolute-error` op.
-    summary_op: Summary op.
+    y_true_op: the Tensor for fetching real energies.
+    y_pred_op: the Tensor for fetching predicted energies.
+    kbody_contrib_op: the Tensor for getting predicted kbody contributions.
+    cnks: an array of shape [C(N,k), C(k,2)] as the indices of the atoms of all
+      kbody terms.
+    test_indices: the indices of the testing examples in the original data file.
+
   """
   with tf.Session() as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       # Restores from checkpoint
       saver.restore(sess, ckpt.model_checkpoint_path)
-      # Assuming model_checkpoint_path looks something like:
-      #   /my-favorite-path/cifar10_train/model.ckpt-0,
-      # extract global_step from it.
-      global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
     else:
       print('No checkpoint file found')
       return
@@ -61,41 +58,37 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
                                          start=True))
 
       num_iter = int(math.ceil(FLAGS.num_evals / FLAGS.batch_size))
-      maes = np.zeros((num_iter,), dtype=np.float32)
+      cnk = int(comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True))
+      ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
       y_true = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
+      kbody_contribs = np.zeros((FLAGS.num_evals, cnk), dtype=np.float32)
       step = 0
+
       while step < num_iter and not coord.should_stop():
-        mae_val, y_true_, y_pred_ = sess.run([mae_op, y_true_op, y_pred_op])
+
+        y_true_, y_pred_, kbody_contribs_ = sess.run(
+          [y_true_op, y_pred_op, kbody_contrib_op]
+        )
         maes[step] = mae_val
         istart = step * FLAGS.batch_size
         istop = min(istart + FLAGS.batch_size, FLAGS.num_evals)
         y_true[istart: istop] = y_true_
         y_pred[istart: istop] = y_pred_
+        kbody_contribs[istart: istop, :] = kbody_contribs_
         step += 1
 
-      # Compute the Mean-Absolute-Error @ 1.
-      precision = maes.mean()
-      print('%s: precision = %10.6f' % (datetime.now(), precision))
+      atomic_energies = np.zeros((FLAGS.num_evals, FLAGS.num_atoms),
+                                 dtype=np.float32)
 
-      # Compute the linear coefficient
-      score = r2_score(y_true, y_pred)
-      print(" * R2 score: ", score)
+      for step in range(FLAGS.num_evals):
+        for i in range(cnk):
+          for j in cnks[i]:
+            atomic_energies[step, j] -= kbody_contribs[step][i] / ck2
 
-      # Randomly output 10 predictions and true values
-      indices = np.random.choice(range(FLAGS.num_evals), size=10)
-      for i in indices:
-        print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
-
-      # Save the y_true and y_pred to a npz file for plotting
-      if FLAGS.run_once:
-        np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
-
-      summary = tf.Summary()
-      summary.ParseFromString(sess.run(summary_op))
-      summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
-      summary.value.add(tag='R2 Score @ 1', simple_value=score)
-      summary_writer.add_summary(summary, global_step)
+      np.savez("atomics.npz",
+               atomic_energies=atomic_energies,
+               indices=test_indices)
 
     except Exception as e:  # pylint: disable=broad-except
       coord.request_stop(e)
@@ -111,23 +104,27 @@ def evaluate():
     # Read dataset configurations
     settings = kbody.inputs_settings(train=False)
     offsets = settings["kbody_term_sizes"]
+    selections = settings["kbody_selections"]
+    indices = settings["inverse_indices"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+    cnks = []
+    for kbody_term in settings["kbody_terms"]:
+      kbody_selections = selections[kbody_term]
+      cnks.extend(kbody_selections)
+    cnks = np.array(cnks)
 
     # Get features and energies for evaluation.
-    features, energies = kbody.inputs(train=False)
+    features, y_true = kbody.inputs(train=False, shuffle=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies, _ = kbody.inference(
+    y_pred, kbody_contribs = kbody.inference(
       features,
       offsets,
       kbody_terms=kbody_terms,
       verbose=True,
     )
-    energies = tf.cast(energies, tf.float32)
-
-    # Calculate predictions.
-    mae_op = tf.losses.absolute_difference(energies, pred_energies)
+    y_true = tf.cast(y_true, tf.float32)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -135,16 +132,11 @@ def evaluate():
     variables_to_restore = variable_averages.variables_to_restore()
     saver = tf.train.Saver(variables_to_restore)
 
-    # Build the summary operation based on the TF collection of Summaries.
-    summary_op = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
-
+    # Evaluate
     while True:
-      eval_once(saver, summary_writer, energies, pred_energies, mae_op,
-                summary_op)
-      if FLAGS.run_once:
-        break
-      time.sleep(FLAGS.eval_interval_secs)
+      analyze_once(saver, y_true, y_pred, kbody_contribs, cnks, indices)
+      time.sleep(5)
+      break
 
 
 # pylint: disable=unused-argument

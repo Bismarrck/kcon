@@ -12,7 +12,6 @@ from tensorflow.contrib.layers.python.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from kbody_input import SEED
-from utils import tanh_increase
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -271,7 +270,9 @@ def inference(input_tensor, offsets, kbody_terms, model='sum-kbody-cnn',
     verbose: boolean indicating whether the layers shall be printed or not.
 
   Returns:
-    total_energies: a Tensor representing the estimated total energies.
+    total_energies: a Tensor representing the predicted total energies.
+    contribs: a Tensor representing the predicted contributions of the kbody
+      terms.
 
   """
 
@@ -292,20 +293,20 @@ def inference(input_tensor, offsets, kbody_terms, model='sum-kbody-cnn',
   else:
     raise ValueError("The model `{}` is not supported!".format(model))
 
-  concat = tf.concat(kbody_energies, axis=1)
-  tf.summary.histogram("kbody_contribs", concat)
+  contribs = tf.concat(kbody_energies, axis=1)
+  tf.summary.histogram("kbody_contribs", contribs)
 
   if verbose:
-    print_activations(concat)
+    print_activations(contribs)
 
-  total_energies = tf.reduce_sum(concat, axis=1, keep_dims=False, name="Total")
+  total_energies = tf.reduce_sum(contribs, axis=1, name="Total")
   if verbose:
     print_activations(total_energies)
 
   if verbose:
     get_number_of_trainable_parameters(verbose=verbose)
 
-  return total_energies
+  return total_energies, contribs
 
 
 def _add_loss_summaries(total_loss):
@@ -381,46 +382,7 @@ def _get_kbody_scope(var):
     return var.op.name.split("/")[0]
 
 
-def tanh_decay():
-  return
-
-
-def _get_grad_scale(global_step, init_factor):
-  """
-  Apply scaling factors to each computed gradients.
-
-  Args:
-    grads: A list of (gradient, variable) pairs returned by `compute_gradients`.
-    total_loss: the total loss Tensor.
-    global_step: the global step Tensor.
-
-  Returns:
-    scale_factor: a Tensor for scaling gradients.
-
-  """
-  # train_size = FLAGS.num_examples * 0.8
-  # num_batches_per_epoch = train_size // FLAGS.batch_size
-  # decay_steps = int(num_batches_per_epoch * 20)
-  # decay_factor = tf.constant(0.95, name="grad_decay_factor")
-  # decay = tf.train.exponential_decay(
-  #   init_factor,
-  #   global_step,
-  #   decay_steps,
-  #   decay_factor,
-  #   staircase=True
-  # )
-  #
-  # return tf.minimum(1.0, tf.div(1.0, decay, name="grad_scale"))
-  train_size = FLAGS.num_examples * 0.8
-  num_batches_per_epoch = train_size // FLAGS.batch_size
-  decay_steps = tf.constant(num_batches_per_epoch * 25.0, dtype=tf.float32)
-  decay_factor = tf.constant(0.03, name="grad_decay_factor")
-  scale = tanh_increase(init_factor, global_step, decay_steps, decay_factor,
-                        name="grad_scale")
-  return 1.0
-
-
-def get_train_op(total_loss, global_step, kbody_scales=None):
+def get_train_op(total_loss, global_step):
   """
   Train the Behler model.
 
@@ -431,36 +393,14 @@ def get_train_op(total_loss, global_step, kbody_scales=None):
     total_loss: the total loss Tensor.
     global_step: Integer Variable counting the number of training steps
       processed.
-    kbody_scales: a dict, the scale Tensors for the kbody terms.
 
   Returns:
     train_op: op for training.
 
   """
-
-  # Variables that affect learning rate.
-  train_size = FLAGS.num_examples * 0.8
-  num_batches_per_epoch = train_size // FLAGS.batch_size
-  decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay)
-
-  # Decay the learning rate exponentially based on the number of steps.
-  # lr = tf.train.exponential_decay(FLAGS.learning_rate,
-  #                                 global_step,
-  #                                 decay_steps,
-  #                                 FLAGS.learning_rate_decay_factor,
-  #                                 staircase=True)
-  # tf.summary.scalar('learning_rate', lr)
-
   # Compute gradients.
   opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-
-  # Explicitly scale the gradients.
-  # scale = _get_grad_scale(global_step, 0.01)
-  # tf.summary.scalar("gradient_scale_factor", scale)
-
   grads = opt.compute_gradients(total_loss)
-  # for grad, var in opt.compute_gradients(total_loss):
-  #   grads.append((grad * scale, var))
 
   # Add histograms for grandients
   grad_norms = []
@@ -471,8 +411,6 @@ def get_train_op(total_loss, global_step, kbody_scales=None):
     tf.summary.scalar(var.op.name + "/grad_norm", norm)
   total_norm = tf.add_n(grad_norms, "total_norms")
   tf.summary.scalar("total_grad_norm", total_norm)
-  # with tf.name_scope("grad_norms"):
-    # tf.summary.scalar("raw_grad_norms", tf.div(total_norm, scale))
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)

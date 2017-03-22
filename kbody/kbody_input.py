@@ -12,7 +12,7 @@ import time
 import sys
 import itertools
 import json
-from kbody_transform import transform_and_save
+from kbody_transform import Transformer
 from os.path import join, isfile, isdir
 from os import makedirs
 from sklearn.model_selection import train_test_split
@@ -20,7 +20,6 @@ from scipy.misc import comb
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
-
 
 flags = tf.app.flags
 
@@ -120,10 +119,12 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
     energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
   elif xyz_format.lower() == 'xyz':
     energy_patt = re.compile(r"([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
 
@@ -229,6 +230,7 @@ def may_build_dataset(verbose=True):
     verbose=verbose,
     xyz_format=FLAGS.format,
   )
+  indices = list(range(len(coordinates)))
 
   # Determine the unique atomic symbol combinations.
   k = max(FLAGS.many_body_k, len(set(species)))
@@ -236,10 +238,13 @@ def may_build_dataset(verbose=True):
     [",".join(sorted(c)) for c in itertools.combinations(species, k)])))
 
   # Split the energies and coordinates into two sets: a training set and a
-  # testing set.
-  coords_train, coords_test, energies_train, energies_test = train_test_split(
+  # testing set. The indices are used for post-analysis.
+  coords_train, coords_test, \
+  energies_train, energies_test, \
+  indices_train, indices_test = train_test_split(
     coordinates,
     energies,
+    indices,
     test_size=0.2,
     random_state=SEED
   )
@@ -247,10 +252,9 @@ def may_build_dataset(verbose=True):
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
   sort = FLAGS.sort_inputs
-  transform_and_save(
-    coords_test, energies_test, species, orders, test_file, sort=sort)
-  transform_and_save(
-    coords_train, energies_train, species, orders, train_file, sort=sort)
+  clf = Transformer(species, orders, sort=sort)
+  clf.transform(coords_test, energies_test, test_file, indices=indices_test)
+  clf.transform(coords_train, energies_train, train_file, indices=indices_train)
 
 
 height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
@@ -323,7 +327,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies = read_and_decode(filename_queue,)
+    features, energies = read_and_decode(filename_queue, )
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
@@ -372,15 +376,18 @@ def test():
   if not isfile(xyzfile):
     raise IOError("The dataset file %s can not be accessed!" % xyzfile)
 
-  species, energies, coordinates, forces = extract_xyz(
+  species, raw_energies, raw_coordinates, _ = extract_xyz(
     xyzfile,
     verbose=False,
     xyz_format=FLAGS.format,
   )
-
-  coords_train, coords_test, energies_train, energies_test = train_test_split(
-    coordinates,
-    energies,
+  indices = list(range(len(raw_coordinates)))
+  coords_train, coords_test, \
+  energies_train, energies_test, \
+  indices_train, indices_test = train_test_split(
+    raw_coordinates,
+    raw_energies,
+    indices,
     test_size=0.2,
     random_state=SEED
   )
@@ -392,8 +399,8 @@ def test():
   if not isfile(train_file):
     orders = sorted(list(set(
       [",".join(sorted(c)) for c in itertools.combinations(species, 4)])))
-    transform_and_save(coords_train, energies_train, species, orders,
-                       train_file)
+    clf = Transformer(species, orders, sort=True)
+    clf.transform(coords_train, energies_train, train_file, indices=indices)
 
   with tf.Session() as sess:
     features_op, energies_op = inputs(
@@ -412,7 +419,7 @@ def test():
         # The first part, [:, :, 0:4845, 6] represents the 4-body term of
         # B-B-B-B. The indices of Borons are from 1 to 20, so the first element
         # should be the minimum scaled distance within B[1,2,3,4].
-        dists = pairwise_distances(coords_train[i])
+        dists = pairwise_distances(raw_coordinates[indices_train[i]])
         r = features[i, 0, 0, 0]
         y = np.min(np.exp(-(dists[1:5, 1:5]) / pyykko_bb))
         assert np.linalg.norm(r - y) < 0.00001
@@ -428,7 +435,7 @@ def test():
         assert np.linalg.norm(r - y.min()) < 0.00001
 
     except AssertionError:
-      print("The `features` tests are failed!")
+      raise AssertionError("The `features` tests are failed!")
     else:
       print("The `features` tests are passed!")
 
@@ -437,11 +444,11 @@ def test():
     # --------
     try:
       r = energies[0:5]
-      y = energies_train[0:5]
+      y = raw_energies[indices_train[0:5]]
       assert np.max(np.abs(r + y)) < 0.00001
 
     except AssertionError:
-      print("The `energies` tests are failed!")
+      raise AssertionError("The `energies` tests are failed!")
     else:
       print("The `energies` tests are passed!")
 

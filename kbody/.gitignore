@@ -3,3 +3,6 @@ binary/*
 
 # Ignore tensorflow events
 events/*
+
+# Ignore the generated npz fils
+*.npz

@@ -14,7 +14,9 @@ from scipy.misc import comb
 from itertools import combinations, product, repeat, chain
 from sklearn.metrics import pairwise_distances
 from collections import Counter
-from os.path import basename, dirname, join, splitext
+from os.path import basename, dirname, join, splitext, isfile
+from os import remove
+from tensorflow.python.training.training import Features, Example
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -44,7 +46,7 @@ pyykko = {
 }
 
 
-def get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
+def _get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
   """
   Return the pyykko-bonds matrix given a list of atomic symbols.
 
@@ -65,7 +67,7 @@ def get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
     return lmat
 
 
-def map_indices(species, kbody_terms):
+def _gen_dist2inputs_mapping(species, kbody_terms):
   """
   Build the mapping from interatomic distances matrix to the [C(N,k), C(k,2)]
   feature matrix.
@@ -107,7 +109,7 @@ def map_indices(species, kbody_terms):
   return mapping, selections
 
 
-def get_sort_indices(orders):
+def _gen_sorting_indices(orders):
   """
   Generate the soring indices.
 
@@ -154,99 +156,255 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def transform_and_save(coordinates, energies, species, orders, filename,
-                       sort=False):
+class Transformer:
   """
-  Transform the given atomic coordinates to input features and save them to
-  tfrecords files using `tf.TFRecordWriter`.
-
-  Args:
-    coordinates: a 3D array as the atomic coordinates of sturctures.
-    energies: a 1D array as the desired DFT energies.
-    species: a List as the ordered atomic symboles.
-    orders: a List as the ordered many-body atomic symbol combiantions.
-    filename: a str, the file to save examples.
-    sort: a boolean indicating whether sorting the input features or not.
-
+  This class is used to transform atomic coordinates and energies to input
+  features and training targets.
   """
 
-  mapping, selections = map_indices(species, orders)
-  writer = tf.python_io.TFRecordWriter(filename)
-  offsets = [0]
-  cnk = 0
-  ck2 = None
-  for order in orders:
-    cnk += mapping[order].shape[1]
-    if not ck2:
-      ck2 = mapping[order].shape[0]
-    offsets.append(cnk)
-  offsets.append(-1)
-  offsets = np.asarray(offsets, dtype=np.int64)
-  sizes = np.diff(offsets[:-1])
+  def __init__(self, species, orders, sort=True):
+    """
+    Initialization method.
 
-  if sort:
-    sort_indices = get_sort_indices(orders)
-  else:
-    sort_indices = {}
+    Args:
+      species: a List as the ordered atomic symboles.
+      orders: a List as the ordered many-body atomic symbol combiantions.
+      sort: a boolean indicating whether sorting the input features or not.
 
-  sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
-  num_traj = len(coordinates)
-  lmat = get_pyykko_bonds_matrix(species, flatten=True)
-  energies *= -1.0
-
-  print("k-body terms: ")
-  for order in orders:
-    print("%11s : %d" % (order, mapping[order].shape[1]))
-  print("")
-
-  print("Start transforming %s ... " % filename)
-
-  for i in range(num_traj):
-    dists = pairwise_distances(coordinates[i]).flatten()
-    rr = _exponential(dists, lmat)
-    sample.fill(0.0)
-    for j, order in enumerate(orders):
-      for k in range(ck2):
-        sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
-
+    """
+    mapping, selections = _gen_dist2inputs_mapping(species, orders)
+    offsets = [0]
+    cnk = 0
+    ck2 = None
+    for order in orders:
+      cnk += mapping[order].shape[1]
+      if not ck2:
+        ck2 = mapping[order].shape[0]
+      offsets.append(cnk)
     if sort:
-      for j, order in enumerate(orders):
-        for ix in sort_indices.get(order, []):
-          z = sample[offsets[j]: offsets[j + 1], ix]
-          z.sort(axis=1)
-          sample[offsets[j]: offsets[j + 1], ix] = z
+      sort_indices = _gen_sorting_indices(orders)
+    else:
+      sort_indices = {}
+    self._orders = orders
+    self._species = species
+    self._kbody_offsets = offsets
+    self._dist2inputs_mapping = mapping
+    self._selections = selections
+    self._kbody_sizes = np.diff(offsets)
+    self._cnk = cnk
+    self._ck2 = ck2
+    self._sorted = sort
+    self._sort_indices = sort_indices
+    self._lmat = _get_pyykko_bonds_matrix(species)
 
-    x = sample.tostring()
-    y = np.atleast_2d(energies[i]).tostring()
-    example = tf.train.Example(
-      features=tf.train.Features(
-        feature={'energy': _bytes_feature(y),
-                 'features': _bytes_feature(x)}))
-    writer.write(example.SerializeToString())
+  @property
+  def cnk(self):
+    """
+    Return the value of C(N,k) for this transformer.
+    """
+    return self._cnk
 
-    if i % 100 == 0:
-      sys.stdout.write("\rProgress: %7d / %7d" % (i, num_traj))
+  @property
+  def ck2(self):
+    """
+    Return the value of C(k,2) for this transformer.
+    """
+    return self._ck2
 
-  print("")
-  print("Transforming %s finished!" % filename)
-  writer.close()
+  @property
+  def sorted(self):
+    """
+    Return True if the input features are conditionally-sorted.
+    """
+    return self._sorted
 
-  cfgfile = join(
-    dirname(filename),
-    "%s.json" % basename(splitext(filename)[0])
-  )
-  print("Save configs to %s" % cfgfile)
-  with open(cfgfile, "w+") as f:
-    json.dump({"kbody_term_sizes": sizes.tolist(),
-               "kbody_terms": orders,
-               "kbody_selections": selections}, f, indent=2)
-  print("")
+  def _transform(self, coordinates, energies, filename, verbose):
+    """
+    The main function for transforming coordinates to input features.
+    """
+    with tf.python_io.TFRecordWriter(filename) as writer:
+
+      if verbose:
+        print("Start transforming %s ... " % filename)
+
+      num_examples = len(coordinates)
+      sample = np.zeros((self.cnk, self.ck2), dtype=np.float32)
+      orders = self._orders
+      mapping = self._dist2inputs_mapping
+      offsets = self._kbody_offsets
+
+      for i in range(num_examples):
+        dists = pairwise_distances(coordinates[i]).flatten()
+        rr = _exponential(dists, self._lmat)
+        sample.fill(0.0)
+        for j, order in enumerate(orders):
+          for k in range(self.ck2):
+            sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+
+        if self.sorted:
+          for j, order in enumerate(orders):
+            for ix in self._sort_indices.get(order, []):
+              z = sample[offsets[j]: offsets[j + 1], ix]
+              z.sort(axis=1)
+              sample[offsets[j]: offsets[j + 1], ix] = z
+
+        x = _bytes_feature(sample.tostring())
+        y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
+        example = Example(
+          features=Features(feature={'energy': y, 'features': x}))
+        writer.write(example.SerializeToString())
+
+        if verbose and i % 100 == 0:
+          sys.stdout.write("\rProgress: %7d / %7d" % (i, num_examples))
+
+      if verbose:
+        print("")
+        print("Transforming %s finished!" % filename)
+
+  def transform(self, coordinates, energies, filename, verbose=True,
+                indices=None):
+    """
+    Transform the given atomic coordinates to input features and save them to
+    tfrecord files using `tf.TFRecordWriter`.
+
+    Args:
+      coordinates: a 3D array as the atomic coordinates of sturctures.
+      energies: a 1D array as the desired energies.
+      filename: a `str` as the file to save examples.
+      verbose: boolean indicating whether.
+      indices: a `List[int]` as the indices of each given example. This is an
+        optional argument.
+
+    """
+    try:
+      self._transform(coordinates, energies, filename, verbose)
+    except Exception as excp:
+      if isfile(filename):
+        remove(filename)
+      raise excp
+    else:
+      self._save_auxiliary_for_file(filename, indices)
+
+  def _save_auxiliary_for_file(self, filename, indices=None):
+    """
+    Save auxiliary data for the given dataset.
+
+    Args:
+      filename: a `str` as the tfrecords file.
+      indices: a `List[int]` as the indices of each given example.
+
+    """
+    name = splitext(basename(filename))[0]
+    workdir = dirname(filename)
+    cfgfile = join(workdir, "{}.json".format(name))
+    if indices is not None:
+      if isinstance(indices, np.ndarray):
+        indices = indices.tolist()
+    else:
+      indices = []
+
+    with open(cfgfile, "w+") as f:
+      json.dump({
+        "kbody_offsets": self._kbody_offsets,
+        "kbody_terms": self._orders,
+        "kbody_selections": self._selections,
+        "kbody_term_sizes": self._kbody_sizes.tolist(),
+        "inverse_indices": list([int(i) for i in indices])
+      }, f)
+
+# def transform_and_save(coordinates, energies, species, orders, filename,
+#                        sort=False):
+#   """
+#   Transform the given atomic coordinates to input features and save them to
+#   tfrecords files using `tf.TFRecordWriter`.
+#
+#   Args:
+#     coordinates: a 3D array as the atomic coordinates of sturctures.
+#     energies: a 1D array as the desired DFT energies.
+#     species: a List as the ordered atomic symboles.
+#     orders: a List as the ordered many-body atomic symbol combiantions.
+#     filename: a str, the file to save examples.
+#     sort: a boolean indicating whether sorting the input features or not.
+#
+#   """
+#
+#   mapping, selections = _gen_dist2inputs_mapping(species, orders)
+#   writer = tf.python_io.TFRecordWriter(filename)
+#   offsets = [0]
+#   cnk = 0
+#   ck2 = None
+#   for order in orders:
+#     cnk += mapping[order].shape[1]
+#     if not ck2:
+#       ck2 = mapping[order].shape[0]
+#     offsets.append(cnk)
+#   offsets.append(-1)
+#   offsets = np.asarray(offsets, dtype=np.int64)
+#   sizes = np.diff(offsets[:-1])
+#
+#   if sort:
+#     sort_indices = _gen_sorting_indices(orders)
+#   else:
+#     sort_indices = {}
+#
+#   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
+#   num_traj = len(coordinates)
+#   lmat = _get_pyykko_bonds_matrix(species, flatten=True)
+#   energies *= -1.0
+#
+#   print("k-body terms: ")
+#   for order in orders:
+#     print("%11s : %d" % (order, mapping[order].shape[1]))
+#   print("")
+#
+#   print("Start transforming %s ... " % filename)
+#
+#   for i in range(num_traj):
+#     dists = pairwise_distances(coordinates[i]).flatten()
+#     rr = _exponential(dists, lmat)
+#     sample.fill(0.0)
+#     for j, order in enumerate(orders):
+#       for k in range(ck2):
+#         sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+#
+#     if sort:
+#       for j, order in enumerate(orders):
+#         for ix in sort_indices.get(order, []):
+#           z = sample[offsets[j]: offsets[j + 1], ix]
+#           z.sort(axis=1)
+#           sample[offsets[j]: offsets[j + 1], ix] = z
+#
+#     x = sample.tostring()
+#     y = np.atleast_2d(energies[i]).tostring()
+#     example = tf.train.Example(
+#       features=tf.train.Features(
+#         feature={'energy': _bytes_feature(y),
+#                  'features': _bytes_feature(x)}))
+#     writer.write(example.SerializeToString())
+#
+#     if i % 100 == 0:
+#       sys.stdout.write("\rProgress: %7d / %7d" % (i, num_traj))
+#
+#   print("")
+#   print("Transforming %s finished!" % filename)
+#   writer.close()
+#
+#   cfgfile = join(
+#     dirname(filename),
+#     "%s.json" % basename(splitext(filename)[0])
+#   )
+#   print("Save configs to %s" % cfgfile)
+#   with open(cfgfile, "w+") as f:
+#     json.dump({"kbody_term_sizes": sizes.tolist(),
+#                "kbody_terms": orders,
+#                "kbody_selections": selections}, f, indent=2)
+#   print("")
 
 
 def _test_map_indices():
   species = ["Li"] + list(repeat("B", 6))
   orders = list(set([",".join(sorted(c)) for c in combinations(species, 4)]))
-  mapping = map_indices(species, orders)
+  mapping = _gen_dist2inputs_mapping(species, orders)
   assert mapping['B,B,B,Li'][0, 0] == 9
 
 
@@ -267,6 +425,6 @@ def _test_split_tensor():
     assert np.linalg.norm(values[0] - raw_inputs[:, :, 4:6, :]) == 0.0
 
 
-# if __name__ == "__main__":
-#   _test_map_indices()
-#   _test_split_tensor()
+if __name__ == "__main__":
+  _test_map_indices()
+  _test_split_tensor()
