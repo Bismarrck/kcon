@@ -162,16 +162,17 @@ class Transformer:
   features and training targets.
   """
 
-  def __init__(self, species, orders, sort=True):
+  def __init__(self, species, many_body_k=4):
     """
     Initialization method.
 
     Args:
-      species: a List as the ordered atomic symboles.
-      orders: a List as the ordered many-body atomic symbol combiantions.
-      sort: a boolean indicating whether sorting the input features or not.
+      species: a `List[str]` as the ordered atomic symboles.
+      many_body_k: a `int` as the maximum order for the many-body expansion.
 
     """
+    orders = sorted(list(set(
+      [",".join(sorted(c)) for c in combinations(species, many_body_k)])))
     mapping, selections = _gen_dist2inputs_mapping(species, orders)
     offsets = [0]
     cnk = 0
@@ -181,10 +182,7 @@ class Transformer:
       if not ck2:
         ck2 = mapping[order].shape[0]
       offsets.append(cnk)
-    if sort:
-      sort_indices = _gen_sorting_indices(orders)
-    else:
-      sort_indices = {}
+    self._many_body_k = many_body_k
     self._orders = orders
     self._species = species
     self._kbody_offsets = offsets
@@ -193,8 +191,7 @@ class Transformer:
     self._kbody_sizes = np.diff(offsets)
     self._cnk = cnk
     self._ck2 = ck2
-    self._sorted = sort
-    self._sort_indices = sort_indices
+    self._sorting_indices = _gen_sorting_indices(orders)
     self._lmat = _get_pyykko_bonds_matrix(species)
 
   @property
@@ -212,13 +209,50 @@ class Transformer:
     return self._ck2
 
   @property
-  def sorted(self):
+  def many_body_k(self):
     """
-    Return True if the input features are conditionally-sorted.
+    Return the maximum order for the many-body expansion.
     """
-    return self._sorted
+    return self._many_body_k
 
-  def _transform(self, coordinates, energies, filename, verbose):
+  def transform(self, coordinates, energies):
+    """
+    Transform the given atomic coordinates and energies to input features and
+    training targets and return them as numpy arrays.
+
+    Args:
+      coordinates: a 3D array as the atomic coordinates of sturctures.
+      energies: a 1D array as the desired energies.
+
+    Returns:
+      features: a 4D array as the transformed input features.
+      targets: a 1D array as the training targets (actually the negative of the
+        input energies.)
+
+    """
+    num_examples = len(coordinates)
+    samples = np.zeros((num_examples, self.cnk, self.ck2), dtype=np.float32)
+    orders = self._orders
+    mapping = self._dist2inputs_mapping
+    offsets = self._kbody_offsets
+
+    for i in range(num_examples):
+      dists = pairwise_distances(coordinates[i]).flatten()
+      rr = _exponential(dists, self._lmat)
+      samples[i].fill(0.0)
+      for j, order in enumerate(orders):
+        for k in range(self.ck2):
+          samples[i, offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+
+      for j, order in enumerate(orders):
+        for ix in self._sorting_indices.get(order, []):
+          z = sample[i, offsets[j]: offsets[j + 1], ix]
+          z.sort(axis=1)
+          samples[i, offsets[j]: offsets[j + 1], ix] = z
+
+    return samples, np.negative(energies)
+
+  def _transform_and_save(self, coordinates, energies, filename, verbose):
     """
     The main function for transforming coordinates to input features.
     """
@@ -241,12 +275,11 @@ class Transformer:
           for k in range(self.ck2):
             sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
 
-        if self.sorted:
-          for j, order in enumerate(orders):
-            for ix in self._sort_indices.get(order, []):
-              z = sample[offsets[j]: offsets[j + 1], ix]
-              z.sort(axis=1)
-              sample[offsets[j]: offsets[j + 1], ix] = z
+        for j, order in enumerate(orders):
+          for ix in self._sorting_indices.get(order, []):
+            z = sample[offsets[j]: offsets[j + 1], ix]
+            z.sort(axis=1)
+            sample[offsets[j]: offsets[j + 1], ix] = z
 
         x = _bytes_feature(sample.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
@@ -255,14 +288,14 @@ class Transformer:
         writer.write(example.SerializeToString())
 
         if verbose and i % 100 == 0:
-          sys.stdout.write("\rProgress: %7d / %7d" % (i, num_examples))
+          sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
 
       if verbose:
         print("")
         print("Transforming %s finished!" % filename)
 
-  def transform(self, coordinates, energies, filename, verbose=True,
-                indices=None):
+  def transform_and_save(self, coordinates, energies, filename, verbose=True,
+                         indices=None):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -277,7 +310,7 @@ class Transformer:
 
     """
     try:
-      self._transform(coordinates, energies, filename, verbose)
+      self._transform_and_save(coordinates, energies, filename, verbose)
     except Exception as excp:
       if isfile(filename):
         remove(filename)
@@ -311,94 +344,6 @@ class Transformer:
         "kbody_term_sizes": self._kbody_sizes.tolist(),
         "inverse_indices": list([int(i) for i in indices])
       }, f)
-
-# def transform_and_save(coordinates, energies, species, orders, filename,
-#                        sort=False):
-#   """
-#   Transform the given atomic coordinates to input features and save them to
-#   tfrecords files using `tf.TFRecordWriter`.
-#
-#   Args:
-#     coordinates: a 3D array as the atomic coordinates of sturctures.
-#     energies: a 1D array as the desired DFT energies.
-#     species: a List as the ordered atomic symboles.
-#     orders: a List as the ordered many-body atomic symbol combiantions.
-#     filename: a str, the file to save examples.
-#     sort: a boolean indicating whether sorting the input features or not.
-#
-#   """
-#
-#   mapping, selections = _gen_dist2inputs_mapping(species, orders)
-#   writer = tf.python_io.TFRecordWriter(filename)
-#   offsets = [0]
-#   cnk = 0
-#   ck2 = None
-#   for order in orders:
-#     cnk += mapping[order].shape[1]
-#     if not ck2:
-#       ck2 = mapping[order].shape[0]
-#     offsets.append(cnk)
-#   offsets.append(-1)
-#   offsets = np.asarray(offsets, dtype=np.int64)
-#   sizes = np.diff(offsets[:-1])
-#
-#   if sort:
-#     sort_indices = _gen_sorting_indices(orders)
-#   else:
-#     sort_indices = {}
-#
-#   sample = np.zeros((cnk, ck2), dtype=coordinates.dtype)
-#   num_traj = len(coordinates)
-#   lmat = _get_pyykko_bonds_matrix(species, flatten=True)
-#   energies *= -1.0
-#
-#   print("k-body terms: ")
-#   for order in orders:
-#     print("%11s : %d" % (order, mapping[order].shape[1]))
-#   print("")
-#
-#   print("Start transforming %s ... " % filename)
-#
-#   for i in range(num_traj):
-#     dists = pairwise_distances(coordinates[i]).flatten()
-#     rr = _exponential(dists, lmat)
-#     sample.fill(0.0)
-#     for j, order in enumerate(orders):
-#       for k in range(ck2):
-#         sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
-#
-#     if sort:
-#       for j, order in enumerate(orders):
-#         for ix in sort_indices.get(order, []):
-#           z = sample[offsets[j]: offsets[j + 1], ix]
-#           z.sort(axis=1)
-#           sample[offsets[j]: offsets[j + 1], ix] = z
-#
-#     x = sample.tostring()
-#     y = np.atleast_2d(energies[i]).tostring()
-#     example = tf.train.Example(
-#       features=tf.train.Features(
-#         feature={'energy': _bytes_feature(y),
-#                  'features': _bytes_feature(x)}))
-#     writer.write(example.SerializeToString())
-#
-#     if i % 100 == 0:
-#       sys.stdout.write("\rProgress: %7d / %7d" % (i, num_traj))
-#
-#   print("")
-#   print("Transforming %s finished!" % filename)
-#   writer.close()
-#
-#   cfgfile = join(
-#     dirname(filename),
-#     "%s.json" % basename(splitext(filename)[0])
-#   )
-#   print("Save configs to %s" % cfgfile)
-#   with open(cfgfile, "w+") as f:
-#     json.dump({"kbody_term_sizes": sizes.tolist(),
-#                "kbody_terms": orders,
-#                "kbody_selections": selections}, f, indent=2)
-#   print("")
 
 
 def _test_map_indices():
