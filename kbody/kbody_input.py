@@ -10,7 +10,6 @@ import numpy as np
 import re
 import time
 import sys
-import itertools
 import json
 from kbody_transform import Transformer
 from os.path import join, isfile, isdir
@@ -30,9 +29,9 @@ flags.DEFINE_string('dataset', 'TaB20opted',
                     of the xyz file to load.""")
 flags.DEFINE_string('format', 'xyz',
                     """The format of the xyz file.""")
-flags.DEFINE_integer('num_examples', 2500,
+flags.DEFINE_integer('num_examples', 5000,
                      """The total number of examples to use.""")
-flags.DEFINE_integer('num_atoms', 21,
+flags.DEFINE_integer('num_atoms', 17,
                      """The number of atoms in each molecule.""")
 flags.DEFINE_integer('many_body_k', 4,
                      """The many-body-expansion order.""")
@@ -40,8 +39,6 @@ flags.DEFINE_boolean('use_fp64', False,
                      """Use double precision floats if True.""")
 flags.DEFINE_boolean('parse_forces', False,
                      """Parse forces from the xyz file if True.""")
-flags.DEFINE_boolean('sort_inputs', True,
-                     """Sort the input features if True.""")
 flags.DEFINE_boolean('run_input_test', False,
                      """Run the input unit test if True.""")
 
@@ -232,11 +229,6 @@ def may_build_dataset(verbose=True):
   )
   indices = list(range(len(coordinates)))
 
-  # Determine the unique atomic symbol combinations.
-  k = max(FLAGS.many_body_k, len(set(species)))
-  orders = sorted(list(set(
-    [",".join(sorted(c)) for c in itertools.combinations(species, k)])))
-
   # Split the energies and coordinates into two sets: a training set and a
   # testing set. The indices are used for post-analysis.
   coords_train, coords_test, \
@@ -251,10 +243,12 @@ def may_build_dataset(verbose=True):
 
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
-  sort = FLAGS.sort_inputs
-  clf = Transformer(species, orders, sort=sort)
-  clf.transform(coords_test, energies_test, test_file, indices=indices_test)
-  clf.transform(coords_train, energies_train, train_file, indices=indices_train)
+  many_body_k = min(5, max(FLAGS.many_body_k, len(set(species))))
+  clf = Transformer(species, many_body_k)
+  clf.transform_and_save(
+    coords_test, energies_test, test_file, indices=indices_test)
+  clf.transform_and_save(
+    coords_train, energies_train, train_file, indices=indices_train)
 
 
 height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
@@ -293,7 +287,7 @@ def read_and_decode(filename_queue):
   return features, energy
 
 
-def inputs(train, batch_size, num_epochs, shuffle=True):
+def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
   """
   Reads input data num_epochs times.
 
@@ -303,6 +297,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     num_epochs: Number of times to read the input data, or 0/None to
        train forever.
     shuffle: boolean indicating whether the batches shall be shuffled or not.
+    filenames:
 
   Returns:
     A tuple (features, energies, offsets), where:
@@ -317,11 +312,13 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
   if not num_epochs:
     num_epochs = None
 
-  filename, _ = get_filenames(train=train)
+  if filenames is None:
+    filename, _ = get_filenames(train=train)
+    filenames = [filename]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
-      [filename],
+      filenames,
       num_epochs=num_epochs
     )
 
@@ -397,10 +394,10 @@ def test():
 
   train_file = join(FLAGS.binary_dir, "TaB20opted-train.tfrecords")
   if not isfile(train_file):
-    orders = sorted(list(set(
-      [",".join(sorted(c)) for c in itertools.combinations(species, 4)])))
-    clf = Transformer(species, orders, sort=True)
-    clf.transform(coords_train, energies_train, train_file, indices=indices)
+    many_body_k = 4
+    clf = Transformer(species, many_body_k)
+    clf.transform_and_save(coords_train, energies_train, train_file,
+                           indices=indices)
 
   with tf.Session() as sess:
     features_op, energies_op = inputs(
@@ -451,6 +448,8 @@ def test():
       raise AssertionError("The `energies` tests are failed!")
     else:
       print("The `energies` tests are passed!")
+
+    time.sleep(5)
 
 
 def main(unused):
