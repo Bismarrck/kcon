@@ -23,7 +23,7 @@ tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
 tf.app.flags.DEFINE_integer('max_steps', 200000,
                             """The maximum number of training steps.""")
-tf.app.flags.DEFINE_integer('save_frequency', 20,
+tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
@@ -47,7 +47,7 @@ def _save_training_flags():
     json.dump(args, f, indent=2)
 
 
-def train_model(unused):
+def train_model():
   """
   Train the neural network model.
   """
@@ -165,5 +165,11 @@ def train_model(unused):
           mon_sess.run(train_op)
 
 
+def main(unused):
+  if not tf.gfile.Exists(FLAGS.train_dir):
+    tf.gfile.MkDir(FLAGS.train_dir)
+  train_model()
+
+
 if __name__ == "__main__":
-  tf.app.run(main=train_model)
+  tf.app.run(main=main)
