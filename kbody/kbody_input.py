@@ -287,7 +287,7 @@ def read_and_decode(filename_queue):
   return features, energy
 
 
-def inputs(train, batch_size, num_epochs, shuffle=True):
+def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
   """
   Reads input data num_epochs times.
 
@@ -297,6 +297,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
     num_epochs: Number of times to read the input data, or 0/None to
        train forever.
     shuffle: boolean indicating whether the batches shall be shuffled or not.
+    filenames:
 
   Returns:
     A tuple (features, energies, offsets), where:
@@ -311,11 +312,13 @@ def inputs(train, batch_size, num_epochs, shuffle=True):
   if not num_epochs:
     num_epochs = None
 
-  filename, _ = get_filenames(train=train)
+  if filenames is None:
+    filename, _ = get_filenames(train=train)
+    filenames = [filename]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
-      [filename],
+      filenames,
       num_epochs=num_epochs
     )
 

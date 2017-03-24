@@ -246,7 +246,7 @@ class Transformer:
 
       for j, order in enumerate(orders):
         for ix in self._sorting_indices.get(order, []):
-          z = sample[i, offsets[j]: offsets[j + 1], ix]
+          z = samples[i, offsets[j]: offsets[j + 1], ix]
           z.sort(axis=1)
           samples[i, offsets[j]: offsets[j + 1], ix] = z
 
