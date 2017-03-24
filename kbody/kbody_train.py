@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import time
 import kbody
+import json
 from datetime import datetime
 from tensorflow.python.client.timeline import Timeline
 from os.path import join
@@ -20,7 +21,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 50000,
+tf.app.flags.DEFINE_integer('max_steps', 200000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_integer('save_frequency', 20,
                             """The frequency, in number of global steps, that
@@ -30,14 +31,26 @@ tf.app.flags.DEFINE_integer('log_frequency', 100,
                             the training progress wiil be logged.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_boolean('restart', False,
-                            """Restart the training and reset the global step
-                            and learning rate.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
 
 
+def _save_training_flags():
+  """
+  Save the training flags to the train_dir.
+  """
+  args = dict(FLAGS.__dict__["__flags"])
+  args["run_flags"] = " ".join(
+    ["--{}={}".format(k, v) for k, v in args.items()]
+  )
+  with open(join(FLAGS.train_dir, "flags.json"), "w+") as f:
+    json.dump(args, f, indent=2)
+
+
 def train_model(unused):
+  """
+  Train the neural network model.
+  """
 
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
@@ -69,6 +82,9 @@ def train_model(unused):
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
     train_op = kbody.get_train_op(loss, global_step)
+
+    # Save the training flags
+    _save_training_flags()
 
     class _LoggerHook(tf.train.SessionRunHook):
       """ Logs loss and runtime."""
@@ -131,13 +147,6 @@ def train_model(unused):
           with open(self.get_ctf(), "w+") as f:
             f.write(ctf)
 
-    if FLAGS.restart:
-      reset_op = tf.assign(global_step, 0)
-      reset = True
-    else:
-      reset_op = tf.no_op("skip")
-      reset = False
-
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
@@ -150,9 +159,6 @@ def train_model(unused):
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
       while not mon_sess.should_stop():
-        if reset:
-          mon_sess.run(reset_op)
-          reset = False
         if FLAGS.timeline:
           mon_sess.run(train_op, options=run_options, run_metadata=run_meta)
         else:
