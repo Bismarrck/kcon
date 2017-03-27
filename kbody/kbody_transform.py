@@ -215,6 +215,13 @@ class Transformer:
     """
     return self._many_body_k
 
+  @property
+  def split_dims(self):
+    """
+    Return the dims for spliting the inputs.
+    """
+    return self._kbody_sizes
+
   def transform(self, coordinates, energies):
     """
     Transform the given atomic coordinates and energies to input features and
