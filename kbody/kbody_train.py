@@ -58,26 +58,24 @@ def train_model():
     # Read dataset configurations
     settings = kbody.inputs_settings(train=True)
     offsets = settings["kbody_term_sizes"]
-    kbody_terms = []
-    for i, kbody_term in enumerate(settings["kbody_terms"]):
-      scope = kbody_term.replace(",", "")
-      kbody_terms.append(scope)
+    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies.
-    features, energies = kbody.inputs(train=True)
+    batch_inputs, y_true = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies, _ = kbody.inference(
-      features,
-      offsets,
+    batch_offsets = tf.placeholder(tf.int64, [len(offsets),], name="split_dims")
+    y_pred, _ = kbody.inference(
+      batch_inputs,
+      offsets=batch_offsets,
       kbody_terms=kbody_terms,
       verbose=True,
     )
-    energies = tf.cast(energies, tf.float32)
+    y_true = tf.cast(y_true, tf.float32)
 
     # Setup the loss function
-    loss = kbody.get_total_loss(energies, pred_energies)
+    loss = kbody.get_total_loss(y_true, y_pred)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
@@ -86,6 +84,7 @@ def train_model():
     # Save the training flags
     _save_training_flags()
 
+    # noinspection PyMissingOrEmptyDocstring
     class _LoggerHook(tf.train.SessionRunHook):
       """ Logs loss and runtime."""
 
@@ -123,6 +122,7 @@ def train_model():
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
 
+    # noinspection PyMissingOrEmptyDocstring
     class _TimelineHook(tf.train.SessionRunHook):
       """ A hook to output tracing results for further performance analysis. """
 
@@ -154,17 +154,24 @@ def train_model():
                tf.train.NanTensorHook(loss),
                _LoggerHook(),
                _TimelineHook()],
-        scaffold=None,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
+      feed_dict = {batch_offsets: offsets}
+
       while not mon_sess.should_stop():
         if FLAGS.timeline:
-          mon_sess.run(train_op, options=run_options, run_metadata=run_meta)
+          mon_sess.run(
+            train_op,
+            feed_dict=feed_dict,
+            options=run_options,
+            run_metadata=run_meta
+          )
         else:
-          mon_sess.run(train_op)
+          mon_sess.run(train_op, feed_dict=feed_dict)
 
 
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)

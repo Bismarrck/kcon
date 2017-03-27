@@ -114,20 +114,20 @@ def evaluate():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    features, energies = kbody.inputs(train=False)
+    batch_inputs, y_true = kbody.inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies, _ = kbody.inference(
-      features,
+    y_pred, _ = kbody.inference(
+      batch_inputs,
       offsets,
       kbody_terms=kbody_terms,
       verbose=True,
     )
-    energies = tf.cast(energies, tf.float32)
+    y_true = tf.cast(y_true, tf.float32)
 
     # Calculate predictions.
-    mae_op = tf.losses.absolute_difference(energies, pred_energies)
+    mae_op = tf.losses.absolute_difference(y_true, y_pred)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -140,7 +140,7 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
     while True:
-      eval_once(saver, summary_writer, energies, pred_energies, mae_op,
+      eval_once(saver, summary_writer, y_true, y_pred, mae_op,
                 summary_op)
       if FLAGS.run_once:
         break

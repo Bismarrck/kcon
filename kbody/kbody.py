@@ -13,6 +13,7 @@ from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from kbody_input import SEED
 from utils import tanh_increase
+from scipy.misc import comb
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -137,8 +138,8 @@ def inputs_settings(train=True):
   return kbody_input.inputs_settings(train=train)
 
 
-def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
-                         verbose=True):
+def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
+                        verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -146,12 +147,12 @@ def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
     conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
       the molecule and M is the number of features.
     kbody_term: a `str` Tensor as the name of this k-body term.
+    sizes: a `List[int]` as the number of convolution kernels for each layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
   Returns:
-    total_energy: the output Tensor of shape `[-1, 1]` as the estimated total
-      energies.
-    atomic_energies: a Tensor of `[-1, N]`, the estimated energy for each atom.
+    kbody_energies: a Tensor of `[-1, 1, N, 1]` as the energy contributions of 
+      all kbody terms.
 
   """
 
@@ -207,17 +208,15 @@ def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference(input_tensor, offsets, kbody_terms, is_predicting, verbose=True):
+def inference(batch_inputs, offsets, kbody_terms, verbose=True):
   """
   The general inference function.
 
   Args:
-    input_tensor: a Tensor of shape `[-1, 1, -1, D]`.
+    batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
     offsets: a `List[int]` or a 1-D Tensor containing the sizes of each output
       tensor along split_dim.
     kbody_terms: a `List[str]` as the names of the k-body terms.
-    is_predicting: a `bool` or a boolean Tensor indicating whether the model
-      should be used for training or prediction
     verbose: boolean indicating whether the layers shall be printed or not.
 
   Returns:
@@ -227,9 +226,44 @@ def inference(input_tensor, offsets, kbody_terms, is_predicting, verbose=True):
 
   """
 
-  axis = tf.constant(2, dtype=tf.int32, name="CNK")
-  eps = tf.constant(0.001, dtype=tf.float32, name="threshold")
-  convs = tf.split(input_tensor, offsets, axis=axis, name="Partition")
+  # Build up the placeholder tensors.
+  #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
+  #     alternative inputs which can be directly feeded.
+  #   use_extra: a boolean Tensor indicating whether we should use the
+  #     placeholder inputs or the batch inputs.
+  #   is_predicting: a boolean Tensor indicating whether the model should be
+  #     used for training/evaluation or prediction.
+  with tf.name_scope("placeholders"):
+    ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
+    use_extra = tf.placeholder_with_default(
+      False,
+      shape=None,
+      name="use_extra_inputs"
+    )
+    extra_inputs = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, ck2]),
+      shape=[None, 1, None, ck2],
+      name="extra_inputs"
+    )
+    is_predicting = tf.placeholder_with_default(
+      False,
+      shape=None,
+      name="is_predicting"
+    )
+
+  # Choose the inputs tensor based on `use_placeholder`.
+  with tf.name_scope("InputsFlow"):
+    selected = tf.cond(
+      use_extra,
+      lambda: extra_inputs,
+      lambda: batch_inputs,
+      name="selected_inputs"
+    )
+
+    axis = tf.constant(2, dtype=tf.int32, name="CNK")
+    eps = tf.constant(0.001, dtype=tf.float32, name="threshold")
+    convs = tf.split(selected, offsets, axis=axis, name="Partition")
+
   kbody_energies = []
 
   def zero_padding():
@@ -244,7 +278,6 @@ def inference(input_tensor, offsets, kbody_terms, is_predicting, verbose=True):
         contribs = inference_sum_kbody(
           conv,
           kbody_terms[i],
-          check_zero,
           verbose=verbose
         )
       below_zero = tf.less(
@@ -267,17 +300,15 @@ def inference(input_tensor, offsets, kbody_terms, is_predicting, verbose=True):
   if verbose:
     print_activations(contribs)
 
-  total_energies = tf.reduce_sum(contribs, axis=axis, name="Total")
-  total_energies.set_shape([None, 1, 1])
-  if verbose:
-    print_activations(total_energies)
+  with tf.name_scope("Outputs"):
+    total_energies = tf.reduce_sum(contribs, axis=axis, name="Total")
+    total_energies.set_shape([None, 1, 1])
+    if verbose:
+      print_activations(total_energies)
 
-  total_energies = flatten(total_energies)
-  if verbose:
-    print_activations(total_energies)
-
-  if verbose:
-    get_number_of_trainable_parameters(verbose=verbose)
+    total_energies = tf.squeeze(flatten(total_energies), name="squeeze")
+    if verbose:
+      get_number_of_trainable_parameters(verbose=verbose)
 
   return total_energies, contribs
 
@@ -397,11 +428,12 @@ def get_train_op(total_loss, global_step):
 
   # Add histograms for grandients
   grad_norms = []
-  for grad, var in grads:
-    norm = tf.norm(grad)
-    grad_norms.append(norm)
-    tf.summary.histogram(var.op.name + "/gradients", grad)
-    tf.summary.scalar(var.op.name + "/grad_norm", norm)
+  with tf.name_scope("2norms"):
+    for grad, var in grads:
+      norm = tf.norm(grad, name=var.op.name + "/2norm")
+      grad_norms.append(norm)
+      tf.summary.histogram(var.op.name + "/gradients", grad)
+      tf.summary.scalar(var.op.name + "/grad_norm", norm)
   total_norm = tf.add_n(grad_norms, "total_norms")
   tf.summary.scalar("total_grad_norm", total_norm)
   if not FLAGS.adam:
