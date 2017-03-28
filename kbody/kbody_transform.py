@@ -240,6 +240,20 @@ class Transformer:
     """
     return self._split_dims
 
+  @property
+  def kbody_terms(self):
+    """
+    Return the kbody terms for this transformer. 
+    """
+    return self._kbody_terms
+
+  @property
+  def kbody_selections(self):
+    """
+    Return the kbody selections.
+    """
+    return self._selections
+
   def transform(self, coordinates, energies=None):
     """
     Transform the given atomic coordinates and energies to input features and
@@ -389,22 +403,22 @@ class MultiTransformer:
   A flexible transformer targeting on AxByCz ... molecular compositions.
   """
 
-  def __init__(self, atom_types, many_body_k=3, max_appears=None):
+  def __init__(self, atom_types, many_body_k=3, max_occurs=None):
     """
     Initialization method.
 
     Args:
       atom_types: a `List[str]` as the target atomic species.  
       many_body_k: a `int` as the many body expansion factor.
-      max_appears: a `Dict[str, int]` as the maximum appearance for a specie.
+      max_occurs: a `Dict[str, int]` as the maximum appearance for a specie.
 
     """
     self._many_body_k = many_body_k
     self._atom_types = list(set(atom_types))
     species = []
-    max_appears = {} if max_appears is None else max_appears
+    max_occurs = {} if max_occurs is None else max_occurs
     for specie in self._atom_types:
-      r = min(max_appears.get(specie, many_body_k), many_body_k)
+      r = min(max_occurs.get(specie, many_body_k), many_body_k)
       species.extend(list(repeat(specie, r)))
     self._kbody_terms = sorted(
       list(
@@ -424,6 +438,24 @@ class MultiTransformer:
     Return the ordered k-body terms for this transformer.
     """
     return self._kbody_terms
+
+  def _get_transformer(self, species):
+    """
+    Return the `Transformer` for the given molecular species.
+    
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecules. 
+
+    Returns:
+      clf: a `Transformer`.
+
+    """
+    formula = get_formula(species)
+    clf = self._transformers.get(formula)
+    if not isinstance(clf, Transformer):
+      clf = Transformer(species, self.many_body_k, kbody_terms=self.kbody_terms)
+      self._transformers[formula] = clf
+    return clf
 
   def transform(self, species, coords, energies=None):
     """
@@ -449,17 +481,34 @@ class MultiTransformer:
     elif coords.shape[1] != len(species):
       raise ValueError("The shapes of coords and species are not matched!")
 
-    formula = get_formula(species)
-    clf = self._transformers.get(formula)
-    if clf is None:
-      clf = Transformer(
-        species,
-        many_body_k=self.many_body_k,
-        kbody_terms=self.kbody_terms
-      )
-      self._transformers[formula] = clf
+    clf = self._get_transformer(species)
     features, targets = clf.transform(coords, energies)
     return features, clf.split_dims, targets
+
+  def compute_atomic_energies(self, species, kbody_contribs):
+    """
+    Compute the atomic energies given predicted kbody contributions.
+    
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecules.
+      kbody_contribs: a 2D array as the kbody contributions of each molecule.
+
+    Returns:
+      atomic_energies: a 2D array as the atomic energies of each molecule.
+
+    """
+    clf = self._get_transformer(species)
+    split_dims = clf.split_dims
+    num_mols = kbody_contribs.shape[0]
+    num_atoms = len(species)
+    atomic_energies = np.zeros((num_mols, num_atoms))
+    for step in range(num_mols):
+      for i, term in enumerate(clf.kbody_terms):
+        istart = 0 if i == 0 else sum(split_dims[:i])
+        for indices in clf.kbody_selections[term]:
+          for kbody_i, atom_i in indices:
+            atomic_energies[step, atom_i] += y_kbody[step, istart + kbody_i]
+    return atomic_energies / float(self.ck2)
 
 
 def _test_map_indices():
@@ -488,7 +537,7 @@ def _test_split_tensor():
 
 def _test_multi_transform():
 
-  clf = MultiTransformer(["C", "H", "N"], max_appears={"N": 3})
+  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 3})
   coords = np.repeat(np.atleast_2d(np.arange(17.0)).T, 3, axis=1)
   species = ["N"] + list(repeat("C", 9)) + list(repeat("H", 7))
   features, split_dims, _ = clf.transform(species, coords)
