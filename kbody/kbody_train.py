@@ -57,7 +57,7 @@ def train_model():
 
     # Read dataset configurations
     settings = kbody.inputs_settings(train=True)
-    offsets = settings["kbody_term_sizes"]
+    split_dims = settings["split_dims"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies.
@@ -65,10 +65,12 @@ def train_model():
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    batch_offsets = tf.placeholder(tf.int64, [len(offsets),], name="split_dims")
+    batch_split_dims = tf.placeholder(
+      tf.int64, [len(split_dims),], name="split_dims"
+    )
     y_pred, _ = kbody.inference(
       batch_inputs,
-      offsets=batch_offsets,
+      split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
     )
@@ -157,7 +159,7 @@ def train_model():
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
-      feed_dict = {batch_offsets: offsets}
+      feed_dict = {batch_split_dims: split_dims}
 
       while not mon_sess.should_stop():
         if FLAGS.timeline:

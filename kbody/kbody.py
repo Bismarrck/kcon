@@ -11,7 +11,6 @@ from itertools import repeat
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
-from kbody_input import SEED
 from utils import tanh_increase
 from scipy.misc import comb
 
@@ -181,8 +180,8 @@ def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
       padding=padding,
       scope="Hidden{:d}".format(i + 1),
       weights_initializer=initializers.xavier_initializer(
-        seed=SEED, dtype=dtype),
-      biases_initializer=init_ops.truncated_normal_initializer(dtype=dtype),
+        seed=kbody_input.SEED, dtype=dtype),
+      biases_initializer=init_ops.zeros_initializer(dtype=dtype),
     )
     if verbose:
       print_activations(conv)
@@ -193,8 +192,8 @@ def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
     kernel_size,
     activation_fn=tf.nn.relu,
     biases_initializer=None,
-    weights_initializer=init_ops.truncated_normal_initializer(
-      seed=SEED, dtype=dtype, stddev=0.1),
+    weights_initializer=initializers.xavier_initializer(
+      seed=kbody_input.SEED, dtype=dtype),
     stride=stride,
     padding=padding,
     scope="k-Body"
@@ -208,14 +207,14 @@ def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference(batch_inputs, offsets, kbody_terms, verbose=True):
+def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
   """
   The general inference function.
 
   Args:
     batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
-    offsets: a `List[int]` or a 1-D Tensor containing the sizes of each output
-      tensor along split_dim.
+    split_dims: a `List[int]` or a 1-D Tensor containing the sizes of each 
+      output tensor along split_dim.
     kbody_terms: a `List[str]` as the names of the k-body terms.
     verbose: boolean indicating whether the layers shall be printed or not.
 
@@ -262,7 +261,7 @@ def inference(batch_inputs, offsets, kbody_terms, verbose=True):
 
     axis = tf.constant(2, dtype=tf.int32, name="CNK")
     eps = tf.constant(0.001, dtype=tf.float32, name="threshold")
-    convs = tf.split(selected, offsets, axis=axis, name="Partition")
+    convs = tf.split(selected, split_dims, axis=axis, name="Partition")
 
   kbody_energies = []
 

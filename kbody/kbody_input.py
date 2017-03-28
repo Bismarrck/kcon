@@ -11,7 +11,7 @@ import re
 import time
 import sys
 import json
-from kbody_transform import Transformer
+import kbody_transform
 from os.path import join, isfile, isdir
 from os import makedirs
 from sklearn.model_selection import train_test_split
@@ -231,9 +231,9 @@ def may_build_dataset(verbose=True):
 
   # Split the energies and coordinates into two sets: a training set and a
   # testing set. The indices are used for post-analysis.
-  coords_train, coords_test, \
-  energies_train, energies_test, \
-  indices_train, indices_test = train_test_split(
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test) = train_test_split(
     coordinates,
     energies,
     indices,
@@ -244,7 +244,7 @@ def may_build_dataset(verbose=True):
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
   many_body_k = min(5, max(FLAGS.many_body_k, len(set(species))))
-  clf = Transformer(species, many_body_k)
+  clf = kbody_transform.Transformer(species, many_body_k)
   clf.transform_and_save(
     coords_test, energies_test, test_file, indices=indices_test)
   clf.transform_and_save(
@@ -379,9 +379,9 @@ def test():
     xyz_format=FLAGS.format,
   )
   indices = list(range(len(raw_coordinates)))
-  coords_train, coords_test, \
-  energies_train, energies_test, \
-  indices_train, indices_test = train_test_split(
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test) = train_test_split(
     raw_coordinates,
     raw_energies,
     indices,
@@ -395,7 +395,7 @@ def test():
   train_file = join(FLAGS.binary_dir, "TaB20opted-train.tfrecords")
   if not isfile(train_file):
     many_body_k = 4
-    clf = Transformer(species, many_body_k)
+    clf = kbody_transform.Transformer(species, many_body_k)
     clf.transform_and_save(coords_train, energies_train, train_file,
                            indices=indices)
 
@@ -452,6 +452,7 @@ def test():
     time.sleep(5)
 
 
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if FLAGS.run_input_test:
     test()
