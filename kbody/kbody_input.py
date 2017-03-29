@@ -70,16 +70,22 @@ def get_float_type(convert=False):
       return np.float32
 
 
-def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
+def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
+                verbose=True, xyz_format='xyz', unit=1.0):
   """
-  Extract atomic symbols, DFT energies and atomic coordiantes (and forces) from
-  the file.
+  Extract atomic species, energies, coordiantes, and perhaps forces, from the 
+  file.
 
   Args:
-    filename: a `str`, the file to parse.
-    verbose: a `bool`.
+    filename: a `str` as the file to parse.
+    num_examples: a `int` as the number of examples to parse.
+    num_atoms: a `int` as the number of atoms in each configuration.
+    parse_forces: a `bool` indicating whether we should parse forces if 
+      available.
+    verbose: a `bool` indicating whether we should log the parsing progress or 
+      not.
     xyz_format: a `str` representing the format of the given xyz file.
-    unit: a float represents the scaling of the energies.
+    unit: a `float` as the scaling unit of energies.
 
   Returns
     species: `List[str]`, a list of the atomic symbols.
@@ -90,15 +96,14 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
   """
 
   dtype = get_float_type(convert=False)
-  num_examples = FLAGS.num_examples
-  num_atoms = FLAGS.num_atoms
   energies = np.zeros((num_examples,), dtype=np.float64)
   coordinates = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
 
-  if FLAGS.parse_forces:
+  if parse_forces:
     forces = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
   else:
     forces = None
+
   species = []
   parse_species = True
   parse_forces = False
@@ -224,6 +229,9 @@ def may_build_dataset(verbose=True):
   # the xyz file.
   species, energies, coordinates, forces = extract_xyz(
     xyzfile,
+    num_examples=FLAGS.num_examples,
+    num_atoms=FLAGS.num_atoms,
+    parse_forces=FLAGS.parse_forces,
     verbose=verbose,
     xyz_format=FLAGS.format,
   )
@@ -375,6 +383,9 @@ def test():
 
   species, raw_energies, raw_coordinates, _ = extract_xyz(
     xyzfile,
+    num_examples=5000,
+    num_atoms=21,
+    parse_forces=False,
     verbose=False,
     xyz_format=FLAGS.format,
   )
