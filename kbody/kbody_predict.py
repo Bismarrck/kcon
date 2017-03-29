@@ -86,13 +86,17 @@ class CNNPredictor:
     Make the prediction for the given molecule.
 
     Args:
-      species: a `List[str]` as the ordered atomic species of a molecule.
-      coords: a 2D array as the atomic coordinates of a molecule.
+      species: a `List[str]` as the ordered atomic species.
+      coords: a 3D array of shape `[num_examples, num_atoms, 3]` as the atomic 
+        coordinates. 
 
     Returns:
-      total_energy: a float as the predicted total energy.
-      atomic_energies: a 1D array as the predicted energy for each atom.
-      kbody_energies: a 1D array as the predicted energy of each k-body terms.
+      total_energy: a 1D array of shape `[num_examples, ]` as the predicted 
+        total energies.
+      atomic_energies: a 2D array of shape `[num_examples, num_atoms]` as the 
+        predicted atomic energies.
+      kbody_energies: a 2D array of shape `[num_examples, C(len(species), k)]` 
+        as the predicted kbody energies.
 
     """
 
@@ -133,7 +137,9 @@ class CNNPredictor:
     y_kbody = np.squeeze(y_kbody, axis=(1, 3))
     y_atomic = self.transformer.compute_atomic_energies(species, y_kbody)
 
-    return np.negative(y_total), np.negative(y_atomic)
+    return (np.negative(np.atleast_1d(y_total)),
+            np.negative(y_atomic),
+            np.negative(y_kbody))
 
 
 def _print_predictions(y_total, y_true, y_atomic, species):
