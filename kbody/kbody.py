@@ -11,8 +11,8 @@ from itertools import repeat
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
-from kbody_input import SEED
 from utils import tanh_increase
+from scipy.misc import comb
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -137,70 +137,8 @@ def inputs_settings(train=True):
   return kbody_input.inputs_settings(train=train)
 
 
-def _inference_alex_kbody(conv, kbody_term, sizes=(40, 70, 60, 2, 40, 20),
-                          verbose=True):
-  """
-  Infer the k-body term of `alex-kbody-cnn`.
-
-  Args:
-    conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
-      the molecule and M is the number of features.
-    kbody_term: a `str` Tensor as the name of this k-body term.
-    sizes: a `List[int]` as the major dimensions of the layers.
-    verbose: a bool. If Ture, the shapes of the layers will be printed.
-
-  Returns:
-    energies: a Tensor of shape `[-1, 1]` as the estimated k-body energies.
-
-  """
-
-  with tf.variable_scope(kbody_term):
-
-    if verbose:
-      print("Infer the %s term of `alex-kbody-cnn` ..." % kbody_term)
-
-    axis_dim = conv.get_shape().as_list()[2]
-    num_layers = len(sizes)
-    activation_fn = list(repeat(tf.nn.tanh, 4)) + \
-                    list(repeat(tf.nn.softplus, num_layers - 4))
-    kernel_size = 1
-    stride = 1
-    padding = 'SAME'
-    dtype = kbody_input.get_float_type(convert=True)
-
-    for i in range(num_layers):
-      conv = conv2d(
-        conv,
-        sizes[i],
-        kernel_size,
-        stride,
-        padding,
-        activation_fn=activation_fn[i],
-        weights_initializer=init_ops.truncated_normal_initializer(
-          stddev=0.1, dtype=dtype, seed=SEED),
-        biases_initializer=init_ops.zeros_initializer(dtype=dtype),
-        scope="Conv{:d}".format(i + 1)
-      )
-      if verbose:
-        print_activations(conv)
-      if i == 3:
-        conv = tf.reshape(conv, [-1, 1, sizes[i], axis_dim], name="switch")
-        if verbose:
-          print_activations(conv)
-
-    flat = flatten(conv, scope="kbody")
-    if verbose:
-      print_activations(flat)
-
-    energies = tf.reduce_mean(flat, axis=1, keep_dims=True, name="total")
-    if verbose:
-      print_activations(energies)
-
-    return energies
-
-
-def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
-                         verbose=True):
+def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
+                        verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -208,76 +146,76 @@ def _inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
     conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
       the molecule and M is the number of features.
     kbody_term: a `str` Tensor as the name of this k-body term.
+    sizes: a `List[int]` as the number of convolution kernels for each layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
   Returns:
-    total_energy: the output Tensor of shape `[-1, 1]` as the estimated total
-      energies.
-    atomic_energies: a Tensor of `[-1, N]`, the estimated energy for each atom.
+    kbody_energies: a Tensor of `[-1, 1, N, 1]` as the energy contributions of 
+      all kbody terms.
 
   """
 
-  with tf.variable_scope(kbody_term):
+  if verbose:
+    print("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
 
-    if verbose:
-      print("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
+  num_layers = len(sizes)
+  activation_fn = list(repeat(tf.nn.tanh, num_layers))
+  kernel_size = 1
+  stride = 1
+  padding = 'SAME'
+  dtype = tf.float32
 
-    num_layers = len(sizes)
-    activation_fn = list(repeat(tf.nn.tanh, num_layers))
-    kernel_size = 1
-    stride = 1
-    padding = 'SAME'
-    dtype = kbody_input.get_float_type(convert=True)
+  # Explicitly set the shape of the input tensor. There are two flexible axis in
+  # this tensor: axis=0 represents the batch size and axis=2 is determined by
+  # the number of atoms.
+  conv.set_shape([None, 1, None, 3])
 
-    for i, units in enumerate(sizes):
-      conv = conv2d(
-        conv,
-        units,
-        kernel_size,
-        activation_fn=activation_fn[i],
-        stride=stride,
-        padding=padding,
-        scope="Hidden{:d}".format(i + 1),
-        weights_initializer=initializers.xavier_initializer(
-          seed=SEED, dtype=dtype),
-        biases_initializer=init_ops.zeros_initializer(dtype=dtype),
-      )
-      if verbose:
-        print_activations(conv)
-
-    k_body_energies = conv2d(
+  for i, units in enumerate(sizes):
+    conv = conv2d(
       conv,
-      1,
+      units,
       kernel_size,
-      activation_fn=tf.nn.relu,
-      biases_initializer=None,
-      weights_initializer=init_ops.truncated_normal_initializer(
-        seed=SEED, dtype=dtype, stddev=0.1),
+      activation_fn=activation_fn[i],
       stride=stride,
       padding=padding,
-      scope="k-Body"
+      scope="Hidden{:d}".format(i + 1),
+      weights_initializer=initializers.xavier_initializer(
+        seed=kbody_input.SEED, dtype=dtype),
+      biases_initializer=init_ops.zeros_initializer(dtype=dtype),
     )
     if verbose:
-      print_activations(k_body_energies)
+      print_activations(conv)
 
-    flat = flatten(k_body_energies)
-    if verbose:
-      print_activations(flat)
-      print("")
+  kbody_energies = conv2d(
+    conv,
+    1,
+    kernel_size,
+    activation_fn=tf.nn.relu,
+    biases_initializer=None,
+    weights_initializer=initializers.xavier_initializer(
+      seed=kbody_input.SEED, dtype=dtype),
+    stride=stride,
+    padding=padding,
+    scope="k-Body"
+  )
+  if verbose:
+    print_activations(kbody_energies)
+    print("")
 
-  return flat
+  # Directly return the 4D tensor of kbody energies. The sum/flatten will be
+  # done in the main inference function.
+  return kbody_energies
 
 
-def inference(input_tensor, offsets, kbody_terms, model='sum-kbody-cnn',
-              verbose=True):
+def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
   """
   The general inference function.
 
   Args:
-    input_tensor: a Tensor of shape `[-1, 1, H, D]`.
-    offsets: a `List[int]` as the offsets to split the input tensor.
+    batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
+    split_dims: a `List[int]` or a 1-D Tensor containing the sizes of each 
+      output tensor along split_dim.
     kbody_terms: a `List[str]` as the names of the k-body terms.
-    model: a `str` as the name of the model to infer.
     verbose: boolean indicating whether the layers shall be printed or not.
 
   Returns:
@@ -287,96 +225,107 @@ def inference(input_tensor, offsets, kbody_terms, model='sum-kbody-cnn',
 
   """
 
-  offsets = tf.constant(offsets, name="Offsets")
-  convs = tf.split(input_tensor, offsets, axis=2, name="Partition")
+  # Build up the placeholder tensors.
+  #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
+  #     alternative inputs which can be directly feeded.
+  #   use_extra: a boolean Tensor indicating whether we should use the
+  #     placeholder inputs or the batch inputs.
+  #   is_predicting: a boolean Tensor indicating whether the model should be
+  #     used for training/evaluation or prediction.
+  with tf.name_scope("placeholders"):
+    ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
+    use_extra = tf.placeholder_with_default(
+      False,
+      shape=None,
+      name="use_extra_inputs"
+    )
+    extra_inputs = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, ck2]),
+      shape=[None, 1, None, ck2],
+      name="extra_inputs"
+    )
+    is_predicting = tf.placeholder_with_default(
+      False,
+      shape=None,
+      name="is_predicting"
+    )
+
+  # Choose the inputs tensor based on `use_placeholder`.
+  with tf.name_scope("InputsFlow"):
+    selected = tf.cond(
+      use_extra,
+      lambda: extra_inputs,
+      lambda: batch_inputs,
+      name="selected_inputs"
+    )
+
+    axis = tf.constant(2, dtype=tf.int32, name="CNK")
+    eps = tf.constant(0.001, dtype=tf.float32, name="threshold")
+    convs = tf.split(selected, split_dims, axis=axis, name="Partition")
+
   kbody_energies = []
 
-  if model.lower() == 'sum-kbody-cnn':
-    for i, conv in enumerate(convs):
-      kbody = _inference_sum_kbody(conv, kbody_terms[i], verbose=verbose)
-      kbody_energies.append(kbody)
+  def zero_padding():
+    """
+    Return a 4D float32 Tensor of zeros as the fake inputs.
+    """
+    return tf.zeros([1, 1, 1, 1], name="zeros")
 
-  elif model.lower() == 'alex-kbody-cnn':
-    for i, conv in enumerate(convs):
-      kbody = _inference_alex_kbody(conv, kbody_terms[i], verbose=verbose)
-      kbody_energies.append(kbody)
+  for i, conv in enumerate(convs):
+    with tf.variable_scope(kbody_terms[i]):
+      with tf.variable_scope("Conv"):
+        contribs = inference_sum_kbody(
+          conv,
+          kbody_terms[i],
+          verbose=verbose
+        )
+      below_zero = tf.less(
+        tf.reduce_sum(conv, name="inputs_sum"),
+        eps,
+        name="below_zero"
+      )
+      return_zero = tf.logical_and(
+        is_predicting,
+        below_zero,
+        name="check_zero"
+      )
+      kbody = tf.cond(
+        return_zero, zero_padding, lambda: contribs, name="zero_or_conv"
+      )
+    kbody_energies.append(kbody)
 
-  else:
-    raise ValueError("The model `{}` is not supported!".format(model))
-
-  contribs = tf.concat(kbody_energies, axis=1, name="Contribs")
+  contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
   tf.summary.histogram("kbody_contribs", contribs)
-
   if verbose:
     print_activations(contribs)
 
-  total_energies = tf.reduce_sum(contribs, axis=1, name="Total")
-  if verbose:
-    print_activations(total_energies)
+  with tf.name_scope("Outputs"):
+    total_energies = tf.reduce_sum(contribs, axis=axis, name="Total")
+    total_energies.set_shape([None, 1, 1])
+    if verbose:
+      print_activations(total_energies)
 
-  if verbose:
-    get_number_of_trainable_parameters(verbose=verbose)
+    total_energies = tf.squeeze(flatten(total_energies), name="squeeze")
+    if verbose:
+      get_number_of_trainable_parameters(verbose=verbose)
 
   return total_energies, contribs
 
 
-def _add_loss_summaries(total_loss):
-  """Add summaries for losses in CIFAR-10 model.
-
-  Generates moving average for all losses and associated summaries for
-  visualizing the performance of the network.
-
-  Args:
-    total_loss: Total loss from `get_total_loss()`.
-  Returns:
-    loss_averages_op: op for generating moving averages of losses.
-  """
-  # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
-  losses = tf.get_collection('losses')
-  loss_averages_op = loss_averages.apply(losses + [total_loss])
-
-  # Attach a scalar summary to all individual losses and the total loss; do the
-  # same for the averaged version of the losses.
-  for l in losses + [total_loss]:
-    # Name each loss as '(raw)' and name the moving average version of the loss
-    # as the original loss name.
-    tf.summary.scalar(l.op.name + ' (raw)', l)
-    tf.summary.scalar(l.op.name, loss_averages.average(l))
-
-  return loss_averages_op
-
-
-def get_total_loss(energies, pred_energies, atomic=False):
+def get_total_loss(y_true, y_pred):
   """
   Return the total loss tensor.
 
   Args:
-    energies: the desired energies.
-    pred_energies: the predicted energies.
+    y_true: the desired energies.
+    y_pred: the predicted energies.
 
   Returns:
     loss: the total loss tensor.
 
   """
-  if atomic:
-    scale = tf.constant(FLAGS.num_atoms, tf.float32, name="natoms")
-  else:
-    scale = tf.constant(1.0, tf.float32, name="one")
-
-  with tf.name_scope("outputs"):
-    with tf.name_scope("batch"):
-      tf.summary.scalar('mean', tf.reduce_mean(energies))
-    with tf.name_scope("pred"):
-      tf.summary.scalar('mean', tf.reduce_mean(pred_energies))
-      tf.summary.histogram('histgram', pred_energies)
-
   with tf.name_scope("RMSE"):
-    loss = tf.losses.mean_squared_error(
-      energies / scale,
-      pred_energies / scale,
-      scope="sMSE"
-    )
+    loss = tf.losses.mean_squared_error(y_true, y_pred, scope="sMSE")
     loss = tf.sqrt(loss, name="sRMSE")
     tf.summary.scalar('sRMSE', loss)
 
@@ -461,11 +410,7 @@ def get_train_op(total_loss, global_step):
   """
   # Compute gradients.
 
-  if FLAGS.adam:
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-    grads = opt.compute_gradients(total_loss)
-
-  else:
+  if not FLAGS.adam:
     lr = _get_decayed_learning_rate(global_step)
     opt = tf.train.MomentumOptimizer(lr, 0.9)
     if FLAGS.scale_factor is None:
@@ -476,14 +421,18 @@ def get_train_op(total_loss, global_step):
       grads = []
       for grad, var in opt.compute_gradients(total_loss):
         grads.append((grad * scale_op, var))
+  else:
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+    grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
   grad_norms = []
-  for grad, var in grads:
-    norm = tf.norm(grad)
-    grad_norms.append(norm)
-    tf.summary.histogram(var.op.name + "/gradients", grad)
-    tf.summary.scalar(var.op.name + "/grad_norm", norm)
+  with tf.name_scope("2norms"):
+    for grad, var in grads:
+      norm = tf.norm(grad, name=var.op.name + "/2norm")
+      grad_norms.append(norm)
+      tf.summary.histogram(var.op.name + "/gradients", grad)
+      tf.summary.scalar(var.op.name + "/grad_norm", norm)
   total_norm = tf.add_n(grad_norms, "total_norms")
   tf.summary.scalar("total_grad_norm", total_norm)
   if not FLAGS.adam:

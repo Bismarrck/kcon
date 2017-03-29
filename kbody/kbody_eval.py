@@ -30,14 +30,20 @@ tf.app.flags.DEFINE_boolean('run_once', False,
                             """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
-  """Run Eval once.
+def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
+              feed_dict):
+  """
+  Run Eval once.
 
   Args:
     saver: Saver.
     summary_writer: Summary writer.
-    mae: The `mean-absolute-error` op.
+    y_true_op: The Tensor used for fetching true predictions.
+    y_pred_op: The Tensor used for fetching neural network predictions.
+    mae_op: The `mean-absolute-error` op.
     summary_op: Summary op.
+    feed_dict: The dict used for `sess.run`.
+  
   """
   with tf.Session() as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
@@ -66,7 +72,10 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
       y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       step = 0
       while step < num_iter and not coord.should_stop():
-        mae_val, y_true_, y_pred_ = sess.run([mae_op, y_true_op, y_pred_op])
+        mae_val, y_true_, y_pred_ = sess.run(
+          [mae_op, y_true_op, y_pred_op],
+          feed_dict=feed_dict
+        )
         maes[step] = mae_val
         istart = step * FLAGS.batch_size
         istop = min(istart + FLAGS.batch_size, FLAGS.num_evals)
@@ -92,7 +101,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op):
         np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
 
       summary = tf.Summary()
-      summary.ParseFromString(sess.run(summary_op))
+      summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
       summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
       summary.value.add(tag='R2 Score @ 1', simple_value=score)
       summary_writer.add_summary(summary, global_step)
@@ -110,24 +119,27 @@ def evaluate():
 
     # Read dataset configurations
     settings = kbody.inputs_settings(train=False)
-    offsets = settings["kbody_term_sizes"]
+    split_dims = settings["split_dims"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    features, energies = kbody.inputs(train=False)
+    batch_inputs, y_true = kbody.inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    pred_energies, _ = kbody.inference(
-      features,
-      offsets,
+    batch_split_dims = tf.placeholder(
+      tf.int64, [len(split_dims), ], name="split_dims"
+    )
+    y_pred, _ = kbody.inference(
+      batch_inputs,
+      split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
     )
-    energies = tf.cast(energies, tf.float32)
+    y_true = tf.cast(y_true, tf.float32)
 
     # Calculate predictions.
-    mae_op = tf.losses.absolute_difference(energies, pred_energies)
+    mae_op = tf.losses.absolute_difference(y_true, y_pred)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -139,9 +151,12 @@ def evaluate():
     summary_op = tf.summary.merge_all()
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
+    # Build the feed dict
+    feed_dict = {batch_split_dims: split_dims}
+
     while True:
-      eval_once(saver, summary_writer, energies, pred_energies, mae_op,
-                summary_op)
+      eval_once(saver, summary_writer, y_true, y_pred, mae_op,
+                summary_op, feed_dict)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

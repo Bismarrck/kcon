@@ -11,7 +11,7 @@ import re
 import time
 import sys
 import json
-from kbody_transform import Transformer
+import kbody_transform
 from os.path import join, isfile, isdir
 from os import makedirs
 from sklearn.model_selection import train_test_split
@@ -58,28 +58,28 @@ def get_float_type(convert=False):
   """
   Return the data type of floats in this mini-project.
   """
-  if FLAGS.use_fp64:
-    if convert:
-      return tf.float64
-    else:
-      return np.float64
+  if convert:
+    return tf.float32
   else:
-    if convert:
-      return tf.float32
-    else:
-      return np.float32
+    return np.float32
 
 
-def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
+def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
+                verbose=True, xyz_format='xyz', unit=1.0):
   """
-  Extract atomic symbols, DFT energies and atomic coordiantes (and forces) from
-  the file.
+  Extract atomic species, energies, coordiantes, and perhaps forces, from the 
+  file.
 
   Args:
-    filename: a `str`, the file to parse.
-    verbose: a `bool`.
+    filename: a `str` as the file to parse.
+    num_examples: a `int` as the number of examples to parse.
+    num_atoms: a `int` as the number of atoms in each configuration.
+    parse_forces: a `bool` indicating whether we should parse forces if 
+      available.
+    verbose: a `bool` indicating whether we should log the parsing progress or 
+      not.
     xyz_format: a `str` representing the format of the given xyz file.
-    unit: a float represents the scaling of the energies.
+    unit: a `float` as the scaling unit of energies.
 
   Returns
     species: `List[str]`, a list of the atomic symbols.
@@ -90,18 +90,16 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
   """
 
   dtype = get_float_type(convert=False)
-  num_examples = FLAGS.num_examples
-  num_atoms = FLAGS.num_atoms
   energies = np.zeros((num_examples,), dtype=np.float64)
   coordinates = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
 
-  if FLAGS.parse_forces:
+  if parse_forces:
     forces = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
   else:
     forces = None
+
   species = []
   parse_species = True
-  parse_forces = False
   stage = 0
   i = 0
   j = 0
@@ -111,17 +109,18 @@ def extract_xyz(filename, verbose=True, xyz_format='xyz', unit=1.0):
     string_patt = re.compile(
       r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
       "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
-    parse_forces = FLAGS.parse_forces
   elif xyz_format.lower() == 'cp2k':
     energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    parse_forces = False
     unit = hartree_to_ev
   elif xyz_format.lower() == 'xyz':
     energy_patt = re.compile(r"([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
     unit = hartree_to_ev
+    parse_forces = False
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
 
@@ -224,6 +223,9 @@ def may_build_dataset(verbose=True):
   # the xyz file.
   species, energies, coordinates, forces = extract_xyz(
     xyzfile,
+    num_examples=FLAGS.num_examples,
+    num_atoms=FLAGS.num_atoms,
+    parse_forces=FLAGS.parse_forces,
     verbose=verbose,
     xyz_format=FLAGS.format,
   )
@@ -231,9 +233,9 @@ def may_build_dataset(verbose=True):
 
   # Split the energies and coordinates into two sets: a training set and a
   # testing set. The indices are used for post-analysis.
-  coords_train, coords_test, \
-  energies_train, energies_test, \
-  indices_train, indices_test = train_test_split(
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test) = train_test_split(
     coordinates,
     energies,
     indices,
@@ -244,23 +246,27 @@ def may_build_dataset(verbose=True):
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
   many_body_k = min(5, max(FLAGS.many_body_k, len(set(species))))
-  clf = Transformer(species, many_body_k)
+  clf = kbody_transform.Transformer(species, many_body_k)
   clf.transform_and_save(
     coords_test, energies_test, test_file, indices=indices_test)
   clf.transform_and_save(
     coords_train, energies_train, train_file, indices=indices_train)
 
 
-height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
-depth = comb(FLAGS.many_body_k, 2, exact=True)
-
-
-def read_and_decode(filename_queue):
+def read_and_decode(filename_queue, cnk, ck2):
   """
   Read and decode the binary dataset file.
 
   Args:
     filename_queue: an input queue.
+    cnk: a `int` as the value of C(N,k). This is also the height of each feature 
+      matrix.
+    ck2: a `int` as the value of C(k,2). This is also the depth of each feature
+      matrix.
+  
+  Returns:
+    features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
+    energy: a 1D array of shape [1] as the target for the features.
 
   """
 
@@ -277,8 +283,8 @@ def read_and_decode(filename_queue):
     })
 
   features = tf.decode_raw(example['features'], dtype)
-  features.set_shape([height * depth])
-  features = tf.reshape(features, [1, height, depth])
+  features.set_shape([cnk * ck2])
+  features = tf.reshape(features, [1, cnk, ck2])
 
   energy = tf.decode_raw(example['energy'], tf.float64)
   energy.set_shape([1])
@@ -316,6 +322,9 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
     filename, _ = get_filenames(train=train)
     filenames = [filename]
 
+  cnk = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
+  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
+
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
       filenames,
@@ -324,7 +333,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies = read_and_decode(filename_queue, )
+    features, energies = read_and_decode(filename_queue, cnk, ck2)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
@@ -375,13 +384,16 @@ def test():
 
   species, raw_energies, raw_coordinates, _ = extract_xyz(
     xyzfile,
+    num_examples=5000,
+    num_atoms=21,
+    parse_forces=False,
     verbose=False,
     xyz_format=FLAGS.format,
   )
   indices = list(range(len(raw_coordinates)))
-  coords_train, coords_test, \
-  energies_train, energies_test, \
-  indices_train, indices_test = train_test_split(
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test) = train_test_split(
     raw_coordinates,
     raw_energies,
     indices,
@@ -395,7 +407,7 @@ def test():
   train_file = join(FLAGS.binary_dir, "TaB20opted-train.tfrecords")
   if not isfile(train_file):
     many_body_k = 4
-    clf = Transformer(species, many_body_k)
+    clf = kbody_transform.Transformer(species, many_body_k)
     clf.transform_and_save(coords_train, energies_train, train_file,
                            indices=indices)
 
@@ -452,6 +464,7 @@ def test():
     time.sleep(5)
 
 
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if FLAGS.run_input_test:
     test()

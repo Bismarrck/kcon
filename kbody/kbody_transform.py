@@ -46,6 +46,13 @@ pyykko = {
 }
 
 
+def get_formula(species):
+  """
+  Return the molecular formula given a list of atomic species.
+  """
+  return "".join(species)
+
+
 def _get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
   """
   Return the pyykko-bonds matrix given a list of atomic symbols.
@@ -78,43 +85,49 @@ def _gen_dist2inputs_mapping(species, kbody_terms):
       atomic symbol combinations.
 
   Returns:
-    mapping: a dict
-    selection: a dict
+    mapping: a `Dict[str, np.ndarray]` as the mapping from the N-by-N distance 
+      matrix to the feature matrix for each k-body term.
+    selection: a `Dict[str, List[List[int]]]` as the corresponding atom indices 
+      for each k-body term.
 
   """
   natoms = len(species)
   uniques = set(species)
-  indices = {}
+  element_indices = {}
   for element in uniques:
     for i in range(natoms):
       if species[i] == element:
-        indices[element] = indices.get(element, []) + [i]
+        element_indices[element] = element_indices.get(element, []) + [i]
   mapping = {}
   selections = {}
   for term in kbody_terms:
     elements = term.split(",")
+    counter = Counter(elements)
+    # If the occurances of an element in the k-body term is bigger than that in
+    # the species, we shall discard this kbody term.
+    if any([counter[e] > len(element_indices.get(e, [])) for e in elements]):
+      continue
     ck2 = comb(len(elements), 2, exact=True)
-    c = Counter(elements)
-    keys = sorted(c.keys())
-    candidates = [[list(o) for o in combinations(indices[e], c[e])]
-                  for e in keys]
-    # All k-order combinations of elements
-    pairs = [list(chain(*o)) for o in product(*candidates)]
-    selections[term] = pairs
-    cnk = len(pairs)
+    keys = sorted(counter.keys())
+    kbodies = [[list(o) for o in combinations(element_indices[e], counter[e])]
+               for e in keys]
+    # All k-body combinations
+    kbodies = [list(chain(*o)) for o in product(*kbodies)]
+    selections[term] = kbodies
+    cnk = len(kbodies)
     mapping[term] = np.zeros((ck2, cnk), dtype=int)
     for i in range(cnk):
-      for j, (vi, vj) in enumerate(combinations(pairs[i], 2)):
+      for j, (vi, vj) in enumerate(combinations(kbodies[i], 2)):
         mapping[term][j, i] = vi * natoms + vj
   return mapping, selections
 
 
-def _gen_sorting_indices(orders):
+def _gen_sorting_indices(kbody_terms):
   """
   Generate the soring indices.
 
   Args:
-    orders: a List as the ordered many-body atomic symbol combiantions.
+    kbody_terms: a `List[str]` as the ordered k-body terms.
 
   Returns:
     indices: a dict of indices for sorting along the last axis of the input
@@ -122,17 +135,17 @@ def _gen_sorting_indices(orders):
 
   """
   indices = {}
-  for order in orders:
-    elements = list(sorted(order.split(",")))
+  for term in kbody_terms:
+    elements = list(sorted(term.split(",")))
     atom_pairs = list(combinations(elements, r=2))
     n = len(atom_pairs)
     counter = Counter(atom_pairs)
     if max(counter.values()) == 1:
       continue
-    indices[order] = []
+    indices[term] = []
     for pair, times in counter.items():
       if times > 1:
-        indices[order].append([i for i in range(n) if atom_pairs[i] == pair])
+        indices[term].append([i for i in range(n) if atom_pairs[i] == pair])
   return indices
 
 
@@ -162,7 +175,7 @@ class Transformer:
   features and training targets.
   """
 
-  def __init__(self, species, many_body_k=4):
+  def __init__(self, species, many_body_k=4, kbody_terms=None):
     """
     Initialization method.
 
@@ -171,28 +184,33 @@ class Transformer:
       many_body_k: a `int` as the maximum order for the many-body expansion.
 
     """
-    orders = sorted(list(set(
-      [",".join(sorted(c)) for c in combinations(species, many_body_k)])))
-    mapping, selections = _gen_dist2inputs_mapping(species, orders)
+    if kbody_terms is None:
+      kbody_terms = sorted(list(set(
+        [",".join(sorted(c)) for c in combinations(species, many_body_k)])))
+    mapping, selections = _gen_dist2inputs_mapping(species, kbody_terms)
     offsets = [0]
-    cnk = 0
-    ck2 = None
-    for order in orders:
-      cnk += mapping[order].shape[1]
-      if not ck2:
-        ck2 = mapping[order].shape[0]
-      offsets.append(cnk)
+    dim = 0
+    for term in kbody_terms:
+      if term not in mapping:
+        dim += 1
+      else:
+        dim += mapping[term].shape[1]
+      offsets.append(dim)
     self._many_body_k = many_body_k
-    self._orders = orders
+    self._kbody_terms = kbody_terms
     self._species = species
     self._kbody_offsets = offsets
     self._dist2inputs_mapping = mapping
     self._selections = selections
-    self._kbody_sizes = np.diff(offsets)
-    self._cnk = cnk
-    self._ck2 = ck2
-    self._sorting_indices = _gen_sorting_indices(orders)
+    self._split_dims = np.diff(offsets).tolist()
+    self._cnk = int(comb(len(species), many_body_k, exact=True))
+    self._ck2 = int(comb(many_body_k, 2, exact=True))
+    self._sorting_indices = _gen_sorting_indices(kbody_terms)
     self._lmat = _get_pyykko_bonds_matrix(species)
+    # The major dimension of each input feature matrix. Each missing kbody term
+    # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
+    # calculated the number of missing kbody terms.
+    self._total_dim = dim
 
   @property
   def cnk(self):
@@ -215,7 +233,28 @@ class Transformer:
     """
     return self._many_body_k
 
-  def transform(self, coordinates, energies):
+  @property
+  def split_dims(self):
+    """
+    Return the dims for spliting the inputs.
+    """
+    return self._split_dims
+
+  @property
+  def kbody_terms(self):
+    """
+    Return the kbody terms for this transformer. 
+    """
+    return self._kbody_terms
+
+  @property
+  def kbody_selections(self):
+    """
+    Return the kbody selections.
+    """
+    return self._selections
+
+  def transform(self, coordinates, energies=None):
     """
     Transform the given atomic coordinates and energies to input features and
     training targets and return them as numpy arrays.
@@ -227,12 +266,13 @@ class Transformer:
     Returns:
       features: a 4D array as the transformed input features.
       targets: a 1D array as the training targets (actually the negative of the
-        input energies.)
+        input energies) given `energies` or None.
 
     """
     num_examples = len(coordinates)
-    samples = np.zeros((num_examples, self.cnk, self.ck2), dtype=np.float32)
-    orders = self._orders
+    samples = np.zeros((num_examples, self._total_dim, self.ck2),
+                       dtype=np.float32)
+    kbody_terms = self._kbody_terms
     mapping = self._dist2inputs_mapping
     offsets = self._kbody_offsets
 
@@ -240,17 +280,29 @@ class Transformer:
       dists = pairwise_distances(coordinates[i]).flatten()
       rr = _exponential(dists, self._lmat)
       samples[i].fill(0.0)
-      for j, order in enumerate(orders):
+      for j, term in enumerate(kbody_terms):
+        if term not in mapping:
+          continue
         for k in range(self.ck2):
-          samples[i, offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+          samples[i, offsets[j]: offsets[j + 1], k] = rr[mapping[term][k]]
 
-      for j, order in enumerate(orders):
-        for ix in self._sorting_indices.get(order, []):
+      for j, term in enumerate(kbody_terms):
+        if term not in mapping:
+          continue
+        for ix in self._sorting_indices.get(term, []):
+          # Note:
+          # `samples` is a 3D array, the Python advanced slicing will make the
+          # returned `z` a copy but not a view. The shape of `z` is transposed.
+          # So we should sort along axis 0 here!
           z = samples[i, offsets[j]: offsets[j + 1], ix]
-          z.sort(axis=1)
+          z.sort(axis=0)
           samples[i, offsets[j]: offsets[j + 1], ix] = z
 
-    return samples, np.negative(energies)
+    if energies is not None:
+      targets = np.negative(energies)
+    else:
+      targets = None
+    return samples, targets
 
   def _transform_and_save(self, coordinates, energies, filename, verbose):
     """
@@ -262,8 +314,8 @@ class Transformer:
         print("Start transforming %s ... " % filename)
 
       num_examples = len(coordinates)
-      sample = np.zeros((self.cnk, self.ck2), dtype=np.float32)
-      orders = self._orders
+      sample = np.zeros((self._total_dim, self.ck2), dtype=np.float32)
+      kbody_terms = self._kbody_terms
       mapping = self._dist2inputs_mapping
       offsets = self._kbody_offsets
 
@@ -271,12 +323,12 @@ class Transformer:
         dists = pairwise_distances(coordinates[i]).flatten()
         rr = _exponential(dists, self._lmat)
         sample.fill(0.0)
-        for j, order in enumerate(orders):
+        for j, term in enumerate(kbody_terms):
           for k in range(self.ck2):
-            sample[offsets[j]: offsets[j + 1], k] = rr[mapping[order][k]]
+            sample[offsets[j]: offsets[j + 1], k] = rr[mapping[term][k]]
 
-        for j, order in enumerate(orders):
-          for ix in self._sorting_indices.get(order, []):
+        for j, term in enumerate(kbody_terms):
+          for ix in self._sorting_indices.get(term, []):
             z = sample[offsets[j]: offsets[j + 1], ix]
             z.sort(axis=1)
             sample[offsets[j]: offsets[j + 1], ix] = z
@@ -339,17 +391,166 @@ class Transformer:
     with open(cfgfile, "w+") as f:
       json.dump({
         "kbody_offsets": self._kbody_offsets,
-        "kbody_terms": self._orders,
+        "kbody_terms": self._kbody_terms,
         "kbody_selections": self._selections,
-        "kbody_term_sizes": self._kbody_sizes.tolist(),
+        "split_dims": self._split_dims,
         "inverse_indices": list([int(i) for i in indices])
-      }, f)
+      }, f, indent=2)
+
+
+class MultiTransformer:
+  """
+  A flexible transformer targeting on AxByCz ... molecular compositions.
+  """
+
+  def __init__(self, atom_types, many_body_k=3, max_occurs=None):
+    """
+    Initialization method.
+
+    Args:
+      atom_types: a `List[str]` as the target atomic species.  
+      many_body_k: a `int` as the many body expansion factor.
+      max_occurs: a `Dict[str, int]` as the maximum appearance for a specie.
+
+    """
+    self._many_body_k = many_body_k
+    self._atom_types = list(set(atom_types))
+    species = []
+    max_occurs = {} if max_occurs is None else max_occurs
+    for specie in self._atom_types:
+      r = min(max_occurs.get(specie, many_body_k), many_body_k)
+      species.extend(list(repeat(specie, r)))
+      if specie not in max_occurs:
+        max_occurs[specie] = np.inf
+      else:
+        max_occurs[specie] = r
+    self._kbody_terms = sorted(
+      list(
+        set([",".join(sorted(c)) for c in combinations(species, many_body_k)])))
+    self._transformers = {}
+    self._max_occurs = max_occurs
+
+  @property
+  def many_body_k(self):
+    """
+    Return the many-body expansion factor.
+    """
+    return self._many_body_k
+
+  @property
+  def ck2(self):
+    """
+    Return the value of C(k,2).
+    """
+    return int(comb(self._many_body_k, 2, exact=True))
+
+  @property
+  def kbody_terms(self):
+    """
+    Return the ordered k-body terms for this transformer.
+    """
+    return self._kbody_terms
+
+  def accept_species(self, species):
+    """
+    Return True if the given species can be transformed by this transformer.
+    
+    Args:
+      species: a `List[str]` as the ordered species of a molecule.
+    
+    Returns:
+      accepted: True if this transformer can handle this species list.
+    
+    """
+    counter = Counter(species)
+    return all(counter[e] <= self._max_occurs.get(e, 0) for e in counter)
+
+  def _get_transformer(self, species):
+    """
+    Return the `Transformer` for the given molecular species.
+    
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecules. 
+
+    Returns:
+      clf: a `Transformer`.
+
+    """
+    formula = get_formula(species)
+    clf = self._transformers.get(formula)
+    if not isinstance(clf, Transformer):
+      clf = Transformer(species, self.many_body_k, kbody_terms=self.kbody_terms)
+      self._transformers[formula] = clf
+    return clf
+
+  def transform(self, species, coords, energies=None):
+    """
+    Transform the atomic coordinates to input features.
+
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecule(s).
+      coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
+        it should represents the N-by-3 coordinates of a single molecule.
+      energies: a 1D array as the total energies. 
+
+    Returns:
+      features: a 4D array as the input features.
+      split_dims: a `List[int]` for splitting the input features along axis 2.
+      targets: a 1D array as the training targets given `energis` or None.
+    
+    Raises:
+      ValueError: if the `species` is not supported by this transformer.
+
+    """
+    if not self.accept_species(species):
+      raise ValueError(
+        "This transformer does not support {}!".format(get_formula(species)))
+
+    coords = np.asarray(coords)
+    if len(coords.shape) == 2:
+      if coords.shape[0] != len(species):
+        raise ValueError("The shapes of coords and species are not matched!")
+      coords = coords.reshape((1, len(species), 3))
+    elif coords.shape[1] != len(species):
+      raise ValueError("The shapes of coords and species are not matched!")
+
+    clf = self._get_transformer(species)
+    features, targets = clf.transform(coords, energies)
+    return features, clf.split_dims, targets
+
+  def compute_atomic_energies(self, species, kbody_contribs):
+    """
+    Compute the atomic energies given predicted kbody contributions.
+    
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecules.
+      kbody_contribs: a 2D array as the kbody contributions of each molecule.
+
+    Returns:
+      atomic_energies: a 2D array as the atomic energies of each molecule.
+
+    """
+    clf = self._get_transformer(species)
+    split_dims = clf.split_dims
+    num_mols = kbody_contribs.shape[0]
+    num_atoms = len(species)
+    atomic_energies = np.zeros((num_mols, num_atoms))
+    for step in range(num_mols):
+      for i, term in enumerate(clf.kbody_terms):
+        if term not in clf.kbody_selections:
+          continue
+        istart = 0 if i == 0 else int(sum(split_dims[:i]))
+        for kbody_i, indices in enumerate(clf.kbody_selections[term]):
+          for atom_i in indices:
+            atomic_energies[step, atom_i] += \
+              kbody_contribs[step, istart + kbody_i]
+    return atomic_energies / float(self.ck2)
 
 
 def _test_map_indices():
   species = ["Li"] + list(repeat("B", 6))
   orders = list(set([",".join(sorted(c)) for c in combinations(species, 4)]))
-  mapping = _gen_dist2inputs_mapping(species, orders)
+  mapping, _ = _gen_dist2inputs_mapping(species, orders)
   assert mapping['B,B,B,Li'][0, 0] == 9
 
 
@@ -367,9 +568,35 @@ def _test_split_tensor():
 
     assert len(values) == 2
     assert np.linalg.norm(values[0] - raw_inputs[:, :, 0:4, :]) == 0.0
-    assert np.linalg.norm(values[0] - raw_inputs[:, :, 4:6, :]) == 0.0
+    assert np.linalg.norm(values[1] - raw_inputs[:, :, 4:6, :]) == 0.0
+
+
+def _test_multi_transform():
+
+  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 3})
+  coords = np.repeat(np.atleast_2d(np.arange(17.0)).T, 3, axis=1)
+  species = ["N"] + list(repeat("C", 9)) + list(repeat("H", 7))
+  features, split_dims, _ = clf.transform(species, coords)
+
+  for i, term in enumerate(clf.kbody_terms):
+    istart = 0 if i == 0 else sum(split_dims[:i])
+    nnext = min(20, split_dims[i])
+    print(term)
+    print(features[0, istart: istart + nnext, :])
+
+
+def _test_accept_species():
+  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 1})
+  ch = list(repeat("C", 9)) + list(repeat("H", 7))
+
+  if not clf.accept_species(["N"] + ch):
+    raise AssertionError()
+  if clf.accept_species(["N", "N"] + ch):
+    raise AssertionError()
 
 
 if __name__ == "__main__":
   _test_map_indices()
   _test_split_tensor()
+  _test_multi_transform()
+  _test_accept_species()
