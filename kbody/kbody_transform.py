@@ -105,7 +105,7 @@ def _gen_dist2inputs_mapping(species, kbody_terms):
     counter = Counter(elements)
     # If the occurances of an element in the k-body term is bigger than that in
     # the species, we shall discard this kbody term.
-    if any([counter[e] > len(element_indices[e]) for e in elements]):
+    if any([counter[e] > len(element_indices.get(e, [])) for e in elements]):
       continue
     ck2 = comb(len(elements), 2, exact=True)
     keys = sorted(counter.keys())
@@ -420,10 +420,15 @@ class MultiTransformer:
     for specie in self._atom_types:
       r = min(max_occurs.get(specie, many_body_k), many_body_k)
       species.extend(list(repeat(specie, r)))
+      if specie not in max_occurs:
+        max_occurs[specie] = np.inf
+      else:
+        max_occurs[specie] = r
     self._kbody_terms = sorted(
       list(
         set([",".join(sorted(c)) for c in combinations(species, many_body_k)])))
     self._transformers = {}
+    self._max_occurs = max_occurs
 
   @property
   def many_body_k(self):
@@ -445,6 +450,20 @@ class MultiTransformer:
     Return the ordered k-body terms for this transformer.
     """
     return self._kbody_terms
+
+  def accept_species(self, species):
+    """
+    Return True if the given species can be transformed by this transformer.
+    
+    Args:
+      species: a `List[str]` as the ordered species of a molecule.
+    
+    Returns:
+      accepted: True if this transformer can handle this species list.
+    
+    """
+    counter = Counter(species)
+    return all(counter[e] <= self._max_occurs.get(e, 0) for e in counter)
 
   def _get_transformer(self, species):
     """
@@ -478,8 +497,15 @@ class MultiTransformer:
       features: a 4D array as the input features.
       split_dims: a `List[int]` for splitting the input features along axis 2.
       targets: a 1D array as the training targets given `energis` or None.
+    
+    Raises:
+      ValueError: if the `species` is not supported by this transformer.
 
     """
+    if not self.accept_species(species):
+      raise ValueError(
+        "This transformer does not support {}!".format(get_formula(species)))
+
     coords = np.asarray(coords)
     if len(coords.shape) == 2:
       if coords.shape[0] != len(species):
@@ -511,6 +537,8 @@ class MultiTransformer:
     atomic_energies = np.zeros((num_mols, num_atoms))
     for step in range(num_mols):
       for i, term in enumerate(clf.kbody_terms):
+        if term not in clf.kbody_selections:
+          continue
         istart = 0 if i == 0 else int(sum(split_dims[:i]))
         for kbody_i, indices in enumerate(clf.kbody_selections[term]):
           for atom_i in indices:
@@ -522,7 +550,7 @@ class MultiTransformer:
 def _test_map_indices():
   species = ["Li"] + list(repeat("B", 6))
   orders = list(set([",".join(sorted(c)) for c in combinations(species, 4)]))
-  mapping = _gen_dist2inputs_mapping(species, orders)
+  mapping, _ = _gen_dist2inputs_mapping(species, orders)
   assert mapping['B,B,B,Li'][0, 0] == 9
 
 
@@ -540,7 +568,7 @@ def _test_split_tensor():
 
     assert len(values) == 2
     assert np.linalg.norm(values[0] - raw_inputs[:, :, 0:4, :]) == 0.0
-    assert np.linalg.norm(values[0] - raw_inputs[:, :, 4:6, :]) == 0.0
+    assert np.linalg.norm(values[1] - raw_inputs[:, :, 4:6, :]) == 0.0
 
 
 def _test_multi_transform():
@@ -557,7 +585,18 @@ def _test_multi_transform():
     print(features[0, istart: istart + nnext, :])
 
 
+def _test_accept_species():
+  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 1})
+  ch = list(repeat("C", 9)) + list(repeat("H", 7))
+
+  if not clf.accept_species(["N"] + ch):
+    raise AssertionError()
+  if clf.accept_species(["N", "N"] + ch):
+    raise AssertionError()
+
+
 if __name__ == "__main__":
   _test_map_indices()
   _test_split_tensor()
   _test_multi_transform()
+  _test_accept_species()

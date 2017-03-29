@@ -7,6 +7,8 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import kbody_transform
+import time
+from os.path import join, dirname
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -23,7 +25,8 @@ class CNNPredictor:
   An energy predictor based on the deep neural network of 'sum-kbody-cnn'.
   """
 
-  def __init__(self, atom_types, model_path, many_body_k=3, max_occurs=None):
+  def __init__(self, atom_types, model_path, many_body_k=3, max_occurs=None,
+               **kwargs):
     """
     Initialization method.
 
@@ -33,6 +36,7 @@ class CNNPredictor:
         the model name and the global step, eg 'model.ckpt-500'.
       many_body_k: a `int` as the many body expansion factor.
       max_occurs: a `Dict[str, int]` as the maximum appearance for a specie.
+      kwargs: additional key-value arguments for importing the meta model.
 
     """
     self.transformer = kbody_transform.MultiTransformer(
@@ -41,7 +45,7 @@ class CNNPredictor:
       max_occurs=max_occurs,
     )
     self.sess = tf.Session()
-    self._import_model(model_path)
+    self._import_model(model_path, **kwargs)
 
   @property
   def many_body_k(self):
@@ -132,33 +136,42 @@ class CNNPredictor:
     return np.negative(y_total), np.negative(y_atomic)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-def test(unused):
+def _print_predictions(y_total, y_true, y_atomic, species):
+  """
+  A helper function for printing predicted results of the unittests.
+    
+  Args:
+    y_total: a 1D array of shape [N, ] as the predicted energies. 
+    y_true: a 1D array of shape [N, ] as the real energies.
+    y_atomic: a 2D array of shape [N, M] as the atomic energies.
+    species: a `List[str]` as the atomic species.
+
+  """
+  num_examples, num_atoms = y_atomic.shape
+  size = min(num_examples, 20)
+  y_total = np.atleast_1d(y_total)
+  y_true = np.atleast_1d(y_true)
+  for i in np.random.choice(range(num_examples), size=size):
+    print("Index            : % 2d" % i)
+    print("Energy Predicted : % .4f eV" % y_total[i])
+    print("Energy Real      : % .4f eV" % y_true[i])
+    for j in range(num_atoms):
+      print("Atom %2d, %2s,     % 10.4f eV" % (j, species[j], y_atomic[i, j]))
+    print("")
+
+
+def _test(calculator):
   """
   Run unittests for `CNNPredictor`. The dataset for these tests is `C9H7Nv1`.
   """
 
   import kbody_input
-  import time
-  from os.path import join, dirname
 
   cwd = dirname(__file__)
-  model_name = "model.ckpt-1077218"
-  model_path = join(cwd, "models", "C9H7N.v2", model_name)
   xyz_file = join(cwd, "..", "datasets", "C9H7Nv1.xyz")
   num_examples = 5000
   num_atoms = 17
   num_tests = num_examples
-
-  # Initialize a `CNNPredictor` instance. This step is relatively slow.
-  tic = time.time()
-  calculator = CNNPredictor(
-    ["C", "H", "N"],
-    model_path=model_path,
-    max_occurs={"N": 1}
-  )
-  elapsed = time.time() - tic
-  print("Predictor initialized. Time: %.3f s" % elapsed)
 
   # Extract structures from the file.
   species, energies, coords, _ = kbody_input.extract_xyz(
@@ -178,12 +191,49 @@ def test(unused):
   print("Prediction time: %.3f s, speed: %.2f examples/s" % (elapsed, speed))
   print("")
 
-  for i in np.random.choice(range(num_tests), size=20):
-    print("Index            : %2d" % i)
-    print("Energy Predicted : %.3f eV" % y_total[i])
-    print("Energy Real      : %.3f eV" % energies[i])
-    for j in range(num_atoms):
-      print("Atom %2d, %2s, %10.4f eV" % (j, species[j], y_atomic[i, j]))
+  _print_predictions(y_total, energies, y_atomic, species)
+
+
+def _test_small(calculator):
+  """
+  Test the `CNNPredictor` of CxHyN with a CH4 molecule.
+  """
+  species = ["C", "H", "H", "H", "H"]
+  coords = np.array([
+    [0.15625000,    1.42857141,    0.00000000],
+    [0.51290443,    0.41976140,    0.00000000],
+    [0.51292284,    1.93296960,    0.87365150],
+    [0.51292284,    1.93296960,   -0.87365150],
+    [-0.91375000,   1.42858459,    0.00000000]
+  ], dtype=np.float64).reshape((1, 5, 3))
+
+  y_total, y_atomic = calculator.predict(species, coords)
+  _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
+
+
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
+def test(unused):
+
+  cwd = dirname(__file__)
+  model_name = "model.ckpt-1077218"
+  model_path = join(cwd, "models", "C9H7N.v2", model_name)
+
+  # Initialize a `CNNPredictor` instance. This step is relatively slow.
+  tic = time.time()
+  calculator = CNNPredictor(
+    ["C", "H", "N"],
+    model_path=model_path,
+    max_occurs={"N": 1}
+  )
+  elapsed = time.time() - tic
+  print("Predictor initialized. Time: %.3f s" % elapsed)
+  print("")
+
+  for unittest, name in [(_test, "C9H7N"), (_test_small, "Small Molecules")]:
+    print("------")
+    print("Tests:", name)
+    print("------")
+    unittest(calculator)
     print("")
 
 
