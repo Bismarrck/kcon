@@ -58,16 +58,10 @@ def get_float_type(convert=False):
   """
   Return the data type of floats in this mini-project.
   """
-  if FLAGS.use_fp64:
-    if convert:
-      return tf.float64
-    else:
-      return np.float64
+  if convert:
+    return tf.float32
   else:
-    if convert:
-      return tf.float32
-    else:
-      return np.float32
+    return np.float32
 
 
 def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
@@ -106,7 +100,6 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
 
   species = []
   parse_species = True
-  parse_forces = False
   stage = 0
   i = 0
   j = 0
@@ -116,17 +109,18 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
     string_patt = re.compile(
       r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
       "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
-    parse_forces = FLAGS.parse_forces
   elif xyz_format.lower() == 'cp2k':
     energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    parse_forces = False
     unit = hartree_to_ev
   elif xyz_format.lower() == 'xyz':
     energy_patt = re.compile(r"([\w.-]+)")
     string_patt = re.compile(
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
     unit = hartree_to_ev
+    parse_forces = False
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
 
@@ -259,16 +253,20 @@ def may_build_dataset(verbose=True):
     coords_train, energies_train, train_file, indices=indices_train)
 
 
-height = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
-depth = comb(FLAGS.many_body_k, 2, exact=True)
-
-
-def read_and_decode(filename_queue):
+def read_and_decode(filename_queue, cnk, ck2):
   """
   Read and decode the binary dataset file.
 
   Args:
     filename_queue: an input queue.
+    cnk: a `int` as the value of C(N,k). This is also the height of each feature 
+      matrix.
+    ck2: a `int` as the value of C(k,2). This is also the depth of each feature
+      matrix.
+  
+  Returns:
+    features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
+    energy: a 1D array of shape [1] as the target for the features.
 
   """
 
@@ -285,8 +283,8 @@ def read_and_decode(filename_queue):
     })
 
   features = tf.decode_raw(example['features'], dtype)
-  features.set_shape([height * depth])
-  features = tf.reshape(features, [1, height, depth])
+  features.set_shape([cnk * ck2])
+  features = tf.reshape(features, [1, cnk, ck2])
 
   energy = tf.decode_raw(example['energy'], tf.float64)
   energy.set_shape([1])
@@ -324,6 +322,9 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
     filename, _ = get_filenames(train=train)
     filenames = [filename]
 
+  cnk = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
+  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
+
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
       filenames,
@@ -332,7 +333,7 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies = read_and_decode(filename_queue, )
+    features, energies = read_and_decode(filename_queue, cnk, ck2)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)

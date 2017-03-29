@@ -6,10 +6,16 @@ from __future__ import print_function, absolute_import
 
 import tensorflow as tf
 import numpy as np
-import kbody.kbody_transform as kbody_transform
+import kbody_transform
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
+
+FLAGS = tf.app.flags.FLAGS
+
+tf.app.flags.DEFINE_integer("num_tests", 1000,
+                            """The number of tests to run.""")
 
 
 class CNNPredictor:
@@ -56,6 +62,9 @@ class CNNPredictor:
     """
     self.saver = tf.train.import_meta_graph("{}.meta".format(model_path))
     self.saver.restore(self.sess, model_path, **kwargs)
+
+    # Recover the tensors from the graph.
+    graph = tf.get_default_graph()
     self.y_total_op = graph.get_tensor_by_name("Outputs/squeeze:0")
     self.y_kbody_op = graph.get_tensor_by_name("Contribs:0")
     self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
@@ -97,7 +106,7 @@ class CNNPredictor:
     features, split_dims, _ = self.transformer.transform(species, coords)
 
     # Build the feed dict for running the session.
-    features = features.reshape((num_mols, 1, -1, self.ck2))
+    features = features.reshape((num_mols, 1, -1, self.transformer.ck2))
     feed_dict = {
       # Make the model use `extra_inputs` as the input features.
       self._use_extra: True,
@@ -111,12 +120,72 @@ class CNNPredictor:
     }
 
     # Run the operations to get the predicted energies.
-    y_total, y_kbody = sess.run(
+    y_total, y_kbody = self.sess.run(
       [self.y_total_op, self.y_kbody_op],
       feed_dict=feed_dict
     )
 
     # Transform the kbody energies to atomic energies.
+    y_kbody = np.squeeze(y_kbody, axis=(1, 3))
     y_atomic = self.transformer.compute_atomic_energies(species, y_kbody)
 
     return np.negative(y_total), np.negative(y_atomic)
+
+
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
+def test(unused):
+  """
+  Run unittests for `CNNPredictor`. The dataset for these tests is `C9H7Nv1`.
+  """
+
+  import kbody_input
+  import time
+  from os.path import join, dirname
+
+  cwd = dirname(__file__)
+  model_name = "model.ckpt-1077218"
+  model_path = join(cwd, "models", "C9H7N.v2", model_name)
+  xyz_file = join(cwd, "..", "datasets", "C9H7Nv1.xyz")
+  num_examples = 5000
+  num_atoms = 17
+  num_tests = num_examples
+
+  # Initialize a `CNNPredictor` instance. This step is relatively slow.
+  tic = time.time()
+  calculator = CNNPredictor(
+    ["C", "H", "N"],
+    model_path=model_path,
+    max_occurs={"N": 1}
+  )
+  elapsed = time.time() - tic
+  print("Predictor initialized. Time: %.3f s" % elapsed)
+
+  # Extract structures from the file.
+  species, energies, coords, _ = kbody_input.extract_xyz(
+    xyz_file,
+    num_examples,
+    num_atoms,
+    xyz_format='grendel',
+    verbose=False
+  )
+
+  # Make final predictions.
+  tic = time.time()
+  slicer = np.random.choice(range(num_examples), num_tests)
+  y_total, y_atomic = calculator.predict(species, coords[slicer])
+  elapsed = time.time() - tic
+  speed = float(num_tests) / elapsed
+  print("Prediction time: %.3f s, speed: %.2f examples/s" % (elapsed, speed))
+  print("")
+
+  for i in np.random.choice(range(num_tests), size=20):
+    print("Index            : %2d" % i)
+    print("Energy Predicted : %.3f eV" % y_total[i])
+    print("Energy Real      : %.3f eV" % energies[i])
+    for j in range(num_atoms):
+      print("Atom %2d, %2s, %10.4f eV" % (j, species[j], y_atomic[i, j]))
+    print("")
+
+
+if __name__ == "__main__":
+  tf.app.run(main=test)

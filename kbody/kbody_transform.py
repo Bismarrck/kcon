@@ -433,6 +433,13 @@ class MultiTransformer:
     return self._many_body_k
 
   @property
+  def ck2(self):
+    """
+    Return the value of C(k,2).
+    """
+    return int(comb(self._many_body_k, 2, exact=True))
+
+  @property
   def kbody_terms(self):
     """
     Return the ordered k-body terms for this transformer.
@@ -504,10 +511,11 @@ class MultiTransformer:
     atomic_energies = np.zeros((num_mols, num_atoms))
     for step in range(num_mols):
       for i, term in enumerate(clf.kbody_terms):
-        istart = 0 if i == 0 else sum(split_dims[:i])
-        for indices in clf.kbody_selections[term]:
-          for kbody_i, atom_i in indices:
-            atomic_energies[step, atom_i] += y_kbody[step, istart + kbody_i]
+        istart = 0 if i == 0 else int(sum(split_dims[:i]))
+        for kbody_i, indices in enumerate(clf.kbody_selections[term]):
+          for atom_i in indices:
+            atomic_energies[step, atom_i] += \
+              kbody_contribs[step, istart + kbody_i]
     return atomic_energies / float(self.ck2)
 
 
