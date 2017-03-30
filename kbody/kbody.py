@@ -137,7 +137,7 @@ def inputs_settings(train=True):
   return kbody_input.inputs_settings(train=train)
 
 
-def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
+def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
                         verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
@@ -146,6 +146,7 @@ def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
     conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
       the molecule and M is the number of features.
     kbody_term: a `str` Tensor as the name of this k-body term.
+    ck2: a `int` as the value of C(k,2).
     sizes: a `List[int]` as the number of convolution kernels for each layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
@@ -168,7 +169,7 @@ def inference_sum_kbody(conv, kbody_term, sizes=(60, 120, 120, 60),
   # Explicitly set the shape of the input tensor. There are two flexible axis in
   # this tensor: axis=0 represents the batch size and axis=2 is determined by
   # the number of atoms.
-  conv.set_shape([None, 1, None, 3])
+  conv.set_shape([None, 1, None, ck2])
 
   for i, units in enumerate(sizes):
     conv = conv2d(
@@ -277,6 +278,7 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
         contribs = inference_sum_kbody(
           conv,
           kbody_terms[i],
+          ck2,
           verbose=verbose
         )
       below_zero = tf.less(
