@@ -149,20 +149,20 @@ def _gen_sorting_indices(kbody_terms):
   return indices
 
 
-def _exponential(d, s):
+def exponential(inputs, factor):
   """
-  Do the exponential scaling on the given array `d`.
+  Exponentially scale the `inputs`.
 
   Args:
-    d: an `np.ndarray`.
-    s: a float or an `np.ndarray` with the same shape of `d` as the scaling
+    inputs: Union[float, np.ndarray] as the inputs to scale.
+    factor: a float or an array with the same shape of `inputs` as the scaling 
       factor(s).
 
   Returns:
-    ds: the scaled array.
+    scaled: the scaled inputs.
 
   """
-  return np.exp(-d / s)
+  return np.exp(np.negative(inputs) / factor)
 
 
 def _bytes_feature(value):
@@ -175,34 +175,48 @@ class Transformer:
   features and training targets.
   """
 
-  def __init__(self, species, many_body_k=4, kbody_terms=None):
+  def __init__(self, species, many_body_k=4, kbody_terms=None, split_dims=None):
     """
     Initialization method.
 
     Args:
       species: a `List[str]` as the ordered atomic symboles.
       many_body_k: a `int` as the maximum order for the many-body expansion.
+      kbody_terms: a `List[str]` as the k-body terms.
+      split_dims: a `List[int]` as the dimensions for splitting inputs. If this
+        is given, the `kbody_terms` must also be set and their lengths should be
+        equal.
 
     """
+    if split_dims is not None:
+      assert len(split_dims) == len(kbody_terms)
+
     if kbody_terms is None:
       kbody_terms = sorted(list(set(
         [",".join(sorted(c)) for c in combinations(species, many_body_k)])))
+
+    # Generate the mapping from the N-by-N interatomic distances matrix to the
+    # [C(N,k), C(k,2)] input feature matrix and the indices selections for each
+    # C(N,k) terms.
     mapping, selections = _gen_dist2inputs_mapping(species, kbody_terms)
-    offsets = [0]
-    dim = 0
-    for term in kbody_terms:
-      if term not in mapping:
-        dim += 1
-      else:
-        dim += mapping[term].shape[1]
-      offsets.append(dim)
+
+    if split_dims is None:
+      offsets, dim = [0], 0
+      for term in kbody_terms:
+        dim += mapping[term].shape[1] if term in mapping else 1
+        offsets.append(dim)
+      split_dims = np.diff(offsets).tolist()
+    else:
+      offsets = [0] + np.cumsum(split_dims).tolist()
+      dim = offsets[-1]
+
     self._many_body_k = many_body_k
     self._kbody_terms = kbody_terms
     self._species = species
-    self._kbody_offsets = offsets
     self._dist2inputs_mapping = mapping
     self._selections = selections
-    self._split_dims = np.diff(offsets).tolist()
+    self._kbody_offsets = offsets
+    self._split_dims = split_dims
     self._cnk = int(comb(len(species), many_body_k, exact=True))
     self._ck2 = int(comb(many_body_k, 2, exact=True))
     self._sorting_indices = _gen_sorting_indices(kbody_terms)
@@ -278,13 +292,18 @@ class Transformer:
 
     for i in range(num_examples):
       dists = pairwise_distances(coordinates[i]).flatten()
-      rr = _exponential(dists, self._lmat)
+      rr = exponential(dists, self._lmat)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
         if term not in mapping:
           continue
+        # Manually adjust the step size because when `split_dims` is fixed the
+        # offset length may be bigger.
+        istart = offsets[j]
+        istep = min(offsets[j + 1] - istart, mapping[term].shape[1])
+        istop = istart + istep
         for k in range(self.ck2):
-          samples[i, offsets[j]: offsets[j + 1], k] = rr[mapping[term][k]]
+          samples[i, istart: istop, k] = rr[mapping[term][k]]
 
       for j, term in enumerate(kbody_terms):
         if term not in mapping:
@@ -321,7 +340,7 @@ class Transformer:
 
       for i in range(num_examples):
         dists = pairwise_distances(coordinates[i]).flatten()
-        rr = _exponential(dists, self._lmat)
+        rr = exponential(dists, self._lmat)
         sample.fill(0.0)
         for j, term in enumerate(kbody_terms):
           for k in range(self.ck2):
@@ -410,22 +429,19 @@ class MultiTransformer:
     Args:
       atom_types: a `List[str]` as the target atomic species.  
       many_body_k: a `int` as the many body expansion factor.
-      max_occurs: a `Dict[str, int]` as the maximum appearance for a specie.
+      max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
+        If an atom is explicitly specied, it can appear infinity times.
 
     """
     self._many_body_k = many_body_k
     self._atom_types = list(set(atom_types))
     species = []
-    max_occurs = {} if max_occurs is None else max_occurs
+    max_occurs = {} if max_occurs is None else dict(max_occurs)
     for specie in self._atom_types:
-      r = min(max_occurs.get(specie, many_body_k), many_body_k)
-      species.extend(list(repeat(specie, r)))
+      species.extend(list(repeat(specie, max_occurs.get(specie, many_body_k))))
       if specie not in max_occurs:
         max_occurs[specie] = np.inf
-      else:
-        max_occurs[specie] = r
-    self._kbody_terms = sorted(
-      list(
+    self._kbody_terms = sorted(list(
         set([",".join(sorted(c)) for c in combinations(species, many_body_k)])))
     self._transformers = {}
     self._max_occurs = max_occurs
@@ -547,56 +563,57 @@ class MultiTransformer:
     return atomic_energies / float(self.ck2)
 
 
-def _test_map_indices():
-  species = ["Li"] + list(repeat("B", 6))
-  orders = list(set([",".join(sorted(c)) for c in combinations(species, 4)]))
-  mapping, _ = _gen_dist2inputs_mapping(species, orders)
-  assert mapping['B,B,B,Li'][0, 0] == 9
+class FixedLenMultiTransformer(MultiTransformer):
+  """
+  This is also a flexible transformer targeting on AxByCz ... molecular 
+  compositions but the length of the transformed features are the same so that
+  they can be used for training.
+  """
 
+  def __init__(self, max_occurs, many_body_k=3):
+    """
+    Initialization method. 
+    
+    Args:
+      max_occurs: a `Dict[str, int]` as the maximum appearances for each kind of 
+        atomic specie. 
+      many_body_k: a `int` as the many body expansion factor.
+    
+    """
+    super(FixedLenMultiTransformer, self).__init__(
+      list(max_occurs.keys()),
+      many_body_k=many_body_k,
+      max_occurs=max_occurs
+    )
+    self._split_dims = self._get_fixed_split_dims()
 
-def _test_split_tensor():
+  def _get_fixed_split_dims(self):
+    """
+    The `split_dims` for all `Transformer`s of this is fixed. 
+    """
+    split_dims = []
+    for term in self._kbody_terms:
+      counter = Counter(term.split(","))
+      dims = [comb(self._max_occurs[e], k, True) for e, k in counter.items()]
+      split_dims.append(np.prod(dims))
+    return [int(x) for x in split_dims]
 
-  raw_inputs = np.arange(36, dtype=np.float32).reshape((1, 1, 6, 6))
-  raw_offsets = [4, 2]
+  def _get_transformer(self, species):
+    """
+    Return the `Transformer` for the given molecular species.
 
-  inputs = tf.constant(raw_inputs)
-  partitions = tf.split(inputs, raw_offsets, axis=2)
+    Args:
+      species: a `List[str]` as the ordered atomic species for molecules. 
 
-  with tf.Session() as sess:
+    Returns:
+      clf: a `Transformer`.
 
-    values = sess.run(partitions)
-
-    assert len(values) == 2
-    assert np.linalg.norm(values[0] - raw_inputs[:, :, 0:4, :]) == 0.0
-    assert np.linalg.norm(values[1] - raw_inputs[:, :, 4:6, :]) == 0.0
-
-
-def _test_multi_transform():
-
-  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 3})
-  coords = np.repeat(np.atleast_2d(np.arange(17.0)).T, 3, axis=1)
-  species = ["N"] + list(repeat("C", 9)) + list(repeat("H", 7))
-  features, split_dims, _ = clf.transform(species, coords)
-
-  for i, term in enumerate(clf.kbody_terms):
-    istart = 0 if i == 0 else sum(split_dims[:i])
-    nnext = min(20, split_dims[i])
-    print(term)
-    print(features[0, istart: istart + nnext, :])
-
-
-def _test_accept_species():
-  clf = MultiTransformer(["C", "H", "N"], max_occurs={"N": 1})
-  ch = list(repeat("C", 9)) + list(repeat("H", 7))
-
-  if not clf.accept_species(["N"] + ch):
-    raise AssertionError()
-  if clf.accept_species(["N", "N"] + ch):
-    raise AssertionError()
-
-
-if __name__ == "__main__":
-  _test_map_indices()
-  _test_split_tensor()
-  _test_multi_transform()
-  _test_accept_species()
+    """
+    formula = get_formula(species)
+    clf = self._transformers.get(formula)
+    if not isinstance(clf, Transformer):
+      clf = Transformer(
+        species, self.many_body_k, self.kbody_terms, split_dims=self._split_dims
+      )
+      self._transformers[formula] = clf
+    return clf
