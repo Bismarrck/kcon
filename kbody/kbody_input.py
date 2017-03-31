@@ -121,6 +121,12 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
     unit = hartree_to_ev
     parse_forces = False
+  elif xyz_format.lower() == 'extxyz':
+    energy_patt = re.compile(r"i=(\d+).(\d+),\sE=([\d.-]+)")
+    string_patt = re.compile(
+      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
+    parse_forces = False
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
 
@@ -143,7 +149,10 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       elif stage == 1:
         m = energy_patt.search(l)
         if m:
-          energies[i] = float(m.group(1)) * unit
+          if xyz_format.lower() == 'extxyz':
+            energies[i] = float(m.group(1)) * unit
+          else:
+            energies[i] = float(m.group(1)) * unit
           stage += 1
       elif stage == 2:
         m = string_patt.search(l)
