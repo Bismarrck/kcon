@@ -150,7 +150,7 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
         m = energy_patt.search(l)
         if m:
           if xyz_format.lower() == 'extxyz':
-            energies[i] = float(m.group(1)) * unit
+            energies[i] = float(m.group(3)) * unit
           else:
             energies[i] = float(m.group(1)) * unit
           stage += 1
