@@ -11,7 +11,6 @@ from itertools import repeat
 from tensorflow.contrib.layers.python.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
-from utils import tanh_increase
 from scipy.misc import comb
 
 __author__ = 'Xin Chen'
@@ -22,22 +21,8 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_float('momentum', 0.9,
-                          """The momentum factor.""")
-tf.app.flags.DEFINE_integer('num_epochs_per_decay', 25,
-                            """Epochs after which learning rate decays.""")
-tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.95,
-                          """The learning rate decay factor.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.1,
                           """The initial learning rate.""")
-tf.app.flags.DEFINE_float('scale_factor', None,
-                          """The initial gradients scale factor for momentum
-                          optimizer.""")
-tf.app.flags.DEFINE_integer('num_epochs_per_scale_decay', 100,
-                            """Epochs after which the scale factor decays.""")
-tf.app.flags.DEFINE_boolean('adam', False,
-                            """Use AdamOptimizer instead of MomentumOptimizer
-                            if True.""")
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
@@ -334,66 +319,6 @@ def get_total_loss(y_true, y_pred):
   return loss
 
 
-def _get_kbody_scope(var):
-  """
-  Return the kbody scope of the given variable tensor.
-  """
-  if "/" not in var.op.name:
-    return None
-  else:
-    return var.op.name.split("/")[0]
-
-
-def _get_grad_scale_op(global_step):
-  """
-  The 'sum-kbody-cnn' network is quit difficult to train becaunse the gradient
-  values are huge! Some manual scaling is neccessary.
-
-  Args:
-    global_step: Integer variable counting the number of training steps
-      processed.
-
-  Returns:
-    scale_op: a Tensor to scale the gradients.
-
-  """
-  train_size = FLAGS.num_examples * 0.8
-  num_batches_per_epoch = train_size // FLAGS.batch_size
-  decay_steps = num_batches_per_epoch * FLAGS.num_epochs_per_scale_decay
-  decay_steps = tf.constant(decay_steps, dtype=tf.float32)
-  scale = tanh_increase(
-    FLAGS.scale_factor,
-    global_step,
-    decay_steps,
-    FLAGS.scale_factor,
-    name="grad_scale"
-  )
-  return tf.minimum(scale, 1.0)
-
-
-def _get_decayed_learning_rate(global_step):
-  """
-  Return the exponential decayed learning rate.
-
-  Args:
-    global_step: Integer variable counting the number of training steps
-      processed.
-
-  Returns:
-    lr: the exponential decayed learning rate.
-
-  """
-  num_batches_per_epoch = int(FLAGS.num_examples * 0.8) // FLAGS.batch_size
-  decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay)
-  return tf.train.exponential_decay(
-    FLAGS.learning_rate,
-    global_step,
-    decay_steps=decay_steps,
-    decay_rate=FLAGS.learning_rate_decay_factor,
-    staircase=True
-  )
-
-
 def get_train_op(total_loss, global_step):
   """
   Train the Behler model.
@@ -411,21 +336,8 @@ def get_train_op(total_loss, global_step):
 
   """
   # Compute gradients.
-
-  if not FLAGS.adam:
-    lr = _get_decayed_learning_rate(global_step)
-    opt = tf.train.MomentumOptimizer(lr, 0.9)
-    if FLAGS.scale_factor is None:
-      grads = opt.compute_gradients(total_loss)
-      scale_op = tf.constant(1.0, dtype=tf.float32, name="NoScale")
-    else:
-      scale_op = _get_grad_scale_op(global_step)
-      grads = []
-      for grad, var in opt.compute_gradients(total_loss):
-        grads.append((grad * scale_op, var))
-  else:
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-    grads = opt.compute_gradients(total_loss)
+  opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+  grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
   grad_norms = []
@@ -437,8 +349,6 @@ def get_train_op(total_loss, global_step):
       tf.summary.scalar(var.op.name + "/grad_norm", norm)
   total_norm = tf.add_n(grad_norms, "total_norms")
   tf.summary.scalar("total_grad_norm", total_norm)
-  if not FLAGS.adam:
-    tf.summary.scalar("raw_grad_norm", tf.div(total_norm, scale_op))
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
