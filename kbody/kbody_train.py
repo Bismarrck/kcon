@@ -8,6 +8,7 @@ import tensorflow as tf
 import time
 import kbody
 import json
+from utils import get_xargs
 from datetime import datetime
 from tensorflow.python.client.timeline import Timeline
 from os.path import join
@@ -43,6 +44,9 @@ def _save_training_flags():
   args["run_flags"] = " ".join(
     ["--{}={}".format(k, v) for k, v in args.items()]
   )
+  cmdline = get_xargs()
+  if cmdline:
+    args["cmdline"] = cmdline
   with open(join(FLAGS.train_dir, "flags.json"), "w+") as f:
     json.dump(args, f, indent=2)
 
@@ -66,7 +70,7 @@ def train_model():
     # Build a Graph that computes the logits predictions from the
     # inference model.
     batch_split_dims = tf.placeholder(
-      tf.int64, [len(split_dims),], name="split_dims"
+      tf.int64, [len(split_dims), ], name="split_dims"
     )
     y_pred, _ = kbody.inference(
       batch_inputs,
