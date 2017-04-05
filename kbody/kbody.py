@@ -21,6 +21,8 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
+tf.app.flags.DEFINE_boolean('disable_biases', False,
+                            """Disable biases for all conv layers.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.1,
                           """The initial learning rate.""")
 
@@ -157,6 +159,10 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   conv.set_shape([None, 1, None, ck2])
 
   for i, units in enumerate(sizes):
+    if FLAGS.disable_biases:
+      biases_initializer = None
+    else:
+      biases_initializer = init_ops.zeros_initializer(dtype=dtype)
     conv = conv2d(
       conv,
       units,
@@ -167,7 +173,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
       scope="Hidden{:d}".format(i + 1),
       weights_initializer=initializers.xavier_initializer(
         seed=kbody_input.SEED, dtype=dtype),
-      biases_initializer=init_ops.zeros_initializer(dtype=dtype),
+      biases_initializer=biases_initializer,
     )
     if verbose:
       print_activations(conv)
