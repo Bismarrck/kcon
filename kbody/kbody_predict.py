@@ -191,7 +191,7 @@ def _test(calculator):
   # Make final predictions.
   tic = time.time()
   slicer = np.random.choice(range(num_examples), num_tests)
-  y_total, y_atomic = calculator.predict(species, coords[slicer])
+  y_total, y_atomic, _ = calculator.predict(species, coords[slicer])
   elapsed = time.time() - tic
   speed = float(num_tests) / elapsed
   print("Prediction time: %.3f s, speed: %.2f examples/s" % (elapsed, speed))
@@ -213,7 +213,7 @@ def _test_small(calculator):
     [-0.91375000,   1.42858459,    0.00000000]
   ], dtype=np.float64).reshape((1, 5, 3))
 
-  y_total, y_atomic = calculator.predict(species, coords)
+  y_total, y_atomic, _ = calculator.predict(species, coords)
   _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
 
 
@@ -221,8 +221,8 @@ def _test_small(calculator):
 def test(unused):
 
   cwd = dirname(__file__)
-  model_name = "model.ckpt-1077218"
-  model_path = join(cwd, "models", "C9H7N.v2", model_name)
+  model_name = "model.ckpt-3000000"
+  model_path = join(cwd, "models", "C9H7Nv1.v2.DFTB", model_name)
 
   # Initialize a `CNNPredictor` instance. This step is relatively slow.
   tic = time.time()
