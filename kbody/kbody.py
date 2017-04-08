@@ -217,6 +217,12 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
 
   """
 
+  def zero_padding():
+    """
+    Return a 4D float32 Tensor of zeros as the fake inputs.
+    """
+    return tf.zeros([1, 1, 1, 1], name="zeros")
+
   # Build up the placeholder tensors.
   #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
   #     alternative inputs which can be directly feeded.
@@ -236,11 +242,6 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
       shape=[None, 1, None, ck2],
       name="extra_inputs"
     )
-    is_predicting = tf.placeholder_with_default(
-      False,
-      shape=None,
-      name="is_predicting"
-    )
 
   # Choose the inputs tensor based on `use_placeholder`.
   with tf.name_scope("InputsFlow"):
@@ -257,12 +258,6 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
 
   kbody_energies = []
 
-  def zero_padding():
-    """
-    Return a 4D float32 Tensor of zeros as the fake inputs.
-    """
-    return tf.zeros([1, 1, 1, 1], name="zeros")
-
   for i, conv in enumerate(convs):
     with tf.variable_scope(kbody_terms[i]):
       with tf.variable_scope("Conv"):
@@ -272,6 +267,7 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
           ck2,
           verbose=verbose
         )
+
       below_zero = tf.less(
         tf.reduce_sum(conv, name="inputs_sum"),
         eps,
