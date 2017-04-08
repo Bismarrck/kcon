@@ -32,6 +32,9 @@ tf.app.flags.DEFINE_integer('log_frequency', 100,
                             the training progress wiil be logged.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
+tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
+                           """Comma-separated integers as the sizes of the 
+                           convolution layers.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
 
@@ -72,10 +75,17 @@ def train_model():
     batch_split_dims = tf.placeholder(
       tf.int64, [len(split_dims), ], name="split_dims"
     )
+
+    # Parse the convolution layer sizes
+    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
+    if len(conv_sizes) < 2:
+      raise ValueError("At least three convolution layers are required!")
+
     y_pred, _ = kbody.inference(
       batch_inputs,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
+      conv_sizes=conv_sizes,
       verbose=True,
     )
     y_true = tf.cast(y_true, tf.float32)
