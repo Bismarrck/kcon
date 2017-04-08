@@ -22,7 +22,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 200000,
+tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
@@ -32,9 +32,6 @@ tf.app.flags.DEFINE_integer('log_frequency', 100,
                             the training progress wiil be logged.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
-                           """Comma-separated integers as the sizes of the 
-                           convolution layers.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
 

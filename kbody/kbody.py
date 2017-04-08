@@ -25,6 +25,9 @@ tf.app.flags.DEFINE_boolean('disable_biases', False,
                             """Disable biases for all conv layers.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.1,
                           """The initial learning rate.""")
+tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
+                           """Comma-separated integers as the sizes of the 
+                           convolution layers.""")
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
