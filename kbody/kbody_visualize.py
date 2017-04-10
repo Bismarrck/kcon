@@ -31,12 +31,12 @@ def plot_reg():
 
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    var = float(np.var(y_diff))
+    std = float(np.std(y_diff))
     score = r2_score(y_true, y_pred)
     num_evals = len(y_pred)
 
     plt.title("N=%d, MAE=%.3f eV, RMSE=%.3f eV, Var=%.3f eV, $R^2$=%.3f" % (
-      num_evals, mae, rmse, var, score), fontsize=16)
+      num_evals, mae, rmse, std, score), fontsize=16)
     plt.xlabel("Real Energy (eV)", fontsize=14)
     plt.ylabel("Predicted Energy (eV)", fontsize=14)
     sns.regplot(x=y_true, y=y_pred)
