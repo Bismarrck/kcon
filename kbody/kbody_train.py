@@ -22,7 +22,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 200000,
+tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
@@ -72,10 +72,17 @@ def train_model():
     batch_split_dims = tf.placeholder(
       tf.int64, [len(split_dims), ], name="split_dims"
     )
+
+    # Parse the convolution layer sizes
+    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
+    if len(conv_sizes) < 2:
+      raise ValueError("At least three convolution layers are required!")
+
     y_pred, _ = kbody.inference(
       batch_inputs,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
+      conv_sizes=conv_sizes,
       verbose=True,
     )
     y_true = tf.cast(y_true, tf.float32)
