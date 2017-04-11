@@ -381,6 +381,28 @@ def inputs_settings(train=True):
     return dict(json.load(f))
 
 
+class InputBuilder:
+
+  def __init__(self):
+    pass
+
+
+class MixedInputBuilder:
+  """
+  A dataset builder which can build mixed training datasets.
+  """
+
+  def __init__(self, xyzfile):
+    """
+    Initialization method.
+    
+    Args:
+      xyzfile: 
+    
+    """
+    pass
+
+
 def test():
   """
   This is the unit test of this module. The file `TaB2Oopted.xyz` is used.

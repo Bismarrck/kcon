@@ -8,6 +8,7 @@ import tensorflow as tf
 import time
 import kbody
 import json
+from utils import get_xargs
 from datetime import datetime
 from tensorflow.python.client.timeline import Timeline
 from os.path import join
@@ -21,7 +22,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 200000,
+tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """The maximum number of training steps.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
@@ -43,6 +44,9 @@ def _save_training_flags():
   args["run_flags"] = " ".join(
     ["--{}={}".format(k, v) for k, v in args.items()]
   )
+  cmdline = get_xargs()
+  if cmdline:
+    args["cmdline"] = cmdline
   with open(join(FLAGS.train_dir, "flags.json"), "w+") as f:
     json.dump(args, f, indent=2)
 
@@ -66,12 +70,19 @@ def train_model():
     # Build a Graph that computes the logits predictions from the
     # inference model.
     batch_split_dims = tf.placeholder(
-      tf.int64, [len(split_dims),], name="split_dims"
+      tf.int64, [len(split_dims), ], name="split_dims"
     )
+
+    # Parse the convolution layer sizes
+    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
+    if len(conv_sizes) < 2:
+      raise ValueError("At least three convolution layers are required!")
+
     y_pred, _ = kbody.inference(
       batch_inputs,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
+      conv_sizes=conv_sizes,
       verbose=True,
     )
     y_true = tf.cast(y_true, tf.float32)
