@@ -60,8 +60,9 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
 
     # Start the queue runners.
     coord = tf.train.Coordinator()
+    threads = []
+
     try:
-      threads = []
       for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
         threads.extend(qr.create_threads(sess, coord=coord, daemon=True,
                                          start=True))
@@ -130,11 +131,18 @@ def evaluate():
     batch_split_dims = tf.placeholder(
       tf.int64, [len(split_dims), ], name="split_dims"
     )
+
+    # Parse the convolution layer sizes
+    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
+    if len(conv_sizes) < 2:
+      raise ValueError("At least three convolution layers are required!")
+
     y_pred, _ = kbody.inference(
       batch_inputs,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
+      conv_sizes=conv_sizes
     )
     y_true = tf.cast(y_true, tf.float32)
 

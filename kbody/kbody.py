@@ -25,6 +25,9 @@ tf.app.flags.DEFINE_boolean('disable_biases', False,
                             """Disable biases for all conv layers.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.1,
                           """The initial learning rate.""")
+tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
+                           """Comma-separated integers as the sizes of the 
+                           convolution layers.""")
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
@@ -199,7 +202,8 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
+def inference(batch_inputs, split_dims, kbody_terms, verbose=True,
+              conv_sizes=(60, 120, 120, 60)):
   """
   The general inference function.
 
@@ -209,6 +213,7 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
       output tensor along split_dim.
     kbody_terms: a `List[str]` as the names of the k-body terms.
     verbose: boolean indicating whether the layers shall be printed or not.
+    conv_sizes: a `Tuple[int]` as the sizes of the convolution layers.
 
   Returns:
     total_energies: a Tensor representing the predicted total energies.
@@ -265,6 +270,7 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True):
           conv,
           kbody_terms[i],
           ck2,
+          sizes=conv_sizes,
           verbose=verbose
         )
 
