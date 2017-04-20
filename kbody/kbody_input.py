@@ -67,8 +67,52 @@ def get_float_type(convert=False):
     return np.float32
 
 
+def _get_regex_patt_and_unit(xyz_format):
+  """
+  Return the corresponding regex patterns and the energy unit.
+  
+  Args:
+    xyz_format: a `str` as the format of the file. 
+
+  Returns:
+    energy_patt: a regex pattern for parsing energies.
+    string_patt: a regex pattern for parsing atomic symbols and coordinates.
+    unit: a `float` transforming the energies to eV.
+    parse_forces: a `bool` indicating whether the file supports parsing forces.
+
+  """
+  if xyz_format.lower() == 'grendel':
+    energy_patt = re.compile(r".*energy=([\d.-]+).*")
+    string_patt = re.compile(
+      r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
+      "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
+    unit = 1.0
+    parse_forces = True
+  elif xyz_format.lower() == 'cp2k':
+    energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
+    string_patt = re.compile(
+      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    parse_forces = False
+    unit = hartree_to_ev
+  elif xyz_format.lower() == 'xyz':
+    energy_patt = re.compile(r"([\w.-]+)")
+    string_patt = re.compile(
+      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
+    parse_forces = False
+  elif xyz_format.lower() == 'extxyz':
+    energy_patt = re.compile(r"i=(\d+).(\d+),\sE=([\d.-]+)")
+    string_patt = re.compile(
+      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
+    unit = hartree_to_ev
+    parse_forces = False
+  else:
+    raise ValueError("The file format of %s is not supported!" % xyz_format)
+  return energy_patt, string_patt, unit, parse_forces
+
+
 def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
-                verbose=True, xyz_format='xyz', unit=1.0, mixed=False):
+                verbose=True, xyz_format='xyz', mixed=False):
   """
   Extract atomic species, energies, coordiantes, and perhaps forces, from the 
   file.
@@ -83,7 +127,6 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
     verbose: a `bool` indicating whether we should log the parsing progress or 
       not.
     xyz_format: a `str` representing the format of the given xyz file.
-    unit: a `float` as the scaling unit of energies.
     mixed: a `bool` indicating whether the dataset contains different kinds of 
       molecules or not.
 
@@ -112,31 +155,7 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
   j = 0
   n = None
 
-  if xyz_format.lower() == 'grendel':
-    energy_patt = re.compile(r".*energy=([\d.-]+).*")
-    string_patt = re.compile(
-      r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
-      "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
-  elif xyz_format.lower() == 'cp2k':
-    energy_patt = re.compile(r"i\s=\s+\d+,\sE\s=\s+([\w.-]+)")
-    string_patt = re.compile(
-      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
-    parse_forces = False
-    unit = hartree_to_ev
-  elif xyz_format.lower() == 'xyz':
-    energy_patt = re.compile(r"([\w.-]+)")
-    string_patt = re.compile(
-      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
-    unit = hartree_to_ev
-    parse_forces = False
-  elif xyz_format.lower() == 'extxyz':
-    energy_patt = re.compile(r"i=(\d+).(\d+),\sE=([\d.-]+)")
-    string_patt = re.compile(
-      r"([A-Za-z]+)\s+([\w.-]+)\s+([\w.-]+)\s+([\w.-]+)")
-    unit = hartree_to_ev
-    parse_forces = False
-  else:
-    raise ValueError("The file format of %s is not supported!" % xyz_format)
+  ener_patt, xyz_patt, unit, parse_forces = _get_regex_patt_and_unit(xyz_format)
 
   tic = time.time()
   if verbose:
@@ -158,7 +177,7 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
                              "than the max %d!" % (n, num_atoms))
           stage += 1
       elif stage == 1:
-        m = energy_patt.search(l)
+        m = ener_patt.search(l)
         if m:
           if xyz_format.lower() == 'extxyz':
             energies[i] = float(m.group(3)) * unit
@@ -166,7 +185,7 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
             energies[i] = float(m.group(1)) * unit
           stage += 1
       elif stage == 2:
-        m = string_patt.search(l)
+        m = xyz_patt.search(l)
         if m:
           coordinates[i, j, :] = float(m.group(2)), float(m.group(3)), float(
             m.group(4))
@@ -358,7 +377,7 @@ def read_and_decode(filename_queue, cnk, ck2):
   return features, energy
 
 
-def read_and_decode_mixed(filename_queue, cnk, ck2, num_kbody_terms):
+def read_and_decode_mixed(filename_queue, cnk, ck2):
   """
   Read and decode the mixed binary dataset file.
 
@@ -366,11 +385,11 @@ def read_and_decode_mixed(filename_queue, cnk, ck2, num_kbody_terms):
     filename_queue: an input queue.
     cnk: a `int` as the value of C(N,k). 
     ck2: a `int` as the value of C(k,2). 
-    num_kbody_terms: a `int` as the number of kbody terms. 
 
   Returns:
     features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
-    energy: a 1D array of shape [1] as the target for the features.
+    energy: a 1D array of shape [1,] as the target for the features.
+    weights: a 1D array of shape [cnk,] as the weights of the k-body contribs.
 
   """
   dtype = get_float_type(convert=True)
@@ -384,6 +403,7 @@ def read_and_decode_mixed(filename_queue, cnk, ck2, num_kbody_terms):
       'features': tf.FixedLenFeature([], tf.string),
       'energy': tf.FixedLenFeature([], tf.string),
       'kbody_sizes': tf.FixedLenFeature([], tf.string),
+      'weights': tf.FixedLenFeature([], tf.string),
     })
 
   features = tf.decode_raw(example['features'], dtype)
@@ -394,10 +414,11 @@ def read_and_decode_mixed(filename_queue, cnk, ck2, num_kbody_terms):
   energy.set_shape([1])
   energy = tf.squeeze(energy)
 
-  kbody_sizes = tf.decode_raw(example['kbody_sizes'], tf.int64)
-  kbody_sizes.set_shape([num_kbody_terms, ])
+  weights = tf.decode_raw(example['weights'], tf.float32)
+  weights.set_shape([cnk, ])
+  weights = tf.reshape(weights, [1, cnk, 1])
 
-  return features, energy, kbody_sizes
+  return features, energy, weights
 
 
 def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
@@ -462,46 +483,63 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
     return batch_features, batch_energies
 
 
-def mixed_inputs(train, batch_size=1, shuffle=True):
+def mixed_inputs(train, batch_size=50, shuffle=True):
+  """
+  Reads mixed input data.
+
+  Args:
+    train: Selects between the training (True) and validation (False) data.
+    batch_size: Number of examples per returned batch.
+    shuffle: boolean indicating whether the batches shall be shuffled or not.
+
+  Returns:
+    A tuple (features, energies, weights), where:
+    * features is a float tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
+      the range [0.0, 1.0].
+    * energies is a float tensor with shape [batch_size, ].
+    * weights is a float tensor with shape [batch_size, C(N,k)]
+
+    Note that an tf.train.QueueRunner is added to the graph, which
+    must be run using e.g. tf.train.start_queue_runners().
+
+  """
 
   filename, _ = get_filenames(train=train)
   filenames = [filename]
 
   ck2 = comb(FLAGS.many_body_k, 2, exact=True)
   settings = inputs_settings(train=train)
-  num_kbody_terms = len(settings['kbody_terms'])
   total_dim = settings["total_dim"]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
       filenames,
-      num_epochs=None
     )
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, sizes = read_and_decode_mixed(
-      filename_queue, total_dim, ck2, num_kbody_terms)
+    features, energies, weights = read_and_decode_mixed(
+      filename_queue, total_dim, ck2)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
-      batch_features, batch_energies, batch_sizes = tf.train.batch(
-        [features, energies, sizes],
+      batch_features, batch_energies, batch_weights = tf.train.batch(
+        [features, energies, weights],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
-      batch_features, batch_energies, batch_sizes = tf.train.shuffle_batch(
-        [features, energies, sizes],
+      batch_features, batch_energies, batch_weights = tf.train.shuffle_batch(
+        [features, energies, weights],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000
       )
 
-    return batch_features, batch_energies, batch_sizes
+    return batch_features, batch_energies, batch_weights
 
 
 def inputs_settings(train=True):
@@ -639,10 +677,13 @@ def test_extract_mixed_xyz():
       d = np.linalg.norm(coords[i][:n] - r[j][:n])
       if d < 0.1:
         lefts[j] = False
-  assert np.all(lefts) == False
+  assert not np.all(lefts)
 
 
 def test_build_mixed_dataset():
+  """
+  Test building a mixed dataset.
+  """
 
   from sklearn.metrics import pairwise_distances
 
@@ -654,9 +695,7 @@ def test_build_mixed_dataset():
     xyzfile,
     num_examples=8000,
     num_atoms=23,
-    parse_forces=False,
     verbose=False,
-    xyz_format='xyz',
     mixed=True
   )
   indices = list(range(len(raw_coordinates)))
@@ -673,25 +712,22 @@ def test_build_mixed_dataset():
     random_state=SEED
   )
 
-  train_file = join(FLAGS.binary_dir, "qm7-train.tfrecords")
-
   r_cc = 1.5
-
   many_body_k = 3
   max_occurs = {}
   for symbols in array_of_species:
     c = Counter(symbols)
     for specie, times in c.items():
       max_occurs[specie] = max(max_occurs.get(specie, 0), times)
-
   clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
 
+  train_file = join(FLAGS.binary_dir, "qm7-train.tfrecords")
   if not isfile(train_file):
     clf.transform_and_save(array_of_species_train, energies_train, coords_train,
                            train_file, indices=indices)
 
   with tf.Session() as sess:
-    features_op, energies_op, sizes_op = mixed_inputs(
+    features_op, energies_op, weights_op = mixed_inputs(
       train=True, shuffle=False, batch_size=5
     )
     tf.train.start_queue_runners(sess=sess)
@@ -699,13 +735,16 @@ def test_build_mixed_dataset():
     # --------
     # Features
     # --------
-    features, energies, sizes = sess.run([features_op, energies_op, sizes_op])
-    species = array_of_species[1]
+    features, energies, weights = sess.run(
+      [features_op, energies_op, weights_op]
+    )
+    species = array_of_species_train[1]
     n = len(species)
     coords = coords_train[1][:n]
     dists = pairwise_distances(coords[:3])
     v = np.sort(np.exp(-dists / r_cc)[[0, 0, 1], [1, 2, 2]])
     assert np.linalg.norm(v - features[1, 0, 0]) < 0.001
+    assert np.abs(weights[1].flatten().sum() - comb(n, 3)) < 0.001
 
     time.sleep(5)
 

@@ -11,7 +11,6 @@ from itertools import repeat, chain, combinations
 from scipy.misc import comb
 from sklearn.metrics import pairwise_distances
 from collections import Counter
-from unittest import skip
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -43,6 +42,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertEqual(clf.cnk, comb(len(species), many_body_k, exact=True))
     self.assertListEqual(clf.split_dims, [4845, 1140])
     self.assertListEqual(clf.kbody_sizes, clf.split_dims)
+    self.assertAlmostEqual(clf.multipliers.sum(), float(clf.cnk), delta=0.0001)
 
     features, _ = clf.transform(coords, [0.0])
     self.assertTupleEqual(features.shape, (1, 5985, 6))
@@ -76,7 +76,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(np.sum(features[0, 0:3, :]), 0.0, delta=epsilon)
 
     d12 = np.linalg.norm(coords[0, 1, :] - coords[0, 2, :])
-    s12 = 0.64 * 1.5
+    s12 = 0.64
     self.assertAlmostEqual(features[0, 3, 2], np.exp(-d12 / s12), delta=epsilon)
 
     selection = clf.kbody_selections['C,H,H']
@@ -110,6 +110,7 @@ class TransformerTest(tf.test.TestCase):
     )
 
     self.assertListEqual(clf.kbody_sizes, [0, 4, 0, 12, 0, 0, 4, 0, 0, 0])
+    self.assertAlmostEqual(clf.multipliers.sum(), 20.0, delta=0.0001)
 
     coords = get_example(6)
     features, _ = clf.transform(coords)
@@ -124,7 +125,7 @@ class TransformerTest(tf.test.TestCase):
     dists = pairwise_distances(coords[0, selections['C,C,H'][0]])
     dists = dists[[0, 0, 1], [1, 2, 2]]
     lmat = [1.5, 1.07, 1.07]
-    vsum = np.exp(-dists / np.asarray(lmat) / 1.5).sum()
+    vsum = np.exp(-dists / np.asarray(lmat)).sum()
     self.assertAlmostEqual(vsum, cch[0].sum(), delta=epsilon)
 
     cco = features[0, offsets[2]: offsets[3], :]

@@ -214,6 +214,10 @@ class Transformer:
       for term in kbody_terms:
         kbody_sizes.append(mapping[term].shape[1] if term in mapping else 0)
 
+    multipliers = np.zeros(dim, dtype=np.float32)
+    for i in range(len(split_dims)):
+      multipliers[offsets[i]: offsets[i] + kbody_sizes[i]] = 1.0
+
     self._many_body_k = many_body_k
     self._kbody_terms = kbody_terms
     self._species = species
@@ -226,6 +230,8 @@ class Transformer:
     self._sorting_indices = _gen_sorting_indices(kbody_terms)
     self._lmat = _get_pyykko_bonds_matrix(species)
     self._kbody_sizes = kbody_sizes
+    self._multipliers = multipliers
+
     # The major dimension of each input feature matrix. Each missing kbody term
     # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
     # calculated the number of missing kbody terms.
@@ -274,6 +280,13 @@ class Transformer:
     different.
     """
     return self._kbody_sizes
+
+  @property
+  def multipliers(self):
+    """
+    Return the multipliers for the all k-body contribs.
+    """
+    return self._multipliers
 
   @property
   def kbody_selections(self):
@@ -604,6 +617,9 @@ class FixedLenMultiTransformer(MultiTransformer):
 
   @property
   def total_dim(self):
+    """
+    Return the total dimension of the transformed features.
+    """
     return self._total_dim
 
   def _get_fixed_split_dims(self):
@@ -669,13 +685,13 @@ class FixedLenMultiTransformer(MultiTransformer):
         clf = self._get_transformer(species)
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
-        z = _bytes_feature(np.asarray(clf.kbody_sizes).tostring())
+        w = _bytes_feature(clf.multipliers.tostring())
 
         example = Example(
           features=Features(feature={
             'energy': y,
             'features': x,
-            'kbody_sizes': z,
+            'weights': w
           }))
         writer.write(example.SerializeToString())
 
@@ -725,6 +741,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       filename: a `str` as the file to save examples.
       indices: a `List[int]` as the indices of each given example. This is an
         optional argument.
+      verbose: a `bool` indicating whether logging the transformation progress.
 
     """
     try:
