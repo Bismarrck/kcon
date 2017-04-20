@@ -128,7 +128,7 @@ def inputs_settings(train=True):
 
 
 def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
-                        verbose=True):
+                        verbose=True, init_one_body=1.3):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -181,12 +181,14 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
     if verbose:
       print_activations(conv)
 
+  minval, maxval = init_one_body * 0.9, init_one_body * 1.1
   kbody_energies = conv2d(
     conv,
     1,
     kernel_size,
-    activation_fn=tf.nn.relu,
-    biases_initializer=None,
+    activation_fn=None,
+    biases_initializer=init_ops.random_uniform_initializer(
+      minval=minval, maxval=maxval, seed=kbody_input.SEED),
     weights_initializer=initializers.xavier_initializer(
       seed=kbody_input.SEED, dtype=dtype),
     stride=stride,
@@ -246,6 +248,11 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True,
       tf.zeros([1, 1, 1, ck2]),
       shape=[None, 1, None, ck2],
       name="extra_inputs"
+    )
+    is_predicting = tf.placeholder_with_default(
+      False,
+      shape=None,
+      name="is_predicting"
     )
 
   # Choose the inputs tensor based on `use_placeholder`.
