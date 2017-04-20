@@ -16,6 +16,7 @@ from os.path import join, isfile, isdir, dirname
 from os import makedirs
 from sklearn.model_selection import train_test_split
 from scipy.misc import comb
+from collections import Counter
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -265,23 +266,24 @@ def may_build_dataset(verbose=True):
   )
   indices = list(range(len(coordinates)))
 
-  # Split the energies and coordinates into two sets: a training set and a
-  # testing set. The indices are used for post-analysis.
-  (coords_train, coords_test,
-   energies_train, energies_test,
-   indices_train, indices_test) = train_test_split(
-    coordinates,
-    energies,
-    indices,
-    test_size=0.2,
-    random_state=SEED
-  )
-
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
-  many_body_k = min(5, max(FLAGS.many_body_k, len(set(species))))
+  many_body_k = min(5, FLAGS.many_body_k)
 
   if not FLAGS.mixed:
+
+    # Split the energies and coordinates into two sets: a training set and a
+    # testing set. The indices are used for post-analysis.
+    (coords_train, coords_test,
+     energies_train, energies_test,
+     indices_train, indices_test) = train_test_split(
+      coordinates,
+      energies,
+      indices,
+      test_size=0.2,
+      random_state=SEED
+    )
+
     clf = kbody_transform.Transformer(species, many_body_k)
     clf.transform_and_save(
       coords_test, energies_test, test_file, indices=indices_test)
@@ -289,7 +291,31 @@ def may_build_dataset(verbose=True):
       coords_train, energies_train, train_file, indices=indices_train)
 
   else:
-    pass
+
+    # Split the energies and coordinates into two sets: a training set and a
+    # testing set. The indices are used for post-analysis.
+    (coords_train, coords_test,
+     energies_train, energies_test,
+     indices_train, indices_test,
+     species_train, species_test) = train_test_split(
+      coordinates,
+      energies,
+      indices,
+      species,
+      test_size=0.2,
+      random_state=SEED
+    )
+
+    max_occurs = {}
+    for symbols in species:
+      c = Counter(symbols)
+      for specie, times in c.items():
+        max_occurs[specie] = max(max_occurs.get(specie, 0), times)
+    clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
+    clf.transform_and_save(species_test, energies_test, coords_test,
+                           test_file, indices_test)
+    clf.transform_and_save(species_train, energies_train, coords_train,
+                           train_file, indices_train)
 
 
 def read_and_decode(filename_queue, cnk, ck2):
@@ -330,6 +356,48 @@ def read_and_decode(filename_queue, cnk, ck2):
   energy = tf.squeeze(energy)
 
   return features, energy
+
+
+def read_and_decode_mixed(filename_queue, cnk, ck2, num_kbody_terms):
+  """
+  Read and decode the mixed binary dataset file.
+
+  Args:
+    filename_queue: an input queue.
+    cnk: a `int` as the value of C(N,k). 
+    ck2: a `int` as the value of C(k,2). 
+    num_kbody_terms: a `int` as the number of kbody terms. 
+
+  Returns:
+    features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
+    energy: a 1D array of shape [1] as the target for the features.
+
+  """
+  dtype = get_float_type(convert=True)
+  reader = tf.TFRecordReader()
+  _, serialized_example = reader.read(filename_queue)
+
+  example = tf.parse_single_example(
+    serialized_example,
+    # Defaults are not specified since both keys are required.
+    features={
+      'features': tf.FixedLenFeature([], tf.string),
+      'energy': tf.FixedLenFeature([], tf.string),
+      'kbody_sizes': tf.FixedLenFeature([], tf.string),
+    })
+
+  features = tf.decode_raw(example['features'], dtype)
+  features.set_shape([cnk * ck2])
+  features = tf.reshape(features, [1, cnk, ck2])
+
+  energy = tf.decode_raw(example['energy'], tf.float64)
+  energy.set_shape([1])
+  energy = tf.squeeze(energy)
+
+  kbody_sizes = tf.decode_raw(example['kbody_sizes'], tf.int64)
+  kbody_sizes.set_shape([num_kbody_terms, ])
+
+  return features, energy, kbody_sizes
 
 
 def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
@@ -394,6 +462,48 @@ def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
     return batch_features, batch_energies
 
 
+def mixed_inputs(train, batch_size=1, shuffle=True):
+
+  filename, _ = get_filenames(train=train)
+  filenames = [filename]
+
+  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
+  settings = inputs_settings(train=train)
+  num_kbody_terms = len(settings['kbody_terms'])
+  total_dim = settings["total_dim"]
+
+  with tf.name_scope('input'):
+    filename_queue = tf.train.string_input_producer(
+      filenames,
+      num_epochs=None
+    )
+
+    # Even when reading in multiple threads, share the filename
+    # queue.
+    features, energies, sizes = read_and_decode_mixed(
+      filename_queue, total_dim, ck2, num_kbody_terms)
+
+    # Shuffle the examples and collect them into batch_size batches.
+    # (Internally uses a RandomShuffleQueue.)
+    # We run this in two threads to avoid being a bottleneck.
+    if not shuffle:
+      batch_features, batch_energies, batch_sizes = tf.train.batch(
+        [features, energies, sizes],
+        batch_size=batch_size,
+        capacity=1000 + 3 * batch_size
+      )
+    else:
+      batch_features, batch_energies, batch_sizes = tf.train.shuffle_batch(
+        [features, energies, sizes],
+        batch_size=batch_size,
+        capacity=1000 + 3 * batch_size,
+        # Ensures a minimum amount of shuffling of examples.
+        min_after_dequeue=1000
+      )
+
+    return batch_features, batch_energies, batch_sizes
+
+
 def inputs_settings(train=True):
   """
   Return the global settings for inputs.
@@ -409,28 +519,6 @@ def inputs_settings(train=True):
   _, cfgfile = get_filenames(train=train)
   with open(cfgfile) as f:
     return dict(json.load(f))
-
-
-class InputBuilder:
-
-  def __init__(self):
-    pass
-
-
-class MixedInputBuilder:
-  """
-  A dataset builder which can build mixed training datasets.
-  """
-
-  def __init__(self, xyzfile):
-    """
-    Initialization method.
-    
-    Args:
-      xyzfile: 
-    
-    """
-    pass
 
 
 def test():
@@ -554,10 +642,78 @@ def test_extract_mixed_xyz():
   assert np.all(lefts) == False
 
 
+def test_build_mixed_dataset():
+
+  from sklearn.metrics import pairwise_distances
+
+  xyzfile = join("..", "datasets", "qm7.xyz")
+  if not isfile(xyzfile):
+    raise IOError("The dataset file %s can not be accessed!" % xyzfile)
+
+  array_of_species, raw_energies, raw_coordinates, _ = extract_xyz(
+    xyzfile,
+    num_examples=8000,
+    num_atoms=23,
+    parse_forces=False,
+    verbose=False,
+    xyz_format='xyz',
+    mixed=True
+  )
+  indices = list(range(len(raw_coordinates)))
+
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test,
+   array_of_species_train, array_of_species_test) = train_test_split(
+    raw_coordinates,
+    raw_energies,
+    indices,
+    array_of_species,
+    test_size=0.2,
+    random_state=SEED
+  )
+
+  train_file = join(FLAGS.binary_dir, "qm7-train.tfrecords")
+
+  r_cc = 1.5
+
+  many_body_k = 3
+  max_occurs = {}
+  for symbols in array_of_species:
+    c = Counter(symbols)
+    for specie, times in c.items():
+      max_occurs[specie] = max(max_occurs.get(specie, 0), times)
+
+  clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
+
+  if not isfile(train_file):
+    clf.transform_and_save(array_of_species_train, energies_train, coords_train,
+                           train_file, indices=indices)
+
+  with tf.Session() as sess:
+    features_op, energies_op, sizes_op = mixed_inputs(
+      train=True, shuffle=False, batch_size=5
+    )
+    tf.train.start_queue_runners(sess=sess)
+
+    # --------
+    # Features
+    # --------
+    features, energies, sizes = sess.run([features_op, energies_op, sizes_op])
+    species = array_of_species[1]
+    n = len(species)
+    coords = coords_train[1][:n]
+    dists = pairwise_distances(coords[:3])
+    v = np.sort(np.exp(-dists / r_cc)[[0, 0, 1], [1, 2, 2]])
+    assert np.linalg.norm(v - features[1, 0, 0]) < 0.001
+
+    time.sleep(5)
+
+
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if FLAGS.run_input_test:
-    test_extract_mixed_xyz()
+    test_build_mixed_dataset()
   else:
     may_build_dataset(verbose=True)
 
