@@ -402,7 +402,6 @@ def read_and_decode_mixed(filename_queue, cnk, ck2):
     features={
       'features': tf.FixedLenFeature([], tf.string),
       'energy': tf.FixedLenFeature([], tf.string),
-      'kbody_sizes': tf.FixedLenFeature([], tf.string),
       'weights': tf.FixedLenFeature([], tf.string),
     })
 
