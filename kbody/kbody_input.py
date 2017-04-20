@@ -12,7 +12,7 @@ import time
 import sys
 import json
 import kbody_transform
-from os.path import join, isfile, isdir
+from os.path import join, isfile, isdir, dirname
 from os import makedirs
 from sklearn.model_selection import train_test_split
 from scipy.misc import comb
@@ -41,6 +41,8 @@ flags.DEFINE_boolean('parse_forces', False,
                      """Parse forces from the xyz file if True.""")
 flags.DEFINE_boolean('run_input_test', False,
                      """Run the input unit test if True.""")
+flags.DEFINE_boolean('mixed', False,
+                     """Enable mixed training.""")
 
 FLAGS = flags.FLAGS
 
@@ -65,21 +67,24 @@ def get_float_type(convert=False):
 
 
 def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
-                verbose=True, xyz_format='xyz', unit=1.0):
+                verbose=True, xyz_format='xyz', unit=1.0, mixed=False):
   """
   Extract atomic species, energies, coordiantes, and perhaps forces, from the 
   file.
 
   Args:
     filename: a `str` as the file to parse.
-    num_examples: a `int` as the number of examples to parse.
-    num_atoms: a `int` as the number of atoms in each configuration.
+    num_examples: a `int` as the maximum number of examples to parse.
+    num_atoms: a `int` as the number of atoms. If `mixed` is True, this should 
+      be the maximum number of atoms in one configuration.
     parse_forces: a `bool` indicating whether we should parse forces if 
       available.
     verbose: a `bool` indicating whether we should log the parsing progress or 
       not.
     xyz_format: a `str` representing the format of the given xyz file.
     unit: a `float` as the scaling unit of energies.
+    mixed: a `bool` indicating whether the dataset contains different kinds of 
+      molecules or not.
 
   Returns
     species: `List[str]`, a list of the atomic symbols.
@@ -99,10 +104,12 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
     forces = None
 
   species = []
+  config_species = []
   parse_species = True
   stage = 0
   i = 0
   j = 0
+  n = None
 
   if xyz_format.lower() == 'grendel':
     energy_patt = re.compile(r".*energy=([\d.-]+).*")
@@ -143,8 +150,11 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       if stage == 0:
         if l.isdigit():
           n = int(l)
-          if n != num_atoms:
+          if (not mixed) and (n != num_atoms):
             raise ValueError("The parsed size %d != NUM_SITES" % n)
+          elif mixed and (n > num_atoms):
+            raise ValueError("The number of atoms %d from the file is larger "
+                             "than the max %d!" % (n, num_atoms))
           stage += 1
       elif stage == 1:
         m = energy_patt.search(l)
@@ -163,12 +173,18 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
             forces[i, j, :] = float(m.group(5)), float(m.group(6)), float(
               m.group(7))
           if parse_species:
-            species.append(m.group(1))
-            if len(species) == num_atoms:
-              species = np.asarray(species, dtype=object)
-              parse_species = False
+            if not mixed:
+              species.append(m.group(1))
+              if len(species) == num_atoms:
+                species = np.asarray(species, dtype=object)
+                parse_species = False
+            else:
+              config_species.append(m.group(1))
+              if len(config_species) == n:
+                species.append(config_species)
+                config_species = []
           j += 1
-          if j == num_atoms:
+          if j == n:
             j = 0
             stage = 0
             i += 1
@@ -177,6 +193,14 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
     if verbose:
       print("")
       print("Total time: %.3f s\n" % (time.time() - tic))
+
+  if i < num_examples:
+    energies = np.resize(energies, (i, ))
+    coordinates = np.resize(coordinates, (i, num_atoms, 3))
+    if forces is not None:
+      forces = np.resize(forces, (i, num_atoms, 3))
+    if not mixed:
+      species = np.resize(species, (i, ))
 
   return species, energies, coordinates, forces
 
@@ -237,6 +261,7 @@ def may_build_dataset(verbose=True):
     parse_forces=FLAGS.parse_forces,
     verbose=verbose,
     xyz_format=FLAGS.format,
+    mixed=FLAGS.mixed,
   )
   indices = list(range(len(coordinates)))
 
@@ -255,11 +280,16 @@ def may_build_dataset(verbose=True):
   # Transform the coordinates to input features and save these features in a
   # tfrecords file.
   many_body_k = min(5, max(FLAGS.many_body_k, len(set(species))))
-  clf = kbody_transform.Transformer(species, many_body_k)
-  clf.transform_and_save(
-    coords_test, energies_test, test_file, indices=indices_test)
-  clf.transform_and_save(
-    coords_train, energies_train, train_file, indices=indices_train)
+
+  if not FLAGS.mixed:
+    clf = kbody_transform.Transformer(species, many_body_k)
+    clf.transform_and_save(
+      coords_test, energies_test, test_file, indices=indices_test)
+    clf.transform_and_save(
+      coords_train, energies_train, train_file, indices=indices_train)
+
+  else:
+    pass
 
 
 def read_and_decode(filename_queue, cnk, ck2):
@@ -495,10 +525,39 @@ def test():
     time.sleep(5)
 
 
+def test_extract_mixed_xyz():
+  """
+  Test parsing the mixed xyz file `qm7.xyz`.
+  """
+  from scipy.io import loadmat
+
+  mixed_file = join(dirname(__file__), "..", "datasets", "qm7.xyz")
+  species, energies, coords, _ = extract_xyz(
+    mixed_file,
+    num_examples=100000,
+    num_atoms=23,
+    mixed=True
+  )
+  qm7_mat = join(dirname(__file__), "..", "datasets", "qm7.mat")
+  ar = loadmat(qm7_mat)
+  kcal_to_hartree = 1.0 / 627.509474
+  t = ar["T"].flatten() * kcal_to_hartree * hartree_to_ev
+  r = ar["R"]
+  lefts = np.ones(len(species), dtype=bool)
+  for i in range(len(species)):
+    j = np.argmin(np.abs(energies[i] - t))
+    if lefts[j]:
+      n = len(species[i])
+      d = np.linalg.norm(coords[i][:n] - r[j][:n])
+      if d < 0.1:
+        lefts[j] = False
+  assert np.all(lefts) == False
+
+
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if FLAGS.run_input_test:
-    test()
+    test_extract_mixed_xyz()
   else:
     may_build_dataset(verbose=True)
 
