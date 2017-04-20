@@ -124,7 +124,7 @@ def evaluate():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, y_true = kbody.inputs(train=False)
+    batch_inputs, batch_true, batch_weights = kbody.mixed_inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -139,12 +139,13 @@ def evaluate():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_weights,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
       conv_sizes=conv_sizes
     )
-    y_true = tf.cast(y_true, tf.float32)
+    y_true = tf.cast(batch_true, tf.float32)
 
     # Calculate predictions.
     mae_op = tf.losses.absolute_difference(y_true, y_pred)
