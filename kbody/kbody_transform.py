@@ -53,7 +53,7 @@ def get_formula(species):
   return "".join(species)
 
 
-def _get_pyykko_bonds_matrix(species, factor=1.5, flatten=True):
+def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
   """
   Return the pyykko-bonds matrix given a list of atomic symbols.
 
@@ -206,9 +206,13 @@ class Transformer:
         dim += mapping[term].shape[1] if term in mapping else 1
         offsets.append(dim)
       split_dims = np.diff(offsets).tolist()
+      kbody_sizes = split_dims
     else:
       offsets = [0] + np.cumsum(split_dims).tolist()
       dim = offsets[-1]
+      kbody_sizes = []
+      for term in kbody_terms:
+        kbody_sizes.append(mapping[term].shape[1] if term in mapping else 0)
 
     self._many_body_k = many_body_k
     self._kbody_terms = kbody_terms
@@ -221,6 +225,7 @@ class Transformer:
     self._ck2 = int(comb(many_body_k, 2, exact=True))
     self._sorting_indices = _gen_sorting_indices(kbody_terms)
     self._lmat = _get_pyykko_bonds_matrix(species)
+    self._kbody_sizes = kbody_sizes
     # The major dimension of each input feature matrix. Each missing kbody term
     # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
     # calculated the number of missing kbody terms.
@@ -260,6 +265,15 @@ class Transformer:
     Return the kbody terms for this transformer. 
     """
     return self._kbody_terms
+
+  @property
+  def kbody_sizes(self):
+    """
+    Return the real sizes of each kbody term of this transformer. Typically this
+    is equal to `split_dims` but when `kbody_terms` is manually set, this may be 
+    different.
+    """
+    return self._kbody_sizes
 
   @property
   def kbody_selections(self):
@@ -586,6 +600,11 @@ class FixedLenMultiTransformer(MultiTransformer):
       max_occurs=max_occurs
     )
     self._split_dims = self._get_fixed_split_dims()
+    self._total_dim = sum(self._split_dims)
+
+  @property
+  def total_dim(self):
+    return self._total_dim
 
   def _get_fixed_split_dims(self):
     """
@@ -617,3 +636,103 @@ class FixedLenMultiTransformer(MultiTransformer):
       )
       self._transformers[formula] = clf
     return clf
+
+  def _transform_and_save(self, array_of_species, energies, coords, filename,
+                          verbose=True):
+    """
+    
+    Args:
+      array_of_species:
+      energies: 
+      coords: 
+      filename: 
+      verbose:
+
+    Returns:
+
+    """
+
+    with tf.python_io.TFRecordWriter(filename) as writer:
+
+      if verbose:
+        print("Start mixed transforming %s ... " % filename)
+
+      num_examples = len(array_of_species)
+
+      for i in range(len(array_of_species)):
+        species = array_of_species[i]
+        n = len(species)
+        features, split_dims, targets = self.transform(
+          species,
+          coords[i, :n]
+        )
+        clf = self._get_transformer(species)
+        x = _bytes_feature(features.tostring())
+        y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
+        z = _bytes_feature(np.asarray(clf.kbody_sizes).tostring())
+
+        example = Example(
+          features=Features(feature={
+            'energy': y,
+            'features': x,
+            'kbody_sizes': z,
+          }))
+        writer.write(example.SerializeToString())
+
+        if verbose and i % 100 == 0:
+          sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
+
+      if verbose:
+        print("")
+        print("Transforming %s finished!" % filename)
+
+  def _save_auxiliary_for_file(self, filename, indices=None):
+    """
+    Save auxiliary data for the given dataset.
+
+    Args:
+      filename: a `str` as the tfrecords file.
+      indices: a `List[int]` as the indices of each given example.
+
+    """
+    name = splitext(basename(filename))[0]
+    workdir = dirname(filename)
+    cfgfile = join(workdir, "{}.json".format(name))
+    if indices is not None:
+      if isinstance(indices, np.ndarray):
+        indices = indices.tolist()
+    else:
+      indices = []
+
+    with open(cfgfile, "w+") as f:
+      json.dump({
+        "kbody_terms": self._kbody_terms,
+        "split_dims": self._split_dims,
+        "total_dim": self._total_dim,
+        "inverse_indices": list([int(i) for i in indices])
+      }, f, indent=2)
+
+  def transform_and_save(self, array_of_species, energies, coords, filename,
+                         indices=None, verbose=True):
+    """
+    Transform the given atomic coordinates to input features and save them to
+    tfrecord files using `tf.TFRecordWriter`.
+
+    Args:
+      array_of_species: 
+      coords: a 3D array as the atomic coordinates of sturctures.
+      energies: a 1D array as the desired energies.
+      filename: a `str` as the file to save examples.
+      indices: a `List[int]` as the indices of each given example. This is an
+        optional argument.
+
+    """
+    try:
+      self._transform_and_save(
+        array_of_species, energies, coords, filename, verbose=verbose)
+    except Exception as excp:
+      if isfile(filename):
+        remove(filename)
+      raise excp
+    else:
+      self._save_auxiliary_for_file(filename, indices=indices)

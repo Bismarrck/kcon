@@ -32,10 +32,8 @@ def get_example(num_atoms):
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-@skip
 class TransformerTest(tf.test.TestCase):
 
-  @skip
   def test_simple(self):
     coords = get_example(21)
     species = get_species({"Ta": 1, "B": 20})
@@ -44,6 +42,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertEqual(clf.ck2, comb(many_body_k, 2, exact=True))
     self.assertEqual(clf.cnk, comb(len(species), many_body_k, exact=True))
     self.assertListEqual(clf.split_dims, [4845, 1140])
+    self.assertListEqual(clf.kbody_sizes, clf.split_dims)
 
     features, _ = clf.transform(coords, [0.0])
     self.assertTupleEqual(features.shape, (1, 5985, 6))
@@ -54,7 +53,6 @@ class TransformerTest(tf.test.TestCase):
     orders = np.argsort(features[0, -1, [0, 1, 3]]).tolist()
     self.assertListEqual(orders, list(range(3)))
 
-  @skip
   def test_fixed_kbody_terms(self):
     species = get_species({"C": 7, "H": 9, "N": 3})
     kbody_terms = sorted(list(set(
@@ -110,6 +108,8 @@ class TransformerTest(tf.test.TestCase):
       kbody_terms=kbody_terms,
       split_dims=split_dims
     )
+
+    self.assertListEqual(clf.kbody_sizes, [0, 4, 0, 12, 0, 0, 4, 0, 0, 0])
 
     coords = get_example(6)
     features, _ = clf.transform(coords)
