@@ -124,7 +124,7 @@ def evaluate():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, batch_true, batch_weights = kbody.mixed_inputs(train=False)
+    batch_inputs, batch_true, batch_weights = kbody.inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.

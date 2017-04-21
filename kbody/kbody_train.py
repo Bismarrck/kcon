@@ -51,7 +51,7 @@ def _save_training_flags():
     json.dump(args, f, indent=2)
 
 
-def train_mixed_model():
+def train_model():
   """
   Train the neural network model.
   """
@@ -65,7 +65,7 @@ def train_mixed_model():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies.
-    batch_inputs, batch_true, batch_weights = kbody.mixed_inputs(train=True)
+    batch_inputs, batch_true, batch_weights = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -189,7 +189,7 @@ def train_mixed_model():
 def main(unused):
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)
-  train_mixed_model()
+  train_model()
 
 
 if __name__ == "__main__":

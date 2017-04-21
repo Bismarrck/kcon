@@ -107,27 +107,7 @@ def inputs(train=True, shuffle=True):
   return kbody_input.inputs(
     train=train,
     batch_size=FLAGS.batch_size,
-    num_epochs=None,
     shuffle=shuffle
-  )
-
-
-def mixed_inputs(train=True, shuffle=True):
-  """
-  Construct input for k-body evaluation using the Reader ops.
-
-  Args:
-    train: bool, indicating if one should use the train or eval data set.
-    shuffle: bool, indicating if the batches shall be shuffled or not.
-
-  Returns:
-    features: Behler features for the molecules. 4D tensor of shape
-      [batch_size, 1, NATOMS, NDIMS].
-    energies: the dedired energies. 2D tensor of shape [batch_size, 1].
-
-    """
-  return kbody_input.mixed_inputs(
-    train, batch_size=FLAGS.batch_size, shuffle=shuffle
   )
 
 

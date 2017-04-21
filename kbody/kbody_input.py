@@ -36,14 +36,13 @@ flags.DEFINE_integer('num_atoms', 17,
                      """The number of atoms in each molecule.""")
 flags.DEFINE_integer('many_body_k', 4,
                      """The many-body-expansion order.""")
+flags.DEFINE_float('test_size', 0.2,
+                   """The proportion of the dataset to include in the test 
+                   split""")
 flags.DEFINE_boolean('use_fp64', False,
                      """Use double precision floats if True.""")
-flags.DEFINE_boolean('parse_forces', False,
-                     """Parse forces from the xyz file if True.""")
 flags.DEFINE_boolean('run_input_test', False,
                      """Run the input unit test if True.""")
-flags.DEFINE_boolean('mixed', False,
-                     """Enable mixed training.""")
 
 FLAGS = flags.FLAGS
 
@@ -55,6 +54,9 @@ hartree_to_kcal = 627.509
 
 # Hartree to eV
 hartree_to_ev = 27.211
+
+# a.u to angstroms
+au_to_angstrom = 0.52917721092
 
 
 def get_float_type(convert=False):
@@ -111,8 +113,8 @@ def _get_regex_patt_and_unit(xyz_format):
   return energy_patt, string_patt, unit, parse_forces
 
 
-def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
-                verbose=True, xyz_format='xyz', mixed=False):
+def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
+                verbose=True):
   """
   Extract atomic species, energies, coordiantes, and perhaps forces, from the 
   file.
@@ -122,16 +124,11 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
     num_examples: a `int` as the maximum number of examples to parse.
     num_atoms: a `int` as the number of atoms. If `mixed` is True, this should 
       be the maximum number of atoms in one configuration.
-    parse_forces: a `bool` indicating whether we should parse forces if 
-      available.
-    verbose: a `bool` indicating whether we should log the parsing progress or 
-      not.
     xyz_format: a `str` representing the format of the given xyz file.
-    mixed: a `bool` indicating whether the dataset contains different kinds of 
-      molecules or not.
+    verbose: a `bool` indicating whether we should log the parsing progress.
 
   Returns
-    species: `List[str]`, a list of the atomic symbols.
+    array_of_species: an array of `Array[str]` as the species of molecules.
     energies: `Array[N, ]`, a 1D array as the atomic energies.
     coordinates: `Array[N, ...]`, a 3D array as the atomic coordinates.
     forces: `Array[N, ...]`, a 3D array as the atomic forces.
@@ -140,22 +137,19 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
 
   dtype = get_float_type(convert=False)
   energies = np.zeros((num_examples,), dtype=np.float64)
-  coordinates = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
+  coords = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
+  array_of_species = []
+  species = []
+  stage = 0
+  i = 0
+  j = 0
+  n = None
+  ener_patt, xyz_patt, unit, parse_forces = _get_regex_patt_and_unit(xyz_format)
 
   if parse_forces:
     forces = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
   else:
     forces = None
-
-  species = []
-  config_species = []
-  parse_species = True
-  stage = 0
-  i = 0
-  j = 0
-  n = None
-
-  ener_patt, xyz_patt, unit, parse_forces = _get_regex_patt_and_unit(xyz_format)
 
   tic = time.time()
   if verbose:
@@ -170,11 +164,9 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       if stage == 0:
         if l.isdigit():
           n = int(l)
-          if (not mixed) and (n != num_atoms):
-            raise ValueError("The parsed size %d != NUM_SITES" % n)
-          elif mixed and (n > num_atoms):
+          if n > num_atoms:
             raise ValueError("The number of atoms %d from the file is larger "
-                             "than the max %d!" % (n, num_atoms))
+                             "than the given maximum %d!" % (n, num_atoms))
           stage += 1
       elif stage == 1:
         m = ener_patt.search(l)
@@ -187,24 +179,14 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       elif stage == 2:
         m = xyz_patt.search(l)
         if m:
-          coordinates[i, j, :] = float(m.group(2)), float(m.group(3)), float(
-            m.group(4))
+          coords[i, j, :] = [float(v) for v in m.groups()[1:4]]
           if parse_forces:
-            forces[i, j, :] = float(m.group(5)), float(m.group(6)), float(
-              m.group(7))
-          if parse_species:
-            if not mixed:
-              species.append(m.group(1))
-              if len(species) == num_atoms:
-                species = np.asarray(species, dtype=object)
-                parse_species = False
-            else:
-              config_species.append(m.group(1))
-              if len(config_species) == n:
-                species.append(config_species)
-                config_species = []
+            forces[i, j, :] = [float(v) for v in m.groups()[4:7]]
+          species.append(m.group(1))
           j += 1
           if j == n:
+            array_of_species.append(species)
+            species = []
             j = 0
             stage = 0
             i += 1
@@ -215,14 +197,13 @@ def extract_xyz(filename, num_examples, num_atoms, parse_forces=False,
       print("Total time: %.3f s\n" % (time.time() - tic))
 
   if i < num_examples:
+    array_of_species = np.asarray(array_of_species)
     energies = np.resize(energies, (i, ))
-    coordinates = np.resize(coordinates, (i, num_atoms, 3))
+    coords = np.resize(coords, (i, num_atoms, 3))
     if forces is not None:
       forces = np.resize(forces, (i, num_atoms, 3))
-    if not mixed:
-      species = np.resize(species, (i, ))
 
-  return species, energies, coordinates, forces
+  return array_of_species, energies, coords, forces
 
 
 def get_filenames(train=True):
@@ -278,10 +259,8 @@ def may_build_dataset(verbose=True):
     xyzfile,
     num_examples=FLAGS.num_examples,
     num_atoms=FLAGS.num_atoms,
-    parse_forces=FLAGS.parse_forces,
     verbose=verbose,
     xyz_format=FLAGS.format,
-    mixed=FLAGS.mixed,
   )
   indices = list(range(len(coordinates)))
 
@@ -289,95 +268,37 @@ def may_build_dataset(verbose=True):
   # tfrecords file.
   many_body_k = min(5, FLAGS.many_body_k)
 
-  if not FLAGS.mixed:
+  # Split the energies and coordinates into two sets: a training set and a
+  # testing set. The indices are used for post-analysis.
+  (coords_train, coords_test,
+   energies_train, energies_test,
+   indices_train, indices_test,
+   species_train, species_test) = train_test_split(
+    coordinates,
+    energies,
+    indices,
+    species,
+    test_size=FLAGS.test_size,
+    random_state=SEED
+  )
 
-    # Split the energies and coordinates into two sets: a training set and a
-    # testing set. The indices are used for post-analysis.
-    (coords_train, coords_test,
-     energies_train, energies_test,
-     indices_train, indices_test) = train_test_split(
-      coordinates,
-      energies,
-      indices,
-      test_size=0.2,
-      random_state=SEED
-    )
+  # Determine the maximum occurance of each atom type.
+  max_occurs = {}
+  for symbols in species:
+    c = Counter(symbols)
+    for specie, times in c.items():
+      max_occurs[specie] = max(max_occurs.get(specie, 0), times)
 
-    clf = kbody_transform.Transformer(species, many_body_k)
-    clf.transform_and_save(
-      coords_test, energies_test, test_file, indices=indices_test)
-    clf.transform_and_save(
-      coords_train, energies_train, train_file, indices=indices_train)
-
-  else:
-
-    # Split the energies and coordinates into two sets: a training set and a
-    # testing set. The indices are used for post-analysis.
-    (coords_train, coords_test,
-     energies_train, energies_test,
-     indices_train, indices_test,
-     species_train, species_test) = train_test_split(
-      coordinates,
-      energies,
-      indices,
-      species,
-      test_size=0.2,
-      random_state=SEED
-    )
-
-    max_occurs = {}
-    for symbols in species:
-      c = Counter(symbols)
-      for specie, times in c.items():
-        max_occurs[specie] = max(max_occurs.get(specie, 0), times)
-    clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
-    clf.transform_and_save(species_test, energies_test, coords_test,
-                           test_file, indices_test)
-    clf.transform_and_save(species_train, energies_train, coords_train,
-                           train_file, indices_train)
+  # Use a `FixedLenMultiTransformer` to generate features because it will be
+  # much easier if the all input samples are fixed-length.
+  clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
+  clf.transform_and_save(species_test, energies_test, coords_test,
+                         test_file, indices_test)
+  clf.transform_and_save(species_train, energies_train, coords_train,
+                         train_file, indices_train)
 
 
 def read_and_decode(filename_queue, cnk, ck2):
-  """
-  Read and decode the binary dataset file.
-
-  Args:
-    filename_queue: an input queue.
-    cnk: a `int` as the value of C(N,k). This is also the height of each feature 
-      matrix.
-    ck2: a `int` as the value of C(k,2). This is also the depth of each feature
-      matrix.
-  
-  Returns:
-    features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
-    energy: a 1D array of shape [1] as the target for the features.
-
-  """
-
-  dtype = get_float_type(convert=True)
-  reader = tf.TFRecordReader()
-  _, serialized_example = reader.read(filename_queue)
-
-  example = tf.parse_single_example(
-    serialized_example,
-    # Defaults are not specified since both keys are required.
-    features={
-      'features': tf.FixedLenFeature([], tf.string),
-      'energy': tf.FixedLenFeature([], tf.string),
-    })
-
-  features = tf.decode_raw(example['features'], dtype)
-  features.set_shape([cnk * ck2])
-  features = tf.reshape(features, [1, cnk, ck2])
-
-  energy = tf.decode_raw(example['energy'], tf.float64)
-  energy.set_shape([1])
-  energy = tf.squeeze(energy)
-
-  return features, energy
-
-
-def read_and_decode_mixed(filename_queue, cnk, ck2):
   """
   Read and decode the mixed binary dataset file.
 
@@ -420,69 +341,7 @@ def read_and_decode_mixed(filename_queue, cnk, ck2):
   return features, energy, weights
 
 
-def inputs(train, batch_size, num_epochs, shuffle=True, filenames=None):
-  """
-  Reads input data num_epochs times.
-
-  Args:
-    train: Selects between the training (True) and validation (False) data.
-    batch_size: Number of examples per returned batch.
-    num_epochs: Number of times to read the input data, or 0/None to
-       train forever.
-    shuffle: boolean indicating whether the batches shall be shuffled or not.
-    filenames:
-
-  Returns:
-    A tuple (features, energies, offsets), where:
-    * features is a float tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
-      the range [0.0, 1.0].
-    * energies is a float tensor with shape [batch_size, ].
-
-    Note that an tf.train.QueueRunner is added to the graph, which
-    must be run using e.g. tf.train.start_queue_runners().
-
-  """
-  if not num_epochs:
-    num_epochs = None
-
-  if filenames is None:
-    filename, _ = get_filenames(train=train)
-    filenames = [filename]
-
-  cnk = comb(FLAGS.num_atoms, FLAGS.many_body_k, exact=True)
-  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
-
-  with tf.name_scope('input'):
-    filename_queue = tf.train.string_input_producer(
-      filenames,
-      num_epochs=num_epochs
-    )
-
-    # Even when reading in multiple threads, share the filename
-    # queue.
-    features, energies = read_and_decode(filename_queue, cnk, ck2)
-
-    # Shuffle the examples and collect them into batch_size batches.
-    # (Internally uses a RandomShuffleQueue.)
-    # We run this in two threads to avoid being a bottleneck.
-    if not shuffle:
-      batch_features, batch_energies = tf.train.batch(
-        [features, energies],
-        batch_size=batch_size,
-        capacity=1000 + 3 * batch_size
-      )
-    else:
-      batch_features, batch_energies = tf.train.shuffle_batch(
-        [features, energies],
-        batch_size=batch_size,
-        capacity=1000 + 3 * batch_size,
-        # Ensures a minimum amount of shuffling of examples.
-        min_after_dequeue=1000
-      )
-    return batch_features, batch_energies
-
-
-def mixed_inputs(train, batch_size=50, shuffle=True):
+def inputs(train, batch_size=25, shuffle=True):
   """
   Reads mixed input data.
 
@@ -506,9 +365,9 @@ def mixed_inputs(train, batch_size=50, shuffle=True):
   filename, _ = get_filenames(train=train)
   filenames = [filename]
 
-  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
   settings = inputs_settings(train=train)
-  total_dim = settings["total_dim"]
+  cnk = settings["total_dim"]
+  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -517,8 +376,7 @@ def mixed_inputs(train, batch_size=50, shuffle=True):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, weights = read_and_decode_mixed(
-      filename_queue, total_dim, ck2)
+    features, energies, weights = read_and_decode(filename_queue, cnk, ck2)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
@@ -558,98 +416,6 @@ def inputs_settings(train=True):
     return dict(json.load(f))
 
 
-def test():
-  """
-  This is the unit test of this module. The file `TaB2Oopted.xyz` is used.
-  """
-  from sklearn.metrics import pairwise_distances
-
-  xyzfile = join("..", "datasets", "TaB20opted.xyz")
-  if not isfile(xyzfile):
-    raise IOError("The dataset file %s can not be accessed!" % xyzfile)
-
-  species, raw_energies, raw_coordinates, _ = extract_xyz(
-    xyzfile,
-    num_examples=5000,
-    num_atoms=21,
-    parse_forces=False,
-    verbose=False,
-    xyz_format=FLAGS.format,
-  )
-  indices = list(range(len(raw_coordinates)))
-  (coords_train, coords_test,
-   energies_train, energies_test,
-   indices_train, indices_test) = train_test_split(
-    raw_coordinates,
-    raw_energies,
-    indices,
-    test_size=0.2,
-    random_state=SEED
-  )
-
-  pyykko_bb = 1.7 * 1.5
-  pyykko_tb = 2.31 * 1.5
-
-  train_file = join(FLAGS.binary_dir, "TaB20opted-train.tfrecords")
-  if not isfile(train_file):
-    many_body_k = 4
-    clf = kbody_transform.Transformer(species, many_body_k)
-    clf.transform_and_save(coords_train, energies_train, train_file,
-                           indices=indices)
-
-  with tf.Session() as sess:
-    features_op, energies_op = inputs(
-      train=True, batch_size=5, num_epochs=None, shuffle=False
-    )
-    tf.train.start_queue_runners(sess=sess)
-
-    # --------
-    # Features
-    # --------
-    try:
-      # The shape of `values` is [1, 1, 5985, 6].
-      features, energies = sess.run([features_op, energies_op])
-
-      for i in range(5):
-        # The first part, [:, :, 0:4845, 6] represents the 4-body term of
-        # B-B-B-B. The indices of Borons are from 1 to 20, so the first element
-        # should be the minimum scaled distance within B[1,2,3,4].
-        dists = pairwise_distances(raw_coordinates[indices_train[i]])
-        r = features[i, 0, 0, 0]
-        y = np.min(np.exp(-(dists[1:5, 1:5]) / pyykko_bb))
-        assert np.linalg.norm(r - y) < 0.00001
-
-        # The second part, [:, :, 4845:5985, 6], represents the 4-body term of
-        # B-B-B-Ta
-        r = features[i, 0, -1, 0]
-        y = np.min(np.exp(-dists[18:21, 18:21] / pyykko_bb))
-        assert np.linalg.norm(r - y) < 0.00001
-
-        r = features[i, 0, -1, 2]
-        y = np.min(np.exp(-dists[0, 18:21] / pyykko_tb))
-        assert np.linalg.norm(r - y.min()) < 0.00001
-
-    except AssertionError:
-      raise AssertionError("The `features` tests are failed!")
-    else:
-      print("The `features` tests are passed!")
-
-    # --------
-    # Energies
-    # --------
-    try:
-      r = energies[0:5]
-      y = raw_energies[indices_train[0:5]]
-      assert np.max(np.abs(r + y)) < 0.00001
-
-    except AssertionError:
-      raise AssertionError("The `energies` tests are failed!")
-    else:
-      print("The `energies` tests are passed!")
-
-    time.sleep(5)
-
-
 def test_extract_mixed_xyz():
   """
   Test parsing the mixed xyz file `qm7.xyz`.
@@ -657,31 +423,30 @@ def test_extract_mixed_xyz():
   from scipy.io import loadmat
 
   mixed_file = join(dirname(__file__), "..", "datasets", "qm7.xyz")
-  species, energies, coords, _ = extract_xyz(
+  array_of_species, energies, coords, _ = extract_xyz(
     mixed_file,
     num_examples=100000,
     num_atoms=23,
-    mixed=True
   )
   qm7_mat = join(dirname(__file__), "..", "datasets", "qm7.mat")
   ar = loadmat(qm7_mat)
   kcal_to_hartree = 1.0 / 627.509474
   t = ar["T"].flatten() * kcal_to_hartree * hartree_to_ev
-  r = ar["R"]
-  lefts = np.ones(len(species), dtype=bool)
-  for i in range(len(species)):
+  r = np.multiply(ar["R"], au_to_angstrom)
+  lefts = np.ones(len(array_of_species), dtype=bool)
+  for i in range(len(array_of_species)):
     j = np.argmin(np.abs(energies[i] - t))
     if lefts[j]:
-      n = len(species[i])
+      n = len(array_of_species[i])
       d = np.linalg.norm(coords[i][:n] - r[j][:n])
       if d < 0.1:
         lefts[j] = False
   assert not np.all(lefts)
 
 
-def test_build_mixed_dataset():
+def test_build_dataset():
   """
-  Test building a mixed dataset.
+  Test building the mixed QM7 dataset.
   """
 
   from sklearn.metrics import pairwise_distances
@@ -695,7 +460,6 @@ def test_build_mixed_dataset():
     num_examples=8000,
     num_atoms=23,
     verbose=False,
-    mixed=True
   )
   indices = list(range(len(raw_coordinates)))
 
@@ -726,17 +490,14 @@ def test_build_mixed_dataset():
                            train_file, indices=indices)
 
   with tf.Session() as sess:
-    features_op, energies_op, weights_op = mixed_inputs(
-      train=True, shuffle=False, batch_size=5
-    )
+
+    x_op, y_pred_op, w_op = inputs(train=True, shuffle=False, batch_size=5)
     tf.train.start_queue_runners(sess=sess)
 
     # --------
     # Features
     # --------
-    features, energies, weights = sess.run(
-      [features_op, energies_op, weights_op]
-    )
+    features, energies, weights = sess.run([x_op, y_pred_op, w_op])
     species = array_of_species_train[1]
     n = len(species)
     coords = coords_train[1][:n]
@@ -751,7 +512,8 @@ def test_build_mixed_dataset():
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
   if FLAGS.run_input_test:
-    test_build_mixed_dataset()
+    test_extract_mixed_xyz()
+    test_build_dataset()
   else:
     may_build_dataset(verbose=True)
 
