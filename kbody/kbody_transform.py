@@ -45,6 +45,13 @@ pyykko = {
   'Zn': 1.18, 'Zr': 1.54
 }
 
+flags = tf.app.flags
+
+flags.DEFINE_integer("order", 1,
+                    """The exponential order for normalizing distances.""")
+
+FLAGS = flags.FLAGS
+
 
 def get_formula(species):
   """
@@ -149,7 +156,7 @@ def _gen_sorting_indices(kbody_terms):
   return indices
 
 
-def exponential(inputs, factor):
+def exponential(inputs, factor, order=1):
   """
   Exponentially scale the `inputs`.
 
@@ -157,12 +164,13 @@ def exponential(inputs, factor):
     inputs: Union[float, np.ndarray] as the inputs to scale.
     factor: a float or an array with the same shape of `inputs` as the scaling 
       factor(s).
+    order: a `int` as the exponential order.
 
   Returns:
     scaled: the scaled inputs.
 
   """
-  return np.exp(np.negative(inputs) / factor)
+  return np.exp(np.negative((inputs / factor)**order))
 
 
 def _bytes_feature(value):
@@ -319,7 +327,7 @@ class Transformer:
 
     for i in range(num_examples):
       dists = pairwise_distances(coordinates[i]).flatten()
-      rr = exponential(dists, self._lmat)
+      rr = exponential(dists, self._lmat, order=FLAGS.order)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
         if term not in mapping:
@@ -367,7 +375,7 @@ class Transformer:
 
       for i in range(num_examples):
         dists = pairwise_distances(coordinates[i]).flatten()
-        rr = exponential(dists, self._lmat)
+        rr = exponential(dists, self._lmat, order=FLAGS.order)
         sample.fill(0.0)
         for j, term in enumerate(kbody_terms):
           for k in range(self.ck2):
