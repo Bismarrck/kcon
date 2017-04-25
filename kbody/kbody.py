@@ -28,6 +28,10 @@ tf.app.flags.DEFINE_float('learning_rate', 0.1,
 tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
+tf.app.flags.DEFINE_string('initial_one_body_weights', None,
+                           """Comma-separated floats as the initial one-body 
+                           weights. Defaults to `ones_initialier`.""")
+
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
@@ -202,13 +206,16 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference_one_body(batch_occurs):
+def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
   """
   Inference the one-body part.
   
   Args:
     batch_occurs: a 4D Tensor of shape `[-1, 1, 1, Nat]` as the occurances of 
       the atom types.
+    nat: a `int` as the number of atom types.
+    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
+      weights of the one-body kernel.
 
   Returns:
     one_body: a 4D Tensor of shape `[-1, 1, 1, 1]` as the one-body contribs.
@@ -216,19 +223,34 @@ def inference_one_body(batch_occurs):
   """
   num_outputs = 1
   kernel_size = 1
+
+  if initial_one_body_weights is None:
+    weights = FLAGS.initial_one_body_weights
+    if weights is None:
+      values = np.ones(nat, dtype=np.float32)
+    else:
+      values = [float(x) for x in weights.split(",")]
+  else:
+    values = initial_one_body_weights
+  if len(values) != nat:
+    raise Exception("The number of initial weights should be %d!" % nat)
+
+  weights_initializer = init_ops.constant_initializer(values)
+
   return conv2d(
     batch_occurs,
     num_outputs=num_outputs,
     kernel_size=kernel_size,
     activation_fn=None,
-    weights_initializer=init_ops.ones_initializer(),
+    weights_initializer=weights_initializer,
     biases_initializer=None,
     scope='one-body'
   )
 
 
 def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
-              kbody_terms, verbose=True, conv_sizes=(60, 120, 120, 60)):
+              kbody_terms, verbose=True, conv_sizes=(60, 120, 120, 60),
+              initial_one_body_weights=None):
   """
   The general inference function.
 
@@ -244,6 +266,8 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
     kbody_terms: a `List[str]` as the names of the k-body terms.
     verbose: boolean indicating whether the layers shall be printed or not.
     conv_sizes: a `Tuple[int]` as the sizes of the convolution layers.
+    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
+      weights of the one-body kernel.
 
   Returns:
     total_energies: a Tensor representing the predicted total energies.
@@ -313,7 +337,7 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
   if verbose:
     print_activations(contribs)
 
-  one_body = inference_one_body(selected_occurs)
+  one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
   tf.summary.histogram("one_body_contribs", contribs)
   if verbose:
     print_activations(one_body)
