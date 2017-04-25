@@ -65,7 +65,7 @@ def train_model():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies.
-    batch_inputs, y_true = kbody.inputs(train=True)
+    batch_inputs, batch_true, batch_weights = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -80,12 +80,13 @@ def train_model():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_weights,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       conv_sizes=conv_sizes,
       verbose=True,
     )
-    y_true = tf.cast(y_true, tf.float32)
+    y_true = tf.cast(batch_true, tf.float32)
 
     # Setup the loss function
     loss = kbody.get_total_loss(y_true, y_pred)

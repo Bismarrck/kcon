@@ -103,7 +103,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
 
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
-      summary.value.add(tag='MAE (a.u) @ 1', simple_value=precision)
+      summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
       summary.value.add(tag='R2 Score @ 1', simple_value=score)
       summary_writer.add_summary(summary, global_step)
 
@@ -124,7 +124,7 @@ def evaluate():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, y_true = kbody.inputs(train=False)
+    batch_inputs, batch_true, batch_weights = kbody.inputs(train=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -139,12 +139,13 @@ def evaluate():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_weights,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
       conv_sizes=conv_sizes
     )
-    y_true = tf.cast(y_true, tf.float32)
+    y_true = tf.cast(batch_true, tf.float32)
 
     # Calculate predictions.
     mae_op = tf.losses.absolute_difference(y_true, y_pred)
@@ -171,6 +172,7 @@ def evaluate():
 
 
 # pylint: disable=unused-argument
+# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(argv=None):
   evaluate()
 

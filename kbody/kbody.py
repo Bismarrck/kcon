@@ -84,7 +84,7 @@ def get_number_of_trainable_parameters(verbose=False):
   for var in tf.trainable_variables():
     nvar = np.prod(var.get_shape().as_list(), dtype=int)
     if verbose:
-      print("{:25s}   {:d}".format(var.name, nvar))
+      print("{:<38s}   {:>8d}".format(var.name, nvar))
     ntotal += nvar
   print("Total number of parameters: %d" % ntotal)
   print("")
@@ -107,7 +107,6 @@ def inputs(train=True, shuffle=True):
   return kbody_input.inputs(
     train=train,
     batch_size=FLAGS.batch_size,
-    num_epochs=None,
     shuffle=shuffle
   )
 
@@ -181,6 +180,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
     if verbose:
       print_activations(conv)
 
+  # minval, maxval = init_one_body * 0.9, init_one_body * 1.1
   kbody_energies = conv2d(
     conv,
     1,
@@ -202,13 +202,15 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference(batch_inputs, split_dims, kbody_terms, verbose=True,
-              conv_sizes=(60, 120, 120, 60)):
+def inference(batch_inputs, batch_weights, split_dims, kbody_terms,
+              verbose=True, conv_sizes=(60, 120, 120, 60)):
   """
   The general inference function.
 
   Args:
     batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
+    batch_weights: a Tensor of shape `[-1, -1]` as the weights of the k-body 
+      contribs.
     split_dims: a `List[int]` or a 1-D Tensor containing the sizes of each 
       output tensor along split_dim.
     kbody_terms: a `List[str]` as the names of the k-body terms.
@@ -222,19 +224,12 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True,
 
   """
 
-  def zero_padding():
-    """
-    Return a 4D float32 Tensor of zeros as the fake inputs.
-    """
-    return tf.zeros([1, 1, 1, 1], name="zeros")
-
   # Build up the placeholder tensors.
   #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
   #     alternative inputs which can be directly feeded.
   #   use_extra: a boolean Tensor indicating whether we should use the
   #     placeholder inputs or the batch inputs.
-  #   is_predicting: a boolean Tensor indicating whether the model should be
-  #     used for training/evaluation or prediction.
+
   with tf.name_scope("placeholders"):
     ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
     use_extra = tf.placeholder_with_default(
@@ -247,49 +242,41 @@ def inference(batch_inputs, split_dims, kbody_terms, verbose=True,
       shape=[None, 1, None, ck2],
       name="extra_inputs"
     )
+    extra_weights = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, 1]),
+      shape=[None, 1, None, 1],
+      name="extra_weights"
+    )
 
   # Choose the inputs tensor based on `use_placeholder`.
   with tf.name_scope("InputsFlow"):
-    selected = tf.cond(
+    selected_inputs, selected_weights = tf.cond(
       use_extra,
-      lambda: extra_inputs,
-      lambda: batch_inputs,
-      name="selected_inputs"
+      lambda: (extra_inputs, extra_weights),
+      lambda: (batch_inputs, batch_weights),
+      name="selected"
     )
 
     axis = tf.constant(2, dtype=tf.int32, name="CNK")
-    eps = tf.constant(0.001, dtype=tf.float32, name="threshold")
-    convs = tf.split(selected, split_dims, axis=axis, name="Partition")
+    convs = tf.split(selected_inputs, split_dims, axis=axis, name="Partition")
 
   kbody_energies = []
 
   for i, conv in enumerate(convs):
     with tf.variable_scope(kbody_terms[i]):
       with tf.variable_scope("Conv"):
-        contribs = inference_sum_kbody(
+        kbody = inference_sum_kbody(
           conv,
           kbody_terms[i],
           ck2,
           sizes=conv_sizes,
           verbose=verbose
         )
-
-      below_zero = tf.less(
-        tf.reduce_sum(conv, name="inputs_sum"),
-        eps,
-        name="below_zero"
-      )
-      return_zero = tf.logical_and(
-        is_predicting,
-        below_zero,
-        name="check_zero"
-      )
-      kbody = tf.cond(
-        return_zero, zero_padding, lambda: contribs, name="zero_or_conv"
-      )
     kbody_energies.append(kbody)
 
   contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
+  contribs = tf.multiply(contribs, selected_weights, name="Weighted")
+
   tf.summary.histogram("kbody_contribs", contribs)
   if verbose:
     print_activations(contribs)
