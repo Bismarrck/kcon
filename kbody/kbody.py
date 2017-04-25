@@ -84,7 +84,7 @@ def get_number_of_trainable_parameters(verbose=False):
   for var in tf.trainable_variables():
     nvar = np.prod(var.get_shape().as_list(), dtype=int)
     if verbose:
-      print("{:25s}   {:d}".format(var.name, nvar))
+      print("{:<38s}   {:>8d}".format(var.name, nvar))
     ntotal += nvar
   print("Total number of parameters: %d" % ntotal)
   print("")
