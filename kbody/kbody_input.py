@@ -45,6 +45,8 @@ flags.DEFINE_boolean('use_fp64', False,
                      """Use double precision floats if True.""")
 flags.DEFINE_boolean('run_input_test', False,
                      """Run the input unit test if True.""")
+flags.DEFINE_float('unit', None,
+                   """Override the default unit if this is not None.""")
 
 FLAGS = flags.FLAGS
 
@@ -112,6 +114,8 @@ def _get_regex_patt_and_unit(xyz_format):
     parse_forces = False
   else:
     raise ValueError("The file format of %s is not supported!" % xyz_format)
+  if FLAGS.unit is not None:
+    unit = FLAGS.unit
   return energy_patt, string_patt, unit, parse_forces
 
 
