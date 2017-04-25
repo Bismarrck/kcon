@@ -358,98 +358,6 @@ class Transformer:
       targets = None
     return samples, targets
 
-  def _transform_and_save(self, coordinates, energies, filename, verbose):
-    """
-    The main function for transforming coordinates to input features.
-    """
-    with tf.python_io.TFRecordWriter(filename) as writer:
-
-      if verbose:
-        print("Start transforming %s ... " % filename)
-
-      num_examples = len(coordinates)
-      sample = np.zeros((self._total_dim, self.ck2), dtype=np.float32)
-      kbody_terms = self._kbody_terms
-      mapping = self._dist2inputs_mapping
-      offsets = self._kbody_offsets
-
-      for i in range(num_examples):
-        dists = pairwise_distances(coordinates[i]).flatten()
-        rr = exponential(dists, self._lmat, order=self._order)
-        sample.fill(0.0)
-        for j, term in enumerate(kbody_terms):
-          for k in range(self.ck2):
-            sample[offsets[j]: offsets[j + 1], k] = rr[mapping[term][k]]
-
-        for j, term in enumerate(kbody_terms):
-          for ix in self._sorting_indices.get(term, []):
-            z = sample[offsets[j]: offsets[j + 1], ix]
-            z.sort(axis=1)
-            sample[offsets[j]: offsets[j + 1], ix] = z
-
-        x = _bytes_feature(sample.tostring())
-        y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
-        example = Example(
-          features=Features(feature={'energy': y, 'features': x}))
-        writer.write(example.SerializeToString())
-
-        if verbose and i % 100 == 0:
-          sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
-
-      if verbose:
-        print("")
-        print("Transforming %s finished!" % filename)
-
-  def transform_and_save(self, coordinates, energies, filename, verbose=True,
-                         indices=None):
-    """
-    Transform the given atomic coordinates to input features and save them to
-    tfrecord files using `tf.TFRecordWriter`.
-
-    Args:
-      coordinates: a 3D array as the atomic coordinates of sturctures.
-      energies: a 1D array as the desired energies.
-      filename: a `str` as the file to save examples.
-      verbose: boolean indicating whether.
-      indices: a `List[int]` as the indices of each given example. This is an
-        optional argument.
-
-    """
-    try:
-      self._transform_and_save(coordinates, energies, filename, verbose)
-    except Exception as excp:
-      if isfile(filename):
-        remove(filename)
-      raise excp
-    else:
-      self._save_auxiliary_for_file(filename, indices)
-
-  def _save_auxiliary_for_file(self, filename, indices=None):
-    """
-    Save auxiliary data for the given dataset.
-
-    Args:
-      filename: a `str` as the tfrecords file.
-      indices: a `List[int]` as the indices of each given example.
-
-    """
-    name = splitext(basename(filename))[0]
-    workdir = dirname(filename)
-    cfgfile = join(workdir, "{}.json".format(name))
-    if indices is not None:
-      indices = indices.tolist()
-    else:
-      indices = []
-
-    with open(cfgfile, "w+") as f:
-      json.dump({
-        "kbody_offsets": self._kbody_offsets,
-        "kbody_terms": self._kbody_terms,
-        "kbody_selections": self._selections,
-        "split_dims": self._split_dims,
-        "inverse_indices": list([int(i) for i in indices])
-      }, f, indent=2)
-
 
 class MultiTransformer:
   """
@@ -733,7 +641,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     workdir = dirname(filename)
     cfgfile = join(workdir, "{}.json".format(name))
     if indices is not None:
-      indices = indices.tolist()
+      indices = list(indices)
     else:
       indices = []
 
