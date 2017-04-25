@@ -31,6 +31,8 @@ tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            """Comma-separated floats as the initial one-body 
                            weights. Defaults to `ones_initialier`.""")
+tf.app.flags.DEFINE_boolean('use_linear_output', False,
+                            """Set this to True to use linear outputs.""")
 
 
 # Constants describing the training process.
@@ -184,12 +186,11 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
     if verbose:
       print_activations(conv)
 
-  # minval, maxval = init_one_body * 0.9, init_one_body * 1.1
   kbody_energies = conv2d(
     conv,
     1,
     kernel_size,
-    activation_fn=tf.nn.relu,
+    activation_fn=None if FLAGS.use_linear_output else tf.nn.relu,
     biases_initializer=None,
     weights_initializer=initializers.xavier_initializer(
       seed=kbody_input.SEED, dtype=dtype),
