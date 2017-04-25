@@ -39,6 +39,8 @@ flags.DEFINE_integer('many_body_k', 4,
 flags.DEFINE_float('test_size', 0.2,
                    """The proportion of the dataset to include in the test 
                    split""")
+flags.DEFINE_integer("order", 1,
+                     """The exponential order for normalizing distances.""")
 flags.DEFINE_boolean('use_fp64', False,
                      """Use double precision floats if True.""")
 flags.DEFINE_boolean('run_input_test', False,

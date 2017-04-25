@@ -26,7 +26,7 @@ class CNNPredictor:
   """
 
   def __init__(self, atom_types, model_path, many_body_k=3, max_occurs=None,
-               **kwargs):
+               order=1, **kwargs):
     """
     Initialization method.
 
@@ -43,6 +43,7 @@ class CNNPredictor:
       atom_types,
       many_body_k=many_body_k,
       max_occurs=max_occurs,
+      order=order,
     )
     self.sess = tf.Session()
     self._import_model(model_path, **kwargs)
@@ -69,13 +70,12 @@ class CNNPredictor:
 
     # Recover the tensors from the graph.
     graph = tf.get_default_graph()
-    self.y_total_op = graph.get_tensor_by_name("Outputs/squeeze:0")
     self.y_kbody_op = graph.get_tensor_by_name("Contribs:0")
     self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
     self._use_extra = graph.get_tensor_by_name(
       "placeholders/use_extra_inputs:0")
-    self._is_predicting = graph.get_tensor_by_name(
-      "placeholders/is_predicting:0")
+    self._extra_weights = graph.get_tensor_by_name(
+      "placeholders/extra_weights:0")
     self._split_dims = graph.get_tensor_by_name("split_dims:0")
     self._shuffle_batch = graph.get_tensor_by_name("input/shuffle_batch:0")
     self._defaut_batch = np.zeros(self._shuffle_batch.get_shape().as_list(),
@@ -111,16 +111,19 @@ class CNNPredictor:
 
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.
-    features, split_dims, _ = self.transformer.transform(species, coords)
+    features, split_dims, _, weights = self.transformer.transform(
+      species, coords
+    )
 
     # Build the feed dict for running the session.
     features = features.reshape((num_mols, 1, -1, self.transformer.ck2))
+    weights = weights.reshape((num_mols, 1, -1, 1))
+
     feed_dict = {
       # Make the model use `extra_inputs` as the input features.
       self._use_extra: True,
       self._extra_inputs: features,
-      # The zero-padding check is enabled so that we can predict AxByHz systems.
-      self._is_predicting: True,
+      self._extra_weights: weights,
       # This must be feeded but it will not be used.
       self._shuffle_batch: self._defaut_batch,
       # The dimensions for splitting the input features.
@@ -128,10 +131,10 @@ class CNNPredictor:
     }
 
     # Run the operations to get the predicted energies.
-    y_total, y_kbody = self.sess.run(
-      [self.y_total_op, self.y_kbody_op],
-      feed_dict=feed_dict
-    )
+    y_kbody_raw = self.sess.run(self.y_kbody_op, feed_dict=feed_dict)
+
+    y_kbody = np.multiply(y_kbody_raw, weights)
+    y_total = np.squeeze(np.sum(y_kbody, axis=2, keepdims=True))
 
     # Transform the kbody energies to atomic energies.
     y_kbody = np.squeeze(y_kbody, axis=(1, 3))
@@ -166,81 +169,39 @@ def _print_predictions(y_total, y_true, y_atomic, species):
     print("")
 
 
-def _test(calculator):
-  """
-  Run unittests for `CNNPredictor`. The dataset for these tests is `C9H7Nv1`.
-  """
-
-  import kbody_input
-
-  cwd = dirname(__file__)
-  xyz_file = join(cwd, "..", "datasets", "C9H7Nv1.xyz")
-  num_examples = 5000
-  num_atoms = 17
-  num_tests = num_examples
-
-  # Extract structures from the file.
-  species, energies, coords, _ = kbody_input.extract_xyz(
-    xyz_file,
-    num_examples,
-    num_atoms,
-    xyz_format='grendel',
-    verbose=False
-  )
-
-  # Make final predictions.
-  tic = time.time()
-  slicer = np.random.choice(range(num_examples), num_tests)
-  y_total, y_atomic, _ = calculator.predict(species, coords[slicer])
-  elapsed = time.time() - tic
-  speed = float(num_tests) / elapsed
-  print("Prediction time: %.3f s, speed: %.2f examples/s" % (elapsed, speed))
-  print("")
-
-  _print_predictions(y_total, energies, y_atomic, species)
-
-
-def _test_small(calculator):
-  """
-  Test the `CNNPredictor` of CxHyN with a CH4 molecule.
-  """
-  species = ["C", "H", "H", "H", "H"]
-  coords = np.array([
-    [0.15625000,    1.42857141,    0.00000000],
-    [0.51290443,    0.41976140,    0.00000000],
-    [0.51292284,    1.93296960,    0.87365150],
-    [0.51292284,    1.93296960,   -0.87365150],
-    [-0.91375000,   1.42858459,    0.00000000]
-  ], dtype=np.float64).reshape((1, 5, 3))
-
-  y_total, y_atomic, _ = calculator.predict(species, coords)
-  _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
-
-
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def test(unused):
 
   cwd = dirname(__file__)
-  model_name = "model.ckpt-3000000"
-  model_path = join(cwd, "models", "C9H7Nv1.v2.DFTB", model_name)
+  model_name = "model.ckpt-693964"
+  model_path = join(cwd, "models", "QM7.v3", model_name)
 
   # Initialize a `CNNPredictor` instance. This step is relatively slow.
   tic = time.time()
   calculator = CNNPredictor(
-    ["C", "H", "N"],
+    ["C", "H", "O", "N", "S"],
     model_path=model_path,
-    max_occurs={"N": 1}
+    max_occurs={"S": 1},
   )
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
   print("")
 
-  for unittest, name in [(_test, "C9H7N"), (_test_small, "Small Molecules")]:
-    print("------")
-    print("Tests:", name)
-    print("------")
-    unittest(calculator)
-    print("")
+  print("----------")
+  print("Tests: CH4")
+  print("----------")
+
+  species = ["C", "H", "H", "H", "H"]
+  coords = np.array([
+    [0.15625000, 1.42857141, 0.00000000],
+    [0.51290443, 0.41976140, 0.00000000],
+    [0.51292284, 1.93296960, 0.87365150],
+    [0.51292284, 1.93296960, -0.87365150],
+    [-0.91375000, 1.42858459, 0.00000000]
+  ], dtype=np.float64).reshape((1, 5, 3))
+
+  y_total, y_atomic, _ = calculator.predict(species, coords)
+  _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
 
 
 if __name__ == "__main__":

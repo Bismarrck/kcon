@@ -47,9 +47,6 @@ pyykko = {
 
 flags = tf.app.flags
 
-flags.DEFINE_integer("order", 1,
-                    """The exponential order for normalizing distances.""")
-
 FLAGS = flags.FLAGS
 
 
@@ -183,7 +180,8 @@ class Transformer:
   features and training targets.
   """
 
-  def __init__(self, species, many_body_k=4, kbody_terms=None, split_dims=None):
+  def __init__(self, species, many_body_k=4, kbody_terms=None, split_dims=None,
+               order=1):
     """
     Initialization method.
 
@@ -209,12 +207,13 @@ class Transformer:
     mapping, selections = _gen_dist2inputs_mapping(species, kbody_terms)
 
     if split_dims is None:
-      offsets, dim = [0], 0
+      offsets, dim, kbody_sizes = [0], 0, []
       for term in kbody_terms:
-        dim += mapping[term].shape[1] if term in mapping else 1
+        tsize = mapping[term].shape[1] if term in mapping else 0
+        dim += max(tsize, 1)
         offsets.append(dim)
+        kbody_sizes.append(tsize)
       split_dims = np.diff(offsets).tolist()
-      kbody_sizes = split_dims
     else:
       offsets = [0] + np.cumsum(split_dims).tolist()
       dim = offsets[-1]
@@ -239,6 +238,7 @@ class Transformer:
     self._lmat = _get_pyykko_bonds_matrix(species)
     self._kbody_sizes = kbody_sizes
     self._multipliers = multipliers
+    self._order = order
 
     # The major dimension of each input feature matrix. Each missing kbody term
     # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
@@ -327,7 +327,7 @@ class Transformer:
 
     for i in range(num_examples):
       dists = pairwise_distances(coordinates[i]).flatten()
-      rr = exponential(dists, self._lmat, order=FLAGS.order)
+      rr = exponential(dists, self._lmat, order=self._order)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
         if term not in mapping:
@@ -375,7 +375,7 @@ class Transformer:
 
       for i in range(num_examples):
         dists = pairwise_distances(coordinates[i]).flatten()
-        rr = exponential(dists, self._lmat, order=FLAGS.order)
+        rr = exponential(dists, self._lmat, order=self._order)
         sample.fill(0.0)
         for j, term in enumerate(kbody_terms):
           for k in range(self.ck2):
@@ -437,8 +437,7 @@ class Transformer:
     workdir = dirname(filename)
     cfgfile = join(workdir, "{}.json".format(name))
     if indices is not None:
-      if isinstance(indices, np.ndarray):
-        indices = indices.tolist()
+      indices = indices.tolist()
     else:
       indices = []
 
@@ -457,7 +456,7 @@ class MultiTransformer:
   A flexible transformer targeting on AxByCz ... molecular compositions.
   """
 
-  def __init__(self, atom_types, many_body_k=3, max_occurs=None):
+  def __init__(self, atom_types, many_body_k=3, max_occurs=None, order=1):
     """
     Initialization method.
 
@@ -480,6 +479,7 @@ class MultiTransformer:
         set([",".join(sorted(c)) for c in combinations(species, many_body_k)])))
     self._transformers = {}
     self._max_occurs = max_occurs
+    self._order = order
 
   @property
   def many_body_k(self):
@@ -530,7 +530,12 @@ class MultiTransformer:
     formula = get_formula(species)
     clf = self._transformers.get(formula)
     if not isinstance(clf, Transformer):
-      clf = Transformer(species, self.many_body_k, kbody_terms=self.kbody_terms)
+      clf = Transformer(
+        species,
+        self.many_body_k,
+        kbody_terms=self.kbody_terms,
+        order=self._order
+      )
       self._transformers[formula] = clf
     return clf
 
@@ -548,6 +553,7 @@ class MultiTransformer:
       features: a 4D array as the input features.
       split_dims: a `List[int]` for splitting the input features along axis 2.
       targets: a 1D array as the training targets given `energis` or None.
+      weights: a 1D array as the binary weights of each row of the features. 
     
     Raises:
       ValueError: if the `species` is not supported by this transformer.
@@ -567,7 +573,7 @@ class MultiTransformer:
 
     clf = self._get_transformer(species)
     features, targets = clf.transform(coords, energies)
-    return features, clf.split_dims, targets
+    return features, clf.split_dims, targets, clf.multipliers
 
   def compute_atomic_energies(self, species, kbody_contribs):
     """
@@ -605,7 +611,7 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, many_body_k=3):
+  def __init__(self, max_occurs, many_body_k=3, order=1):
     """
     Initialization method. 
     
@@ -618,7 +624,8 @@ class FixedLenMultiTransformer(MultiTransformer):
     super(FixedLenMultiTransformer, self).__init__(
       list(max_occurs.keys()),
       many_body_k=many_body_k,
-      max_occurs=max_occurs
+      max_occurs=max_occurs,
+      order=order,
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
@@ -656,7 +663,11 @@ class FixedLenMultiTransformer(MultiTransformer):
     clf = self._transformers.get(formula)
     if not isinstance(clf, Transformer):
       clf = Transformer(
-        species, self.many_body_k, self.kbody_terms, split_dims=self._split_dims
+        species,
+        self.many_body_k,
+        self.kbody_terms,
+        split_dims=self._split_dims,
+        order=self._order
       )
       self._transformers[formula] = clf
     return clf
@@ -664,15 +675,15 @@ class FixedLenMultiTransformer(MultiTransformer):
   def _transform_and_save(self, array_of_species, energies, coords, filename,
                           verbose=True):
     """
-    
-    Args:
-      array_of_species:
-      energies: 
-      coords: 
-      filename: 
-      verbose:
+    Transform the given atomic coordinates to input features and save them to
+    tfrecord files using `tf.TFRecordWriter`.
 
-    Returns:
+    Args:
+      array_of_species: a `List[List[str]]` as the species of the isomers.
+      energies: a 1D array as the desired energies.
+      coords: a 3D array as the atomic coordinates of sturctures.
+      filename: a `str` as the file to save examples.
+      verbose: boolean indicating whether.
 
     """
 
@@ -686,14 +697,13 @@ class FixedLenMultiTransformer(MultiTransformer):
       for i in range(len(array_of_species)):
         species = array_of_species[i]
         n = len(species)
-        features, split_dims, targets = self.transform(
+        features, split_dims, targets, multipliers = self.transform(
           species,
           coords[i, :n]
         )
-        clf = self._get_transformer(species)
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
-        w = _bytes_feature(clf.multipliers.tostring())
+        w = _bytes_feature(multipliers.tostring())
 
         example = Example(
           features=Features(feature={
@@ -723,8 +733,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     workdir = dirname(filename)
     cfgfile = join(workdir, "{}.json".format(name))
     if indices is not None:
-      if isinstance(indices, np.ndarray):
-        indices = indices.tolist()
+      indices = indices.tolist()
     else:
       indices = []
 
@@ -743,7 +752,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     tfrecord files using `tf.TFRecordWriter`.
 
     Args:
-      array_of_species: 
+      array_of_species: a `List[List[str]]` as the species of the isomers.
       coords: a 3D array as the atomic coordinates of sturctures.
       energies: a 1D array as the desired energies.
       filename: a `str` as the file to save examples.
