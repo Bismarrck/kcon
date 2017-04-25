@@ -174,7 +174,7 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-class Transformer:
+class _Transformer:
   """
   This class is used to transform atomic coordinates and energies to input
   features and training targets.
@@ -388,6 +388,7 @@ class MultiTransformer:
     self._transformers = {}
     self._max_occurs = max_occurs
     self._order = order
+    self._ordered_species = sorted(list(max_occurs.keys()))
 
   @property
   def many_body_k(self):
@@ -409,6 +410,13 @@ class MultiTransformer:
     Return the ordered k-body terms for this transformer.
     """
     return self._kbody_terms
+
+  @property
+  def ordered_species(self):
+    """
+    Return the ordered species of this transformer.
+    """
+    return self._ordered_species
 
   def accept_species(self, species):
     """
@@ -437,8 +445,8 @@ class MultiTransformer:
     """
     formula = get_formula(species)
     clf = self._transformers.get(formula)
-    if not isinstance(clf, Transformer):
-      clf = Transformer(
+    if not isinstance(clf, _Transformer):
+      clf = _Transformer(
         species,
         self.many_body_k,
         kbody_terms=self.kbody_terms,
@@ -452,7 +460,7 @@ class MultiTransformer:
     Transform the atomic coordinates to input features.
 
     Args:
-      species: a `List[str]` as the ordered atomic species for molecule(s).
+      species: a `List[List[str]]` as the ordered atomic species.
       coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
         it should represents the N-by-3 coordinates of a single molecule.
       energies: a 1D array as the total energies. 
@@ -462,11 +470,13 @@ class MultiTransformer:
       split_dims: a `List[int]` for splitting the input features along axis 2.
       targets: a 1D array as the training targets given `energis` or None.
       weights: a 1D array as the binary weights of each row of the features. 
+      occurs: a 2D array as the occurances of the species.
     
     Raises:
       ValueError: if the `species` is not supported by this transformer.
 
     """
+
     if not self.accept_species(species):
       raise ValueError(
         "This transformer does not support {}!".format(get_formula(species)))
@@ -481,7 +491,16 @@ class MultiTransformer:
 
     clf = self._get_transformer(species)
     features, targets = clf.transform(coords, energies)
-    return features, clf.split_dims, targets, clf.multipliers
+
+    ntotal = coords.shape[0]
+    occurs = np.zeros((ntotal, len(self._ordered_species)), dtype=np.float32)
+    for specie, times in Counter(species).items():
+      loc = self._ordered_species.index(specie)
+      if loc < 0:
+        raise ValueError("The loc of %s is -1!" % specie)
+      occurs[:, loc] = float(times)
+
+    return features, clf.split_dims, targets, clf.multipliers, occurs
 
   def compute_atomic_energies(self, species, kbody_contribs):
     """
@@ -569,8 +588,8 @@ class FixedLenMultiTransformer(MultiTransformer):
     """
     formula = get_formula(species)
     clf = self._transformers.get(formula)
-    if not isinstance(clf, Transformer):
-      clf = Transformer(
+    if not isinstance(clf, _Transformer):
+      clf = _Transformer(
         species,
         self.many_body_k,
         self.kbody_terms,
@@ -605,19 +624,21 @@ class FixedLenMultiTransformer(MultiTransformer):
       for i in range(len(array_of_species)):
         species = array_of_species[i]
         n = len(species)
-        features, split_dims, targets, multipliers = self.transform(
+        features, split_dims, targets, multipliers, occurs = self.transform(
           species,
           coords[i, :n]
         )
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
+        z = _bytes_feature(occurs.tostring())
         w = _bytes_feature(multipliers.tostring())
 
         example = Example(
           features=Features(feature={
             'energy': y,
             'features': x,
-            'weights': w
+            'occurs': z,
+            'weights': w,
           }))
         writer.write(example.SerializeToString())
 
@@ -650,7 +671,9 @@ class FixedLenMultiTransformer(MultiTransformer):
         "kbody_terms": self._kbody_terms,
         "split_dims": self._split_dims,
         "total_dim": self._total_dim,
-        "inverse_indices": list([int(i) for i in indices])
+        "inverse_indices": list([int(i) for i in indices]),
+        "nat": len(self._ordered_species),
+        "ordered_species": self._ordered_species
       }, f, indent=2)
 
   def transform_and_save(self, array_of_species, energies, coords, filename,

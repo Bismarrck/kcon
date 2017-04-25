@@ -304,7 +304,7 @@ def may_build_dataset(verbose=True):
                          train_file, indices_train)
 
 
-def read_and_decode(filename_queue, cnk, ck2):
+def read_and_decode(filename_queue, cnk, ck2, nat):
   """
   Read and decode the mixed binary dataset file.
 
@@ -312,6 +312,7 @@ def read_and_decode(filename_queue, cnk, ck2):
     filename_queue: an input queue.
     cnk: a `int` as the value of C(N,k). 
     ck2: a `int` as the value of C(k,2). 
+    nat: a `int` as the number of atom types.
 
   Returns:
     features: a 3D array of shape [1, cnk, ck2] as one input feature matrix.
@@ -329,6 +330,7 @@ def read_and_decode(filename_queue, cnk, ck2):
     features={
       'features': tf.FixedLenFeature([], tf.string),
       'energy': tf.FixedLenFeature([], tf.string),
+      'occurs': tf.FixedLenFeature([], tf.string),
       'weights': tf.FixedLenFeature([], tf.string),
     })
 
@@ -340,11 +342,15 @@ def read_and_decode(filename_queue, cnk, ck2):
   energy.set_shape([1])
   energy = tf.squeeze(energy)
 
+  occurs = tf.decode_raw(example['occurs'], tf.float32)
+  occurs.set_shape([nat])
+  occurs = tf.reshape(occurs, [1, 1, nat])
+
   weights = tf.decode_raw(example['weights'], tf.float32)
   weights.set_shape([cnk, ])
   weights = tf.reshape(weights, [1, cnk, 1])
 
-  return features, energy, weights
+  return features, energy, occurs, weights
 
 
 def inputs(train, batch_size=25, shuffle=True):
@@ -361,7 +367,8 @@ def inputs(train, batch_size=25, shuffle=True):
     * features is a float tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
       the range [0.0, 1.0].
     * energies is a float tensor with shape [batch_size, ].
-    * weights is a float tensor with shape [batch_size, C(N,k)]
+    * weights is a float tensor with shape [batch_size, C(N,k)].
+    * occurs is a float tensor with shape [batch_size, num_atom_types].
 
     Note that an tf.train.QueueRunner is added to the graph, which
     must be run using e.g. tf.train.start_queue_runners().
@@ -373,6 +380,7 @@ def inputs(train, batch_size=25, shuffle=True):
 
   settings = inputs_settings(train=train)
   cnk = settings["total_dim"]
+  nat = settings["nat"]
   ck2 = comb(FLAGS.many_body_k, 2, exact=True)
 
   with tf.name_scope('input'):
@@ -382,27 +390,29 @@ def inputs(train, batch_size=25, shuffle=True):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, weights = read_and_decode(filename_queue, cnk, ck2)
+    features, energies, occurs, weights = read_and_decode(
+      filename_queue, cnk, ck2, nat
+    )
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
-      batch_features, batch_energies, batch_weights = tf.train.batch(
-        [features, energies, weights],
+      batches = tf.train.batch(
+        [features, energies, occurs, weights],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
-      batch_features, batch_energies, batch_weights = tf.train.shuffle_batch(
-        [features, energies, weights],
+      batches = tf.train.shuffle_batch(
+        [features, energies, occurs, weights],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000
       )
 
-    return batch_features, batch_energies, batch_weights
+    return batches
 
 
 def inputs_settings(train=True):
@@ -497,13 +507,17 @@ def test_build_dataset():
 
   with tf.Session() as sess:
 
-    x_op, y_pred_op, w_op = inputs(train=True, shuffle=False, batch_size=5)
+    x_op, y_pred_op, z_op, w_op = inputs(
+      train=True, shuffle=False, batch_size=5
+    )
     tf.train.start_queue_runners(sess=sess)
 
     # --------
     # Features
     # --------
-    features, energies, weights = sess.run([x_op, y_pred_op, w_op])
+    features, energies, occurs, weights = sess.run(
+      [x_op, y_pred_op, z_op, w_op]
+    )
     species = array_of_species_train[1]
     n = len(species)
     coords = coords_train[1][:n]
