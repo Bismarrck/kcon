@@ -68,7 +68,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
                                          start=True))
 
       num_iter = int(math.ceil(FLAGS.num_evals / FLAGS.batch_size))
-      maes = np.zeros((num_iter,), dtype=np.float32)
+      maes = np.zeros((num_iter, ), dtype=np.float32)
       y_true = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       step = 0
@@ -121,10 +121,13 @@ def evaluate():
     # Read dataset configurations
     settings = kbody.inputs_settings(train=False)
     split_dims = settings["split_dims"]
+    nat = settings["nat"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, batch_true, batch_weights = kbody.inputs(train=False)
+    batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
+      train=False, shuffle=True,
+    )
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -139,7 +142,9 @@ def evaluate():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_occurs,
       batch_weights,
+      nat=nat,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
