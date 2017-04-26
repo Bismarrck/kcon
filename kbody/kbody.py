@@ -35,6 +35,8 @@ tf.app.flags.DEFINE_boolean('use_linear_output', False,
                             """Set this to True to use linear outputs.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', True,
                             """Make the one-body weights fixed.""")
+tf.app.flags.DEFINE_boolean('--xavier', True,
+                            """Use the xavier method to initialize weights.""")
 
 
 # Constants describing the training process.
@@ -168,6 +170,15 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   # the number of atoms.
   conv.set_shape([None, 1, None, ck2])
 
+  if FLAGS.xavier:
+    weights_initializer = initializers.xavier_initializer(
+      seed=kbody_input.SEED, dtype=dtype
+    )
+  else:
+    weights_initializer = init_ops.truncated_normal_initializer(
+      seed=kbody_input.SEED, dtype=dtype
+    )
+
   for i, units in enumerate(sizes):
     if FLAGS.disable_biases:
       biases_initializer = None
@@ -181,8 +192,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
       stride=stride,
       padding=padding,
       scope="Hidden{:d}".format(i + 1),
-      weights_initializer=initializers.xavier_initializer(
-        seed=kbody_input.SEED, dtype=dtype),
+      weights_initializer=weights_initializer,
       biases_initializer=biases_initializer,
     )
     if verbose:
@@ -194,8 +204,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
     kernel_size,
     activation_fn=None if FLAGS.use_linear_output else tf.nn.relu,
     biases_initializer=None,
-    weights_initializer=initializers.xavier_initializer(
-      seed=kbody_input.SEED, dtype=dtype),
+    weights_initializer=weights_initializer,
     stride=stride,
     padding=padding,
     scope="k-Body"
