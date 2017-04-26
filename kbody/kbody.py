@@ -33,6 +33,8 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('use_linear_output', False,
                             """Set this to True to use linear outputs.""")
+tf.app.flags.DEFINE_boolean('fixed_one_body', True,
+                            """Make the one-body weights fixed.""")
 
 
 # Constants describing the training process.
@@ -245,7 +247,8 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
     activation_fn=None,
     weights_initializer=weights_initializer,
     biases_initializer=None,
-    scope='one-body'
+    scope='one-body',
+    trainable=FLAGS.fixed_one_body,
   )
 
 
@@ -322,14 +325,13 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
 
   for i, conv in enumerate(convs):
     with tf.variable_scope(kbody_terms[i]):
-      with tf.variable_scope("Conv"):
-        kbody = inference_sum_kbody(
-          conv,
-          kbody_terms[i],
-          ck2,
-          sizes=conv_sizes,
-          verbose=verbose
-        )
+      kbody = inference_sum_kbody(
+        conv,
+        kbody_terms[i],
+        ck2,
+        sizes=conv_sizes,
+        verbose=verbose
+      )
     kbody_energies.append(kbody)
 
   contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
@@ -339,7 +341,6 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
     print_activations(contribs)
 
   one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
-  tf.summary.histogram("one_body_contribs", contribs)
   if verbose:
     print_activations(one_body)
 
@@ -351,9 +352,11 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
       if verbose:
         print_activations(y_total_kbody)
       y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
+      tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
 
     with tf.name_scope("1body"):
       y_total_1body = tf.squeeze(one_body, name="squeeze")
+      tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
 
     y_total = tf.add(y_total_1body, y_total_kbody, "MBE")
 
