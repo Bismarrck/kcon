@@ -157,10 +157,12 @@ def evaluate():
     mae_op = tf.losses.absolute_difference(y_true, y_pred)
 
     # Restore the moving average version of the learned variables for eval.
-    variable_averages = tf.train.ExponentialMovingAverage(
-        kbody.MOVING_AVERAGE_DECAY)
-    variables_to_restore = variable_averages.variables_to_restore()
-    saver = tf.train.Saver(variables_to_restore)
+    # variable_averages = tf.train.ExponentialMovingAverage(
+    #     kbody.MOVING_AVERAGE_DECAY)
+    # variables_to_restore = variable_averages.variables_to_restore()
+    # saver = tf.train.Saver(variables_to_restore)
+    # FIXME: there is something wrong with the moving average.
+    saver = tf.train.Saver()
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
