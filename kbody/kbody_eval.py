@@ -102,11 +102,12 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       if FLAGS.run_once:
         np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
 
-      summary = tf.Summary()
-      summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
-      summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
-      summary.value.add(tag='R2 Score @ 1', simple_value=score)
-      summary_writer.add_summary(summary, global_step)
+      else:
+        summary = tf.Summary()
+        summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
+        summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
+        summary.value.add(tag='R2 Score @ 1', simple_value=score)
+        summary_writer.add_summary(summary, global_step)
 
     except Exception as e:  # pylint: disable=broad-except
       coord.request_stop(e)
