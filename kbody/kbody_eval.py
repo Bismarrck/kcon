@@ -12,7 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 import kbody
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_squared_error
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -96,6 +96,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       indices = np.random.choice(range(FLAGS.num_evals), size=10)
       for i in indices:
         print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
+      print(" * RMSE: %10.6f" % np.sqrt(mean_squared_error(y_true, y_pred)))
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
