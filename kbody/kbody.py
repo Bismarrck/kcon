@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('use_linear_output', False,
                             """Set this to True to use linear outputs.""")
-tf.app.flags.DEFINE_boolean('fixed_one_body', True,
+tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_boolean('--xavier', True,
                             """Use the xavier method to initialize weights.""")
@@ -257,7 +257,7 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
     weights_initializer=weights_initializer,
     biases_initializer=None,
     scope='one-body',
-    trainable=FLAGS.fixed_one_body,
+    trainable=(not FLAGS.fixed_one_body),
   )
 
 
