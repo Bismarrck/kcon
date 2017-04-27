@@ -34,7 +34,7 @@ flags.DEFINE_integer('num_examples', 5000,
                      """The total number of examples to use.""")
 flags.DEFINE_integer('num_atoms', 17,
                      """The number of atoms in each molecule.""")
-flags.DEFINE_integer('many_body_k', 4,
+flags.DEFINE_integer('many_body_k', 3,
                      """The many-body-expansion order.""")
 flags.DEFINE_float('test_size', 0.2,
                    """The proportion of the dataset to include in the test 
