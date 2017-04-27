@@ -35,8 +35,10 @@ tf.app.flags.DEFINE_boolean('use_linear_output', True,
                             """Set this to True to use linear outputs.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('--xavier', False,
-                            """Use the xavier method to initialize weights.""")
+tf.app.flags.DEFINE_boolean('xavier', True,
+                            """Use the xavier algorithm to initialize weights 
+                            if this is True. Otherwise the truncated normal 
+                            will be used.""")
 
 
 # Constants describing the training process.
