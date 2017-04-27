@@ -71,15 +71,26 @@ class CNNPredictor:
     # Recover the tensors from the graph.
     graph = tf.get_default_graph()
     self.y_kbody_op = graph.get_tensor_by_name("Contribs:0")
-    self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
+    self.y_1body_op = graph.get_tensor_by_name("one-body/convolution:0")
     self._use_extra = graph.get_tensor_by_name(
       "placeholders/use_extra_inputs:0")
     self._extra_weights = graph.get_tensor_by_name(
       "placeholders/extra_weights:0")
+    self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
+    self._extra_occurs = graph.get_tensor_by_name("placeholders/extra_occurs:0")
     self._split_dims = graph.get_tensor_by_name("split_dims:0")
-    self._shuffle_batch = graph.get_tensor_by_name("input/shuffle_batch:0")
-    self._defaut_batch = np.zeros(self._shuffle_batch.get_shape().as_list(),
-                                  dtype=np.float32)
+    self._shuffle_batch_input = graph.get_tensor_by_name(
+      "input/shuffle_batch:0")
+    self._shuffle_batch_occurs = graph.get_tensor_by_name(
+      "input/shuffle_batch:2")
+    self._shuffle_batch_weights = graph.get_tensor_by_name(
+      "input/shuffle_batch:3")
+    self._default_batch_input = np.zeros(
+      self._shuffle_batch.get_shape().as_list(), dtype=np.float32)
+    self._default_batch_occurs = np.ones(
+      self._shuffle_batch_occurs.get_shape().as_list(), dtype=np.float32)
+    self._default_batch_weights = np.zeros(
+      self._shuffle_batch_weights.get_shape().as_list(), dtype=np.float32)
 
   def predict(self, species, coords):
     """
@@ -111,34 +122,43 @@ class CNNPredictor:
 
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.
-    features, split_dims, _, weights = self.transformer.transform(
+    features, split_dims, _, weights, occurs = self.transformer.transform(
       species, coords
     )
 
     # Build the feed dict for running the session.
     features = features.reshape((num_mols, 1, -1, self.transformer.ck2))
     weights = weights.reshape((num_mols, 1, -1, 1))
+    occurs = occurs.reshape((num_mols, 1, 1, -1))
 
     feed_dict = {
       # Make the model use `extra_inputs` as the input features.
       self._use_extra: True,
       self._extra_inputs: features,
       self._extra_weights: weights,
+      self._extra_occurs: occurs,
       # This must be feeded but it will not be used.
-      self._shuffle_batch: self._defaut_batch,
+      self._shuffle_batch_input: self._default_batch_input,
+      self._shuffle_batch_weights: self._default_batch_weights,
+      self._shuffle_batch_occurs: self._default_batch_occurs,
       # The dimensions for splitting the input features.
       self._split_dims: split_dims
     }
 
     # Run the operations to get the predicted energies.
-    y_kbody_raw = self.sess.run(self.y_kbody_op, feed_dict=feed_dict)
+    y_kbody_raw, y_1body_raw = self.sess.run(
+      [self.y_kbody_op, self.y_1body_op], feed_dict=feed_dict
+    )
 
+    # Compute the total energies
+    y_1body = np.squeeze(y_1body_raw)
     y_kbody = np.multiply(y_kbody_raw, weights)
-    y_total = np.squeeze(np.sum(y_kbody, axis=2, keepdims=True))
+    y_total = np.squeeze(np.sum(y_kbody, axis=2, keepdims=True)) + y_1body
 
     # Transform the kbody energies to atomic energies.
     y_kbody = np.squeeze(y_kbody, axis=(1, 3))
-    y_atomic = self.transformer.compute_atomic_energies(species, y_kbody)
+    y_atomic = self.transformer.compute_atomic_energies(
+      species, y_kbody, y_1body)
 
     return (np.negative(np.atleast_1d(y_total)),
             np.negative(y_atomic),

@@ -389,6 +389,7 @@ class MultiTransformer:
     self._max_occurs = max_occurs
     self._order = order
     self._ordered_species = sorted(list(max_occurs.keys()))
+    self._nat = len(self._ordered_species)
 
   @property
   def many_body_k(self):
@@ -417,6 +418,13 @@ class MultiTransformer:
     Return the ordered species of this transformer.
     """
     return self._ordered_species
+
+  @property
+  def number_of_atom_types(self):
+    """
+    Return the number of atom types in this transformer.
+    """
+    return self._nat
 
   def accept_species(self, species):
     """
@@ -460,7 +468,7 @@ class MultiTransformer:
     Transform the atomic coordinates to input features.
 
     Args:
-      species: a `List[List[str]]` as the ordered atomic species.
+      species: a `List[str]` as the ordered atomic species for all `coords`.
       coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
         it should represents the N-by-3 coordinates of a single molecule.
       energies: a 1D array as the total energies. 
@@ -502,23 +510,24 @@ class MultiTransformer:
 
     return features, clf.split_dims, targets, clf.multipliers, occurs
 
-  def compute_atomic_energies(self, species, kbody_contribs):
+  def compute_atomic_energies(self, species, y_kbody, y_1body):
     """
     Compute the atomic energies given predicted kbody contributions.
     
     Args:
       species: a `List[str]` as the ordered atomic species for molecules.
-      kbody_contribs: a 2D array as the kbody contributions of each molecule.
+      y_kbody: a 2D array as the k-body contribs.
+      y_1body: a 2D array as the one-body contribs.
 
     Returns:
-      atomic_energies: a 2D array as the atomic energies of each molecule.
+      y_atomics: a 2D array as the atomic energies of each molecule.
 
     """
     clf = self._get_transformer(species)
     split_dims = clf.split_dims
-    num_mols = kbody_contribs.shape[0]
+    num_mols = y_kbody.shape[0]
     num_atoms = len(species)
-    atomic_energies = np.zeros((num_mols, num_atoms))
+    y_atomics = np.zeros((num_mols, num_atoms))
     for step in range(num_mols):
       for i, term in enumerate(clf.kbody_terms):
         if term not in clf.kbody_selections:
@@ -526,9 +535,9 @@ class MultiTransformer:
         istart = 0 if i == 0 else int(sum(split_dims[:i]))
         for kbody_i, indices in enumerate(clf.kbody_selections[term]):
           for atom_i in indices:
-            atomic_energies[step, atom_i] += \
-              kbody_contribs[step, istart + kbody_i]
-    return atomic_energies / float(self.ck2)
+            y_atomics[step, atom_i] += \
+              y_kbody[step, istart + kbody_i]
+    return y_atomics / float(self.ck2)
 
 
 class FixedLenMultiTransformer(MultiTransformer):
