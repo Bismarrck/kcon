@@ -9,10 +9,10 @@ import numpy as np
 import kbody_transform
 import time
 from os.path import join, dirname
+from itertools import repeat
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
-
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -79,14 +79,14 @@ class CNNPredictor:
     self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
     self._extra_occurs = graph.get_tensor_by_name("placeholders/extra_occurs:0")
     self._split_dims = graph.get_tensor_by_name("split_dims:0")
-    self._shuffle_batch_input = graph.get_tensor_by_name(
+    self._shuffle_batch_inputs = graph.get_tensor_by_name(
       "input/shuffle_batch:0")
     self._shuffle_batch_occurs = graph.get_tensor_by_name(
       "input/shuffle_batch:2")
     self._shuffle_batch_weights = graph.get_tensor_by_name(
       "input/shuffle_batch:3")
     self._default_batch_input = np.zeros(
-      self._shuffle_batch.get_shape().as_list(), dtype=np.float32)
+      self._shuffle_batch_inputs.get_shape().as_list(), dtype=np.float32)
     self._default_batch_occurs = np.ones(
       self._shuffle_batch_occurs.get_shape().as_list(), dtype=np.float32)
     self._default_batch_weights = np.zeros(
@@ -138,7 +138,7 @@ class CNNPredictor:
       self._extra_weights: weights,
       self._extra_occurs: occurs,
       # This must be feeded but it will not be used.
-      self._shuffle_batch_input: self._default_batch_input,
+      self._shuffle_batch_inputs: self._default_batch_input,
       self._shuffle_batch_weights: self._default_batch_weights,
       self._shuffle_batch_occurs: self._default_batch_occurs,
       # The dimensions for splitting the input features.
@@ -192,33 +192,60 @@ def _print_predictions(y_total, y_true, y_atomic, species):
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def test(unused):
 
-  cwd = dirname(__file__)
-  model_name = "model.ckpt-693964"
-  model_path = join(cwd, "models", "QM7.v3", model_name)
-
   # Initialize a `CNNPredictor` instance. This step is relatively slow.
   tic = time.time()
-  calculator = CNNPredictor(
-    ["C", "H", "O", "N", "S"],
-    model_path=model_path,
-    max_occurs={"S": 1},
-  )
+  model_path = join(dirname(__file__), "models", "Bx-.v4", "model.ckpt-167273")
+  calculator = CNNPredictor(["B"], model_path=model_path)
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
   print("")
 
-  print("----------")
-  print("Tests: CH4")
-  print("----------")
+  print("-----------")
+  print("Tests: B39-")
+  print("-----------")
 
-  species = ["C", "H", "H", "H", "H"]
   coords = np.array([
-    [0.15625000, 1.42857141, 0.00000000],
-    [0.51290443, 0.41976140, 0.00000000],
-    [0.51292284, 1.93296960, 0.87365150],
-    [0.51292284, 1.93296960, -0.87365150],
-    [-0.91375000, 1.42858459, 0.00000000]
-  ], dtype=np.float64).reshape((1, 5, 3))
+    [10.9558051422, 8.4324055731, 7.1650782800],
+    [12.8798039225, 9.9809890079, 10.694438864],
+    [11.2518368552, 7.8085313659, 8.6417850140],
+    [8.6204692072, 12.0177364175, 12.197340876],
+    [7.5458126821, 11.4390544234, 9.6488879901],
+    [10.8456613407, 11.6708997171, 7.1650145881],
+    [8.3944716451, 7.3401128933, 9.0854876478],
+    [10.3526362965, 8.1889678262, 12.785240061],
+    [9.9468364743, 7.2144797836, 9.6488983306],
+    [11.4976472641, 12.6466840199, 10.216873813],
+    [12.0264298588, 11.5906619661, 11.310570999],
+    [9.7741469986, 11.0341867464, 12.996161842],
+    [8.5426200819, 12.5627665713, 10.694502532],
+    [9.4952023628, 9.1164302401, 7.0045568720],
+    [8.4308030550, 12.7206121860, 9.0854619208],
+    [11.3580669554, 11.2702740413, 12.785123803],
+    [12.1290407115, 9.1942001072, 8.0232959107],
+    [13.0722871488, 9.9988610240, 9.0853531897],
+    [12.4049640874, 11.4060361814, 9.6487962737],
+    [10.9835146464, 10.0639706257, 7.0045352104],
+    [11.2379418637, 12.2391961420, 8.6417477545],
+    [10.9401722214, 9.6787761264, 12.996224479],
+    [12.3688448155, 10.1860887811, 12.197317509],
+    [9.9643630513, 12.7848866657, 9.7021304444],
+    [9.5992709686, 12.3060475196, 8.0233165342],
+    [8.1692757606, 8.5592986433, 8.0233361876],
+    [10.2960239612, 7.4499879889, 11.310600580],
+    [12.3612281120, 8.6385916241, 9.7020863701],
+    [9.4187447099, 10.8791331889, 7.0045404488],
+    [11.4749509512, 7.3798656111, 10.216879023],
+    [6.9251379988, 10.0329639677, 10.216916138],
+    [8.0960860914, 9.9562229122, 7.1650504080],
+    [7.4078254843, 10.0118212975, 8.6417688406],
+    [9.1833267140, 9.3466612012, 12.996160671],
+    [8.9084241724, 7.8557575756, 12.197337874],
+    [8.4752762218, 7.5157629578, 10.694522188],
+    [8.1869297816, 10.6003442110, 12.785156028],
+    [7.5719811474, 8.6360757658, 9.7021370730],
+    [7.5753246831, 11.0188510179, 11.310557800],
+  ]).reshape((1, 39, 3))
+  species = list(repeat("B", 39))
 
   y_total, y_atomic, _ = calculator.predict(species, coords)
   _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
