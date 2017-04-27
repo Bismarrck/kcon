@@ -31,11 +31,11 @@ tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            """Comma-separated floats as the initial one-body 
                            weights. Defaults to `ones_initialier`.""")
-tf.app.flags.DEFINE_boolean('use_linear_output', False,
+tf.app.flags.DEFINE_boolean('use_linear_output', True,
                             """Set this to True to use linear outputs.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('--xavier', True,
+tf.app.flags.DEFINE_boolean('--xavier', False,
                             """Use the xavier method to initialize weights.""")
 
 
@@ -350,6 +350,7 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
     print_activations(contribs)
 
   one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
+  tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)
 
