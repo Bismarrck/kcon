@@ -37,7 +37,7 @@ class TransformerTest(tf.test.TestCase):
     coords = get_example(21)
     species = get_species({"Ta": 1, "B": 20})
     many_body_k = 4
-    clf = kbody_transform.Transformer(species, many_body_k=many_body_k)
+    clf = kbody_transform._Transformer(species, many_body_k=many_body_k)
     self.assertEqual(clf.ck2, comb(many_body_k, 2, exact=True))
     self.assertEqual(clf.cnk, comb(len(species), many_body_k, exact=True))
     self.assertListEqual(clf.split_dims, [4845, 1140])
@@ -60,7 +60,7 @@ class TransformerTest(tf.test.TestCase):
     num_terms = len(kbody_terms)
 
     coords = get_example(5)
-    clf = kbody_transform.Transformer(
+    clf = kbody_transform._Transformer(
       get_species({"C": 1, "H": 4}),
       many_body_k=3,
       kbody_terms=kbody_terms
@@ -102,7 +102,7 @@ class TransformerTest(tf.test.TestCase):
       split_dims.append(np.prod(dims))
     split_dims = [int(x) for x in split_dims]
 
-    clf = kbody_transform.Transformer(
+    clf = kbody_transform._Transformer(
       get_species({"C": 2, "H": 4}),
       many_body_k=3,
       kbody_terms=kbody_terms,

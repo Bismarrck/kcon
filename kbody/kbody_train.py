@@ -62,10 +62,13 @@ def train_model():
     # Read dataset configurations
     settings = kbody.inputs_settings(train=True)
     split_dims = settings["split_dims"]
+    nat = settings["nat"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies.
-    batch_inputs, batch_true, batch_weights = kbody.inputs(train=True)
+    batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
+      train=True
+    )
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -80,7 +83,9 @@ def train_model():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_occurs,
       batch_weights,
+      nat=nat,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       conv_sizes=conv_sizes,

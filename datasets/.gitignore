@@ -5,5 +5,3 @@
 *.7z
 *.rar
 
-# Also ignore those preprocessing scripts.
-*.py

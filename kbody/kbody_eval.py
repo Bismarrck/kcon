@@ -12,7 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 import kbody
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_squared_error
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -68,7 +68,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
                                          start=True))
 
       num_iter = int(math.ceil(FLAGS.num_evals / FLAGS.batch_size))
-      maes = np.zeros((num_iter,), dtype=np.float32)
+      maes = np.zeros((num_iter, ), dtype=np.float32)
       y_true = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
       step = 0
@@ -96,16 +96,18 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       indices = np.random.choice(range(FLAGS.num_evals), size=10)
       for i in indices:
         print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
+      print(" * RMSE: %10.6f" % np.sqrt(mean_squared_error(y_true, y_pred)))
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
         np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
 
-      summary = tf.Summary()
-      summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
-      summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
-      summary.value.add(tag='R2 Score @ 1', simple_value=score)
-      summary_writer.add_summary(summary, global_step)
+      else:
+        summary = tf.Summary()
+        summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
+        summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
+        summary.value.add(tag='R2 Score @ 1', simple_value=score)
+        summary_writer.add_summary(summary, global_step)
 
     except Exception as e:  # pylint: disable=broad-except
       coord.request_stop(e)
@@ -121,10 +123,13 @@ def evaluate():
     # Read dataset configurations
     settings = kbody.inputs_settings(train=False)
     split_dims = settings["split_dims"]
+    nat = settings["nat"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, batch_true, batch_weights = kbody.inputs(train=False)
+    batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
+      train=False, shuffle=True,
+    )
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -139,7 +144,9 @@ def evaluate():
 
     y_pred, _ = kbody.inference(
       batch_inputs,
+      batch_occurs,
       batch_weights,
+      nat=nat,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
@@ -151,10 +158,12 @@ def evaluate():
     mae_op = tf.losses.absolute_difference(y_true, y_pred)
 
     # Restore the moving average version of the learned variables for eval.
-    variable_averages = tf.train.ExponentialMovingAverage(
-        kbody.MOVING_AVERAGE_DECAY)
-    variables_to_restore = variable_averages.variables_to_restore()
-    saver = tf.train.Saver(variables_to_restore)
+    # variable_averages = tf.train.ExponentialMovingAverage(
+    #     kbody.MOVING_AVERAGE_DECAY)
+    # variables_to_restore = variable_averages.variables_to_restore()
+    # saver = tf.train.Saver(variables_to_restore)
+    # FIXME: there is something wrong with the moving average.
+    saver = tf.train.Saver()
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()

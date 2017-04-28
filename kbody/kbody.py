@@ -28,6 +28,18 @@ tf.app.flags.DEFINE_float('learning_rate', 0.1,
 tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
+tf.app.flags.DEFINE_string('initial_one_body_weights', None,
+                           """Comma-separated floats as the initial one-body 
+                           weights. Defaults to `ones_initialier`.""")
+tf.app.flags.DEFINE_boolean('use_linear_output', True,
+                            """Set this to True to use linear outputs.""")
+tf.app.flags.DEFINE_boolean('fixed_one_body', False,
+                            """Make the one-body weights fixed.""")
+tf.app.flags.DEFINE_boolean('xavier', True,
+                            """Use the xavier algorithm to initialize weights 
+                            if this is True. Otherwise the truncated normal 
+                            will be used.""")
+
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
@@ -160,6 +172,15 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   # the number of atoms.
   conv.set_shape([None, 1, None, ck2])
 
+  if FLAGS.xavier:
+    weights_initializer = initializers.xavier_initializer(
+      seed=kbody_input.SEED, dtype=dtype
+    )
+  else:
+    weights_initializer = init_ops.truncated_normal_initializer(
+      seed=kbody_input.SEED, dtype=dtype
+    )
+
   for i, units in enumerate(sizes):
     if FLAGS.disable_biases:
       biases_initializer = None
@@ -173,22 +194,19 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
       stride=stride,
       padding=padding,
       scope="Hidden{:d}".format(i + 1),
-      weights_initializer=initializers.xavier_initializer(
-        seed=kbody_input.SEED, dtype=dtype),
+      weights_initializer=weights_initializer,
       biases_initializer=biases_initializer,
     )
     if verbose:
       print_activations(conv)
 
-  # minval, maxval = init_one_body * 0.9, init_one_body * 1.1
   kbody_energies = conv2d(
     conv,
     1,
     kernel_size,
-    activation_fn=tf.nn.relu,
+    activation_fn=None if FLAGS.use_linear_output else tf.nn.relu,
     biases_initializer=None,
-    weights_initializer=initializers.xavier_initializer(
-      seed=kbody_input.SEED, dtype=dtype),
+    weights_initializer=weights_initializer,
     stride=stride,
     padding=padding,
     scope="k-Body"
@@ -202,20 +220,69 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   return kbody_energies
 
 
-def inference(batch_inputs, batch_weights, split_dims, kbody_terms,
-              verbose=True, conv_sizes=(60, 120, 120, 60)):
+def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
+  """
+  Inference the one-body part.
+  
+  Args:
+    batch_occurs: a 4D Tensor of shape `[-1, 1, 1, Nat]` as the occurances of 
+      the atom types.
+    nat: a `int` as the number of atom types.
+    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
+      weights of the one-body kernel.
+
+  Returns:
+    one_body: a 4D Tensor of shape `[-1, 1, 1, 1]` as the one-body contribs.
+
+  """
+  num_outputs = 1
+  kernel_size = 1
+
+  if initial_one_body_weights is None:
+    weights = FLAGS.initial_one_body_weights
+    if weights is None:
+      values = np.ones(nat, dtype=np.float32)
+    else:
+      values = [float(x) for x in weights.split(",")]
+  else:
+    values = initial_one_body_weights
+  if len(values) != nat:
+    raise Exception("The number of initial weights should be %d!" % nat)
+
+  weights_initializer = init_ops.constant_initializer(values)
+
+  return conv2d(
+    batch_occurs,
+    num_outputs=num_outputs,
+    kernel_size=kernel_size,
+    activation_fn=None,
+    weights_initializer=weights_initializer,
+    biases_initializer=None,
+    scope='one-body',
+    trainable=(not FLAGS.fixed_one_body),
+  )
+
+
+def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
+              kbody_terms, verbose=True, conv_sizes=(60, 120, 120, 60),
+              initial_one_body_weights=None):
   """
   The general inference function.
 
   Args:
     batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
+    batch_occurs: a Tensor of shape `[-1, Nat]` as the occurances of the atom 
+      types. `Nat` is the number of atom types.
     batch_weights: a Tensor of shape `[-1, -1]` as the weights of the k-body 
       contribs.
     split_dims: a `List[int]` or a 1-D Tensor containing the sizes of each 
       output tensor along split_dim.
+    nat: a `int` as the number of atom types.
     kbody_terms: a `List[str]` as the names of the k-body terms.
     verbose: boolean indicating whether the layers shall be printed or not.
     conv_sizes: a `Tuple[int]` as the sizes of the convolution layers.
+    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
+      weights of the one-body kernel.
 
   Returns:
     total_energies: a Tensor representing the predicted total energies.
@@ -247,13 +314,18 @@ def inference(batch_inputs, batch_weights, split_dims, kbody_terms,
       shape=[None, 1, None, 1],
       name="extra_weights"
     )
+    extra_occurs = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, nat]),
+      shape=[None, 1, 1, nat],
+      name="extra_occurs"
+    )
 
   # Choose the inputs tensor based on `use_placeholder`.
   with tf.name_scope("InputsFlow"):
-    selected_inputs, selected_weights = tf.cond(
+    selected_inputs, selected_occurs, selected_weights = tf.cond(
       use_extra,
-      lambda: (extra_inputs, extra_weights),
-      lambda: (batch_inputs, batch_weights),
+      lambda: (extra_inputs, extra_occurs, extra_weights),
+      lambda: (batch_inputs, batch_occurs, batch_weights),
       name="selected"
     )
 
@@ -264,34 +336,46 @@ def inference(batch_inputs, batch_weights, split_dims, kbody_terms,
 
   for i, conv in enumerate(convs):
     with tf.variable_scope(kbody_terms[i]):
-      with tf.variable_scope("Conv"):
-        kbody = inference_sum_kbody(
-          conv,
-          kbody_terms[i],
-          ck2,
-          sizes=conv_sizes,
-          verbose=verbose
-        )
+      kbody = inference_sum_kbody(
+        conv,
+        kbody_terms[i],
+        ck2,
+        sizes=conv_sizes,
+        verbose=verbose
+      )
     kbody_energies.append(kbody)
 
   contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
   contribs = tf.multiply(contribs, selected_weights, name="Weighted")
-
   tf.summary.histogram("kbody_contribs", contribs)
   if verbose:
     print_activations(contribs)
 
-  with tf.name_scope("Outputs"):
-    total_energies = tf.reduce_sum(contribs, axis=axis, name="Total")
-    total_energies.set_shape([None, 1, 1])
-    if verbose:
-      print_activations(total_energies)
+  one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
+  tf.summary.histogram("1body_contribs", one_body)
+  if verbose:
+    print_activations(one_body)
 
-    total_energies = tf.squeeze(flatten(total_energies), name="squeeze")
+  with tf.name_scope("Outputs"):
+
+    with tf.name_scope("kbody"):
+      y_total_kbody = tf.reduce_sum(contribs, axis=axis, name="Total")
+      y_total_kbody.set_shape([None, 1, 1])
+      if verbose:
+        print_activations(y_total_kbody)
+      y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
+      tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
+
+    with tf.name_scope("1body"):
+      y_total_1body = tf.squeeze(one_body, name="squeeze")
+      tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
+
+    y_total = tf.add(y_total_1body, y_total_kbody, "MBE")
+
     if verbose:
       get_number_of_trainable_parameters(verbose=verbose)
 
-  return total_energies, contribs
+  return y_total, contribs
 
 
 def get_total_loss(y_true, y_pred):
