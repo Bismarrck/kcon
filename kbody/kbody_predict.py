@@ -6,18 +6,14 @@ from __future__ import print_function, absolute_import
 
 import tensorflow as tf
 import numpy as np
-import kbody_transform
 import time
+from kbody_transform import MultiTransformer
+from kbody_input import hartree_to_ev
 from os.path import join, dirname
 from itertools import repeat
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
-
-FLAGS = tf.app.flags.FLAGS
-
-tf.app.flags.DEFINE_integer("num_tests", 1000,
-                            """The number of tests to run.""")
 
 
 class CNNPredictor:
@@ -39,7 +35,7 @@ class CNNPredictor:
       kwargs: additional key-value arguments for importing the meta model.
 
     """
-    self.transformer = kbody_transform.MultiTransformer(
+    self.transformer = MultiTransformer(
       atom_types,
       many_body_k=many_body_k,
       max_occurs=max_occurs,
@@ -194,7 +190,7 @@ def test(unused):
 
   # Initialize a `CNNPredictor` instance. This step is relatively slow.
   tic = time.time()
-  model_path = join(dirname(__file__), "models", "Bx-.v4", "model.ckpt-167273")
+  model_path = join(dirname(__file__), "models", "Bx-.v4", "model.ckpt-162026")
   calculator = CNNPredictor(["B"], model_path=model_path)
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
@@ -246,9 +242,10 @@ def test(unused):
     [7.5753246831, 11.0188510179, 11.310557800],
   ]).reshape((1, 39, 3))
   species = list(repeat("B", 39))
+  y_true = -109.6028783440 * hartree_to_ev
 
   y_total, y_atomic, _ = calculator.predict(species, coords)
-  _print_predictions(y_total, np.zeros_like(y_total), y_atomic, species)
+  _print_predictions(y_total, [y_true], y_atomic, species)
 
 
 if __name__ == "__main__":

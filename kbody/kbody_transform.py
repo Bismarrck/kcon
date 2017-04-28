@@ -498,6 +498,7 @@ class MultiTransformer:
       raise ValueError("The shapes of coords and species are not matched!")
 
     clf = self._get_transformer(species)
+    split_dims = np.asarray(clf.split_dims)
     features, targets = clf.transform(coords, energies)
 
     ntotal = coords.shape[0]
@@ -508,7 +509,8 @@ class MultiTransformer:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[:, loc] = float(times)
 
-    return features, clf.split_dims, targets, clf.multipliers, occurs
+    weights = np.tile(clf.multipliers, (ntotal, 1))
+    return features, split_dims, targets, weights, occurs
 
   def compute_atomic_energies(self, species, y_kbody, y_1body):
     """
