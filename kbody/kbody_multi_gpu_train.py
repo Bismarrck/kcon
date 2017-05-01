@@ -38,6 +38,8 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
+tf.app.flags.DEFINE_integer('max_to_keep', None,
+                            """The maximum number of checkpoints to keep.""")
 
 
 def _save_training_flags():
@@ -238,7 +240,7 @@ def train_with_multiple_gpus():
     _save_training_flags()
 
     # Create a saver.
-    saver = tf.train.Saver(tf.global_variables())
+    saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
 
     # Build the summary operation from the last tower summaries.
     summary_op = tf.summary.merge(summaries)
