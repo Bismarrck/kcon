@@ -67,6 +67,8 @@ def train_model():
   )
 
   with tf.Graph().as_default():
+
+    # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Read dataset configurations

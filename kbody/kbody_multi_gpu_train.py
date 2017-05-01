@@ -5,11 +5,13 @@ This script is used to train the sum-kbody-cnn network using multiple GPUs.
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
+import numpy as np
+import json
 import kbody
 import re
 import time
-import numpy as np
 from datetime import datetime
+from os.path import join
 from utils import get_xargs, set_logging_configs
 
 __author__ = 'Xin Chen'
@@ -32,6 +34,10 @@ tf.app.flags.DEFINE_boolean('log_device_placement', True,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
                             """How many GPUs to use.""")
+tf.app.flags.DEFINE_string('logfile', "train.log",
+                           """The training logfile.""")
+tf.app.flags.DEFINE_boolean('debug', False,
+                            """Set the logging level to `logging.DEBUG`.""")
 
 
 def _save_training_flags():
@@ -72,9 +78,8 @@ def tower_loss(scope):
 
   # Build a Graph that computes the logits predictions from the
   # inference model.
-  batch_split_dims = tf.placeholder(
-    tf.int64, [len(split_dims), ], name="split_dims"
-  )
+  batch_split_dims = tf.constant(np.array(split_dims, dtype=np.int64),
+                                 dtype=tf.int64, name="split_dims")
 
   # Parse the convolution layer sizes
   conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
@@ -171,14 +176,9 @@ def train_with_multiple_gpus():
 
   with tf.Graph().as_default(), tf.device('/cpu:0'):
 
-    # Create a variable to count the number of train() calls. This equals the
-    # number of batches processed * FLAGS.num_gpus.
-    global_step = tf.get_variable(
-      'global_step',
-      [],
-      initializer=tf.constant_initializer(),
-      trainable=False
-    )
+    # Get or create the global step variable to count the number of train()
+    # calls. This equals the number of batches processed * FLAGS.num_gpus.
+    global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Create an optimizer that performs gradient descent.
     opt = tf.train.AdadeltaOptimizer(FLAGS.learning_rate)
@@ -228,7 +228,7 @@ def train_with_multiple_gpus():
 
     # Track the moving averages of all trainable variables.
     variable_averages = tf.train.ExponentialMovingAverage(
-        cifar10.MOVING_AVERAGE_DECAY, global_step)
+      kbody.MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.
@@ -237,93 +237,55 @@ def train_with_multiple_gpus():
     # Save the training flags
     _save_training_flags()
 
-    # noinspection PyMissingOrEmptyDocstring
-    class _LoggerHook(tf.train.SessionRunHook):
-      """ Logs loss and runtime."""
+    # Create a saver.
+    saver = tf.train.Saver(tf.global_variables())
 
-      def __init__(self):
-        super(_LoggerHook, self).__init__()
-        self._step = -1
-        self._start_time = 0
-        self._epoch = 0.0
-        self._log_frequency = FLAGS.log_frequency
+    # Build the summary operation from the last tower summaries.
+    summary_op = tf.summary.merge(summaries)
 
-      def begin(self):
-        self._step = -1
+    # Build an initialization operation to run below.
+    init = tf.global_variables_initializer()
 
-      def before_run(self, run_context):
-        self._step += 1
-        self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
-        self._start_time = time.time()
-        return tf.train.SessionRunArgs({"loss": loss})
+    # Start running operations on the Graph. allow_soft_placement must be set to
+    # True to build towers on GPU, as some of the ops do not have GPU
+    # implementations.
+    sess = tf.Session(config=tf.ConfigProto(
+      allow_soft_placement=True,
+      log_device_placement=FLAGS.log_device_placement))
+    sess.run(init)
 
-      def should_log(self):
-        return self._step % self._log_frequency == 0
+    # Start the queue runners.
+    tf.train.start_queue_runners(sess=sess)
 
-      def after_run(self, run_context, run_values):
-        duration = time.time() - self._start_time
-        loss_value = run_values.results["loss"]
-        num_examples_per_step = FLAGS.batch_size
-        if self.should_log():
-          examples_per_sec = num_examples_per_step / duration
-          sec_per_batch = float(duration)
-          format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
-                       "(%6.1f examples/sec; %7.3f sec/batch)"
-          tf.logging.info(
-            format_str % (datetime.now(), self._step, self._epoch, loss_value,
-                          examples_per_sec, sec_per_batch)
-          )
+    # Create the summary writer
+    summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-    run_meta = tf.RunMetadata()
-    run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+    for step in range(FLAGS.max_steps):
+      start_time = time.time()
+      _, loss_value = sess.run([train_op, loss])
+      duration = time.time() - start_time
 
-    # noinspection PyMissingOrEmptyDocstring
-    class _TimelineHook(tf.train.SessionRunHook):
-      """ A hook to output tracing results for further performance analysis. """
+      assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
-      def __init__(self):
-        super(_TimelineHook, self).__init__()
-        self._counter = -1
+      if step % FLAGS.log_frequency == 0:
+        num_examples_per_step = FLAGS.batch_size * FLAGS.num_gpus
+        examples_per_sec = num_examples_per_step / duration
+        sec_per_batch = duration / FLAGS.num_gpus
+        epoch = step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
+        format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
+                     "(%6.1f examples/sec; %7.3f sec/batch)"
+        tf.logging.info(format_str % (datetime.now(), step, epoch, loss_value,
+                                      examples_per_sec, sec_per_batch))
 
-      def begin(self):
-        self._counter = -1
+      if step % FLAGS.save_frequency == 0:
+        summary_str = sess.run(summary_op)
+        summary_writer.add_summary(summary_str, step)
 
-      def get_ctf(self):
-        return join(FLAGS.train_dir, "prof_%d.json" % self._counter)
-
-      def should_save(self):
-        return FLAGS.timeline and self._counter % FLAGS.save_frequency == 0
-
-      def after_run(self, run_context, run_values):
-        self._counter += 1
-        if self.should_save():
-          timeline = Timeline(step_stats=run_meta.step_stats)
-          ctf = timeline.generate_chrome_trace_format(show_memory=True)
-          with open(self.get_ctf(), "w+") as f:
-            f.write(ctf)
-
-    with tf.train.MonitoredTrainingSession(
-        checkpoint_dir=FLAGS.train_dir,
-        save_summaries_steps=FLAGS.save_frequency,
-        hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
-               tf.train.NanTensorHook(loss),
-               _LoggerHook(),
-               _TimelineHook()],
-        config=tf.ConfigProto(
-          log_device_placement=FLAGS.log_device_placement)) as mon_sess:
-
-      feed_dict = {batch_split_dims: split_dims}
-
-      while not mon_sess.should_stop():
-        if FLAGS.timeline:
-          mon_sess.run(
-            train_op,
-            feed_dict=feed_dict,
-            options=run_options,
-            run_metadata=run_meta
-          )
-        else:
-          mon_sess.run(train_op, feed_dict=feed_dict)
+      # Save the model checkpoint periodically.
+      if step % (20 * FLAGS.save_frequency) == 0 or \
+              (step + 1) == FLAGS.max_steps:
+        checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
+        saver.save(sess, checkpoint_path, global_step=step)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
