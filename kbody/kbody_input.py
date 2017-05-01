@@ -299,9 +299,9 @@ def may_build_dataset(verbose=True):
   # much easier if the all input samples are fixed-length.
   clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
   clf.transform_and_save(species_test, energies_test, coords_test,
-                         test_file, indices_test)
+                         test_file, indices_test, one_body_weights=False)
   clf.transform_and_save(species_train, energies_train, coords_train,
-                         train_file, indices_train)
+                         train_file, indices_train, one_body_weights=True)
 
 
 def read_and_decode(filename_queue, cnk, ck2, nat):

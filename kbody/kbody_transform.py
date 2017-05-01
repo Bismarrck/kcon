@@ -611,7 +611,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     return clf
 
   def _transform_and_save(self, array_of_species, energies, coords, filename,
-                          verbose=True):
+                          verbose=True, one_body_weights=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -631,6 +631,10 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Start mixed transforming %s ... " % filename)
 
       num_examples = len(array_of_species)
+
+      if one_body_weights:
+        combs = {}
+        coef = np.zeros((num_examples, self.number_of_atom_types + 1))
 
       for i in range(len(array_of_species)):
         species = array_of_species[i]
@@ -656,16 +660,31 @@ class FixedLenMultiTransformer(MultiTransformer):
         if verbose and i % 100 == 0:
           sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
 
+        if one_body_weights:
+          for specie, times in Counter(species).items():
+            coef[i, self._ordered_species.index(specie)] = float(times)
+          if n not in combs:
+            combs[n] = comb(n, self.many_body_k)
+          coef[i, -1] = combs[n]
+
       if verbose:
         print("")
         print("Transforming %s finished!" % filename)
 
-  def _save_auxiliary_for_file(self, filename, indices=None):
+      if one_body_weights:
+        return np.dot(np.linalg.pinv(coef), energies)
+      else:
+        return None
+
+  def _save_auxiliary_for_file(self, filename, initial_weights=None,
+                               indices=None):
     """
     Save auxiliary data for the given dataset.
 
     Args:
       filename: a `str` as the tfrecords file.
+      initial_weights: a 1D array of shape `[Nat, ]` as the initial weights for
+        the one-body convolution kernel.
       indices: a `List[int]` as the indices of each given example.
 
     """
@@ -676,6 +695,10 @@ class FixedLenMultiTransformer(MultiTransformer):
       indices = list(indices)
     else:
       indices = []
+    if initial_weights is not None:
+      initial_weights = list(initial_weights)
+    else:
+      initial_weights = []
 
     with open(cfgfile, "w+") as f:
       json.dump({
@@ -684,11 +707,12 @@ class FixedLenMultiTransformer(MultiTransformer):
         "total_dim": self._total_dim,
         "inverse_indices": list([int(i) for i in indices]),
         "nat": len(self._ordered_species),
-        "ordered_species": self._ordered_species
+        "ordered_species": self._ordered_species,
+        "initial_one_body_weights": initial_weights
       }, f, indent=2)
 
   def transform_and_save(self, array_of_species, energies, coords, filename,
-                         indices=None, verbose=True):
+                         indices=None, verbose=True, one_body_weights=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -701,14 +725,19 @@ class FixedLenMultiTransformer(MultiTransformer):
       indices: a `List[int]` as the indices of each given example. This is an
         optional argument.
       verbose: a `bool` indicating whether logging the transformation progress.
+      one_body_weights: a `bool` indicating whether we should compute and save 
+        the one-body weights or not.
 
     """
     try:
-      self._transform_and_save(
-        array_of_species, energies, coords, filename, verbose=verbose)
+      initial_one_body_weights = self._transform_and_save(
+        array_of_species, energies, coords, filename, verbose=verbose,
+        one_body_weights=one_body_weights
+      )
     except Exception as excp:
       if isfile(filename):
         remove(filename)
       raise excp
     else:
-      self._save_auxiliary_for_file(filename, indices=indices)
+      self._save_auxiliary_for_file(
+        filename, initial_one_body_weights, indices=indices)
