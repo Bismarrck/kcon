@@ -4,17 +4,15 @@ This script is used to train the kbody network.
 """
 from __future__ import print_function, absolute_import
 
+import numpy as np
 import tensorflow as tf
+import json
 import time
 import kbody
-import json
-import numpy as np
-import logging
-from logging.config import dictConfig
-from utils import get_xargs
 from datetime import datetime
-from tensorflow.python.client.timeline import Timeline
 from os.path import join
+from tensorflow.python.client.timeline import Timeline
+from utils import get_xargs, set_logging_configs
 
 __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
@@ -37,56 +35,10 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
-tf.app.flags.DEFINE_string('logfile', join(FLAGS.train_dir, "train.log"),
+tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
-
-
-def set_logging_configs():
-  """
-  Set 
-  """
-  if FLAGS.debug:
-    level = logging.DEBUG
-    handlers = ['console', 'file']
-  else:
-    level = logging.INFO
-    handlers = ['file']
-
-  LOGGING_CONFIG = {
-    "version": 1,
-    "formatters": {
-      # For files
-      'detailed': {
-        'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
-      },
-      # For the console
-      'console': {
-        'format': '[%(levelname)s] %(message)s'
-      }
-    },
-    "handlers": {
-      'console': {
-        'class': 'logging.StreamHandler',
-        'level': logging.DEBUG,
-        'formatter': 'console',
-      },
-      'file': {
-        'class': 'logging.FileHandler',
-        'level': logging.INFO,
-        'formatter': 'detailed',
-        'filename': FLAGS.logfile,
-        'mode': 'a',
-      }
-    },
-    "root": {
-      'handlers': handlers,
-      'level': level,
-    },
-    "disable_existing_loggers": False
-  }
-  dictConfig(LOGGING_CONFIG)
 
 
 def _save_training_flags():
@@ -109,7 +61,10 @@ def train_model():
   Train the neural network model.
   """
 
-  set_logging_configs()
+  set_logging_configs(
+    debug=FLAGS.debug,
+    logfile=join(FLAGS.train_dir, FLAGS.logfile)
+  )
 
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
