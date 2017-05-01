@@ -44,6 +44,11 @@ tf.app.flags.DEFINE_boolean('xavier', True,
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
 
+# If a model is trained with multiple GPUs, prefix all Op names with tower_name
+# to differentiate the operations. Note that this prefix is removed from the
+# names of the summaries when visualizing a model.
+TOWER_NAME = 'tower'
+
 
 def variable_summaries(tensor):
   """
@@ -378,7 +383,7 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
   return y_total, contribs
 
 
-def get_total_loss(y_true, y_pred):
+def loss(y_true, y_pred):
   """
   Return the total loss tensor.
 
@@ -391,11 +396,41 @@ def get_total_loss(y_true, y_pred):
 
   """
   with tf.name_scope("RMSE"):
-    loss = tf.losses.mean_squared_error(y_true, y_pred, scope="sMSE")
-    loss = tf.sqrt(loss, name="sRMSE")
-    tf.summary.scalar('sRMSE', loss)
+    mean_squared_error = tf.losses.mean_squared_error(
+      y_true, y_pred, scope="sMSE", loss_collection=None)
+    rmse = tf.sqrt(mean_squared_error, name="sRMSE")
+    tf.add_to_collection('losses', rmse)
+    return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
-  return loss
+
+def _add_loss_summaries(total_loss):
+  """Add summaries for losses in sum-kbody-cnn model.
+
+  Generates moving average for all losses and associated summaries for
+  visualizing the performance of the network.
+
+  Args:
+    total_loss: Total loss from loss().
+  
+  Returns:
+    loss_averages_op: op for generating moving averages of losses.
+  
+  """
+
+  # Compute the moving average of all individual losses and the total loss.
+  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  losses = tf.get_collection('losses')
+  loss_averages_op = loss_averages.apply(losses + [total_loss])
+
+  # Attach a scalar summary to all individual losses and the total loss; do the
+  # same for the averaged version of the losses.
+  for l in losses + [total_loss]:
+    # Name each loss as '(raw)' and name the moving average version of the loss
+    # as the original loss name.
+    tf.summary.scalar(l.op.name + '_raw', l)
+    tf.summary.scalar(l.op.name, loss_averages.average(l))
+
+  return loss_averages_op
 
 
 def get_train_op(total_loss, global_step):
@@ -414,20 +449,23 @@ def get_train_op(total_loss, global_step):
     train_op: op for training.
 
   """
+
+  # Generate moving averages of all losses and associated summaries.
+  loss_averages_op = _add_loss_summaries(total_loss)
+
   # Compute gradients.
-  opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-  grads = opt.compute_gradients(total_loss)
+  with tf.control_dependencies([loss_averages_op]):
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+    grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
-  grad_norms = []
-  with tf.name_scope("2norms"):
+  with tf.name_scope("gnorms") as scope:
     for grad, var in grads:
-      norm = tf.norm(grad, name=var.op.name + "/2norm")
-      grad_norms.append(norm)
-      tf.summary.histogram(var.op.name + "/gradients", grad)
+      norm = tf.norm(grad, name=var.op.name + "/gnorm")
+      tf.add_to_collection('gnorms', norm)
       tf.summary.scalar(var.op.name + "/grad_norm", norm)
-  total_norm = tf.add_n(grad_norms, "total_norms")
-  tf.summary.scalar("total_grad_norm", total_norm)
+    total_norm = tf.add_n(tf.get_collection('gnorms', scope), "total_norms")
+    tf.summary.scalar("total_grad_norm", total_norm)
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)

@@ -92,6 +92,7 @@ def train_model():
     if len(conv_sizes) < 2:
       raise ValueError("At least three convolution layers are required!")
 
+    # Inference
     y_pred, _ = kbody.inference(
       batch_inputs,
       batch_occurs,
@@ -103,10 +104,14 @@ def train_model():
       initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
       verbose=True,
     )
+
+    # Cast the true values to float32 and set the shape of the `y_pred`
+    # explicitly.
     y_true = tf.cast(batch_true, tf.float32)
+    y_pred.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kbody.get_total_loss(y_true, y_pred)
+    loss = kbody.loss(y_true, y_pred)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
