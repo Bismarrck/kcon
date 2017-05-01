@@ -8,6 +8,9 @@ import tensorflow as tf
 import time
 import kbody
 import json
+import numpy as np
+import logging
+from logging.config import dictConfig
 from utils import get_xargs
 from datetime import datetime
 from tensorflow.python.client.timeline import Timeline
@@ -34,6 +37,56 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
                             """Enable timeline profiling if True.""")
+tf.app.flags.DEFINE_string('logfile', join(FLAGS.train_dir, "train.log"),
+                           """The training logfile.""")
+tf.app.flags.DEFINE_boolean('debug', False,
+                            """Set the logging level to `logging.DEBUG`.""")
+
+
+def set_logging_configs():
+  """
+  Set 
+  """
+  if FLAGS.debug:
+    level = logging.DEBUG
+    handlers = ['console', 'file']
+  else:
+    level = logging.INFO
+    handlers = ['file']
+
+  LOGGING_CONFIG = {
+    "version": 1,
+    "formatters": {
+      # For files
+      'detailed': {
+        'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
+      },
+      # For the console
+      'console': {
+        'format': '[%(levelname)s] %(message)s'
+      }
+    },
+    "handlers": {
+      'console': {
+        'class': 'logging.StreamHandler',
+        'level': logging.DEBUG,
+        'formatter': 'console',
+      },
+      'file': {
+        'class': 'logging.FileHandler',
+        'level': logging.INFO,
+        'formatter': 'detailed',
+        'filename': FLAGS.logfile,
+        'mode': 'a',
+      }
+    },
+    "root": {
+      'handlers': handlers,
+      'level': level,
+    },
+    "disable_existing_loggers": False
+  }
+  dictConfig(LOGGING_CONFIG)
 
 
 def _save_training_flags():
@@ -56,6 +109,8 @@ def train_model():
   Train the neural network model.
   """
 
+  set_logging_configs()
+
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
@@ -64,6 +119,7 @@ def train_model():
     split_dims = settings["split_dims"]
     nat = settings["nat"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+    initial_one_body_weights = settings["initial_one_body_weights"]
 
     # Get features and energies.
     batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
@@ -89,6 +145,7 @@ def train_model():
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       conv_sizes=conv_sizes,
+      initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
       verbose=True,
     )
     y_true = tf.cast(batch_true, tf.float32)
@@ -135,8 +192,10 @@ def train_model():
           sec_per_batch = float(duration)
           format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
                        "(%6.1f examples/sec; %7.3f sec/batch)"
-          print(format_str % (datetime.now(), self._step, self._epoch,
-                              loss_value, examples_per_sec, sec_per_batch))
+          tf.logging.info(
+            format_str % (datetime.now(), self._step, self._epoch, loss_value,
+                          examples_per_sec, sec_per_batch)
+          )
 
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)

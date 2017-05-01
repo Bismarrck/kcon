@@ -86,7 +86,10 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
 
       # Compute the Mean-Absolute-Error @ 1.
       precision = maes.mean()
-      print('%s: precision = %10.6f' % (datetime.now(), precision))
+      rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+      dtime = datetime.now()
+      print('%s: precision = %10.6f' % (dtime, precision))
+      print("%s: RMSE      = %10.6f" % (dtime, rmse))
 
       # Compute the linear coefficient
       score = r2_score(y_true, y_pred)
@@ -96,7 +99,6 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       indices = np.random.choice(range(FLAGS.num_evals), size=10)
       for i in indices:
         print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
-      print(" * RMSE: %10.6f" % np.sqrt(mean_squared_error(y_true, y_pred)))
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
