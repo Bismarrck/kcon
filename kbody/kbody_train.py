@@ -8,6 +8,7 @@ import tensorflow as tf
 import time
 import kbody
 import json
+import numpy as np
 from utils import get_xargs
 from datetime import datetime
 from tensorflow.python.client.timeline import Timeline
@@ -64,6 +65,7 @@ def train_model():
     split_dims = settings["split_dims"]
     nat = settings["nat"]
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
+    initial_one_body_weights = settings["initial_one_body_weights"]
 
     # Get features and energies.
     batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
@@ -89,6 +91,7 @@ def train_model():
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       conv_sizes=conv_sizes,
+      initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
       verbose=True,
     )
     y_true = tf.cast(batch_true, tf.float32)

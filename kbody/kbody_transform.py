@@ -672,7 +672,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Transforming %s finished!" % filename)
 
       if one_body_weights:
-        return np.dot(np.linalg.pinv(coef), energies)
+        return np.negative(np.dot(np.linalg.pinv(coef), energies))
       else:
         return None
 
