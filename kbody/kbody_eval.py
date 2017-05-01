@@ -12,7 +12,9 @@ import time
 import numpy as np
 import tensorflow as tf
 import kbody
+from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error
+from os.path import join
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -28,6 +30,8 @@ tf.app.flags.DEFINE_integer('num_evals', 500,
                             """Number of examples to run.""")
 tf.app.flags.DEFINE_boolean('run_once', False,
                             """Whether to run eval only once.""")
+tf.app.flags.DEFINE_string('logfile', 'eval.log',
+                           """The file to write evaluation logs.""")
 
 
 def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
@@ -88,17 +92,18 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       precision = maes.mean()
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
       dtime = datetime.now()
-      print('%s: precision = %10.6f' % (dtime, precision))
-      print("%s: RMSE      = %10.6f" % (dtime, rmse))
+      tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
+      tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
 
       # Compute the linear coefficient
       score = r2_score(y_true, y_pred)
-      print(" * R2 score: ", score)
+      tf.logging.info(" * R2 score: %.6f" % score)
 
       # Randomly output 10 predictions and true values
       indices = np.random.choice(range(FLAGS.num_evals), size=10)
       for i in indices:
-        print(" * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
+        tf.logging.info(
+          " * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
@@ -120,6 +125,12 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
 
 def evaluate():
   """Eval CIFAR-10 for a number of steps."""
+
+  set_logging_configs(
+    debug=False,
+    logfile=join(FLAGS.eval_dir, FLAGS.logfile)
+  )
+
   with tf.Graph().as_default() as g:
 
     # Read dataset configurations
@@ -185,6 +196,8 @@ def evaluate():
 # pylint: disable=unused-argument
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(argv=None):
+  if not tf.gfile.Exists(FLAGS.eval_dir):
+    tf.gfile.MakeDirs(FLAGS.eval_dir)
   evaluate()
 
 
