@@ -39,6 +39,8 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
+tf.app.flags.DEFINE_integer('max_to_keep', None,
+                            """The maximum number of checkpoints to keep.""")
 
 
 def _save_training_flags():
@@ -161,6 +163,8 @@ def train_model():
 
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+    scaffold = tf.train.Scaffold(
+      saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
 
     # noinspection PyMissingOrEmptyDocstring
     class _TimelineHook(tf.train.SessionRunHook):
@@ -194,6 +198,7 @@ def train_model():
                tf.train.NanTensorHook(loss),
                _LoggerHook(),
                _TimelineHook()],
+        scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
