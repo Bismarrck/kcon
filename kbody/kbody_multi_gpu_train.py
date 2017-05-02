@@ -40,6 +40,8 @@ tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
 tf.app.flags.DEFINE_integer('max_to_keep', None,
                             """The maximum number of checkpoints to keep.""")
+tf.app.flags.DEFINE_boolean('restore', True,
+                            """Restore the previous checkpoint if possible.""")
 
 
 def _save_training_flags():
@@ -262,7 +264,15 @@ def train_with_multiple_gpus():
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-    for step in range(FLAGS.max_steps):
+    # Restore the previous checkpoint
+    init_step = 0
+    if FLAGS.restore:
+      ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+      if ckpt and ckpt.model_checkpoint_path:
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        init_step = sess.run(global_step)
+
+    for step in range(init_step, FLAGS.max_steps, 1):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss])
       duration = time.time() - start_time
@@ -273,7 +283,7 @@ def train_with_multiple_gpus():
         num_examples_per_step = FLAGS.batch_size * FLAGS.num_gpus
         examples_per_sec = num_examples_per_step / duration
         sec_per_batch = duration / FLAGS.num_gpus
-        epoch = step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
+        epoch = step * num_examples_per_step / (FLAGS.num_examples * 0.8)
         format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
                      "(%6.1f examples/sec; %7.3f sec/batch)"
         tf.logging.info(format_str % (datetime.now(), step, epoch, loss_value,
