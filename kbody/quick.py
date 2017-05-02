@@ -1,80 +1,70 @@
-import tensorflow as tf
+# coding=utf-8
+from __future__ import print_function, absolute_import
+
 import numpy as np
-from kbody import inference
-from kbody_transform import MultiTransformer
+from kbody_predict import CNNPredictor
 from kbody_input import extract_xyz
+from matplotlib import pyplot as plt
 
-batch_inputs = tf.placeholder(tf.float32, shape=[None, 1, None, 3], name="batch_input")
-batch_occurs = tf.placeholder(tf.float32, shape=[None, 1, 1, 1], name="batch_occurs")
-batch_weights = tf.placeholder(tf.float32, shape=[None, 1, None, 1], name="batch_weights")
-batch_split_dims = tf.placeholder(tf.int64, shape=[1, ], name="batch_split_dims")
-nat = 1
-kbody_terms = ["BBB"]
-conv_sizes = (80, 180, 120, 60, 40)
+xyzfile = "../test_files/B39-_opted.xyz"
+num_examples = 2000
+num_atoms = 39
 
+array_of_species, y_true, coords, _ = extract_xyz(
+  xyzfile, num_examples, num_atoms, xyz_format='xyz'
+)
 
-y_total, _ = inference(
-  batch_inputs, batch_occurs, batch_weights, batch_split_dims, nat, kbody_terms, conv_sizes=conv_sizes)
+steps = [55000, 162026, 689034]
+y_pred = {}
+y_max = y_true.max()
+y_min = y_true.min()
 
-sess = tf.InteractiveSession()
+for train_step in steps:
 
-tf.global_variables_initializer().run()
-
-saver = tf.train.Saver()
-saver.restore(sess, "./models/Bx-.v4/model.ckpt-167273")
-
-clf = MultiTransformer(["B"])
-
-array_of_species, y_true, coords, _ = extract_xyz("/Users/bismarrck/Downloads/Bx/B39-_opted.xyz", 1000, 39)
-
-
-graph = tf.get_default_graph()
-
-kernel = graph.get_tensor_by_name("one-body/weights:0")
-
-print(kernel.eval())
-
-abs_diff = []
-raw_diff = []
-preds = []
-
-for i in range(100):
-
-  features, splits, target, weights, occurs = clf.transform(array_of_species[i], coords[i], y_true[i])
-
-  features = features.reshape((1, 1, -1, 3))
-  weights = weights.reshape((1, 1, -1, 1))
-  occurs = occurs.reshape((1, 1, 1, 1))
-
-  splits = np.array(splits, dtype=np.int32)
-  y_pred = sess.run(
-    y_total,
-    feed_dict={
-      batch_inputs: features,
-      batch_weights: weights,
-      batch_occurs: occurs,
-      batch_split_dims: splits}
-  )
-
-  d = -y_pred - y_true[i]
-  raw_diff.append(d)
-  abs_diff.append(np.abs(d))
-
-  preds.append(-y_pred)
+  model_path = "./models/Bx-.v4/model.ckpt-{:d}".format(train_step)
+  clf = CNNPredictor(["B"], model_path)
+  y_total, _, _ = clf.predict(array_of_species[0], coords[0:-1:10])
+  y_pred[train_step] = y_total
+  y_max = max(y_total.max(), y_max)
+  y_min = min(y_total.min(), y_min)
 
 
-preds = np.array(preds)
-abs_diff = np.array(abs_diff)
-raw_diff = np.array(raw_diff)
+legends = {}
 
-print("abs mean error: ", np.mean(abs_diff))
-print("raw mean error: ", np.mean(raw_diff))
+y_true_ = y_true[0:-1:10]
+sort = np.argsort(y_true_)
 
-relative_pred = preds - preds[0]
-relative_true = y_true[:100] - y_true[0]
+y_true_ = y_true_[sort]
+y_55k_ = y_pred[steps[0]][sort]
+y_160k_ = y_pred[steps[1]][sort]
+y_680k_ = y_pred[steps[2]][sort]
 
+print("MAE (eV)    at  55k: ", np.mean(np.abs(y_55k_ - y_true_)))
+print("stddev (eV) at  55k: ", np.std(np.abs(y_55k_ - y_true_)))
 
-print(np.mean(relative_pred), np.mean(relative_true))
-print(np.std(relative_pred), np.std(relative_true))
+print("")
 
-print('')
+print("MAE (eV)    at 160k: ", np.mean(np.abs(y_160k_ - y_true_)))
+print("stddev (eV) at 160k: ", np.std(np.abs(y_160k_ - y_true_)))
+
+print("")
+
+print("MAE (eV)    at 680k: ", np.mean(np.abs(y_680k_ - y_true_)))
+print("stddev (eV) at 680k: ", np.std(np.abs(y_680k_ - y_true_)))
+
+l, = plt.plot(y_true_, "g.")
+legends["true"] = l
+
+l, = plt.plot(y_55k_, "r.")
+legends["55k"] = l
+
+l, = plt.plot(y_160k_, "b.")
+legends["160k"] = l
+
+l, = plt.plot(y_680k_, "c.")
+legends["380k"] = l
+
+plt.ylim([y_min - 5, y_max + 5])
+plt.legend(list(legends.values()), list(legends.keys()))
+plt.show()
+
