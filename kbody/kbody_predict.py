@@ -98,12 +98,12 @@ class CNNPredictor:
         coordinates. 
 
     Returns:
-      total_energy: a 1D array of shape `[num_examples, ]` as the predicted 
-        total energies.
-      atomic_energies: a 2D array of shape `[num_examples, num_atoms]` as the 
-        predicted atomic energies.
-      kbody_energies: a 2D array of shape `[num_examples, C(len(species), k)]` 
-        as the predicted kbody energies.
+      y_total: a 1D array of shape `[num_examples, ]` as the total energies.
+      y_1body: a 1D array of shape `[num_examples, ]` as the 1-body energies.
+      y_atomics: a 2D array of shape `[num_examples, num_atoms]` as the 
+        estimated atomic energies.
+      y_kbody: a 2D array of shape `[num_examples, C(len(species), k)]` as the 
+        kbody contribs.
 
     """
 
@@ -157,6 +157,7 @@ class CNNPredictor:
       species, y_kbody, y_1body)
 
     return (np.negative(np.atleast_1d(y_total)),
+            np.negative(np.atleast_1d(y_1body)),
             np.negative(y_atomic),
             np.negative(y_kbody))
 
@@ -244,7 +245,7 @@ def test(unused):
   species = list(repeat("B", 39))
   y_true = -109.6028783440 * hartree_to_ev
 
-  y_total, y_atomic, _ = calculator.predict(species, coords)
+  y_total, _, y_atomic, _ = calculator.predict(species, coords)
   _print_predictions(y_total, [y_true], y_atomic, species)
 
 

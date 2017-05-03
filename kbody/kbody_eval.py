@@ -92,6 +92,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       precision = maes.mean()
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
       dtime = datetime.now()
+      tf.logging.info('%s: step      = %d' % (dtime, int(global_step)))
       tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
 

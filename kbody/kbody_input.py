@@ -36,6 +36,8 @@ flags.DEFINE_integer('num_atoms', 17,
                      """The number of atoms in each molecule.""")
 flags.DEFINE_integer('many_body_k', 3,
                      """The many-body-expansion order.""")
+flags.DEFINE_boolean('two_body', False,
+                     """Include a standalone two-body term or not.""")
 flags.DEFINE_float('test_size', 0.2,
                    """The proportion of the dataset to include in the test 
                    split""")
@@ -297,7 +299,12 @@ def may_build_dataset(verbose=True):
 
   # Use a `FixedLenMultiTransformer` to generate features because it will be
   # much easier if the all input samples are fixed-length.
-  clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
+  clf = kbody_transform.FixedLenMultiTransformer(
+    max_occurs,
+    many_body_k,
+    order=FLAGS.order,
+    two_body=FLAGS.two_body,
+  )
   clf.transform_and_save(species_test, energies_test, coords_test,
                          test_file, indices_test, one_body_weights=False)
   clf.transform_and_save(species_train, energies_train, coords_train,

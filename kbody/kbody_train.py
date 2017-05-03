@@ -39,6 +39,8 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
+tf.app.flags.DEFINE_integer('max_to_keep', None,
+                            """The maximum number of checkpoints to keep.""")
 
 
 def _save_training_flags():
@@ -67,6 +69,8 @@ def train_model():
   )
 
   with tf.Graph().as_default():
+
+    # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Read dataset configurations
@@ -92,6 +96,7 @@ def train_model():
     if len(conv_sizes) < 2:
       raise ValueError("At least three convolution layers are required!")
 
+    # Inference
     y_pred, _ = kbody.inference(
       batch_inputs,
       batch_occurs,
@@ -103,10 +108,14 @@ def train_model():
       initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
       verbose=True,
     )
+
+    # Cast the true values to float32 and set the shape of the `y_pred`
+    # explicitly.
     y_true = tf.cast(batch_true, tf.float32)
+    y_pred.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kbody.get_total_loss(y_true, y_pred)
+    loss = kbody.loss(y_true, y_pred)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
@@ -154,6 +163,8 @@ def train_model():
 
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+    scaffold = tf.train.Scaffold(
+      saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
 
     # noinspection PyMissingOrEmptyDocstring
     class _TimelineHook(tf.train.SessionRunHook):
@@ -187,6 +198,7 @@ def train_model():
                tf.train.NanTensorHook(loss),
                _LoggerHook(),
                _TimelineHook()],
+        scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
