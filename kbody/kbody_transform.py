@@ -45,6 +45,9 @@ pyykko = {
   'Zn': 1.18, 'Zr': 1.54
 }
 
+# the ghost atom
+GHOST = 'X'
+
 flags = tf.app.flags
 
 FLAGS = flags.FLAGS
@@ -180,7 +183,7 @@ class _Transformer:
   features and training targets.
   """
 
-  def __init__(self, species, many_body_k=4, kbody_terms=None, split_dims=None,
+  def __init__(self, species, many_body_k=3, kbody_terms=None, split_dims=None,
                order=1):
     """
     Initialization method.
@@ -196,6 +199,10 @@ class _Transformer:
     """
     if split_dims is not None:
       assert len(split_dims) == len(kbody_terms)
+
+    num_ghosts = list(species).count(GHOST)
+    if num_ghosts > 2 or many_body_k - num_ghosts != 2:
+      raise ValueError("The number of ghosts is wrong!")
 
     if kbody_terms is None:
       kbody_terms = sorted(list(set(
@@ -239,6 +246,7 @@ class _Transformer:
     self._kbody_sizes = kbody_sizes
     self._multipliers = multipliers
     self._order = order
+    self._num_ghosts = num_ghosts
 
     # The major dimension of each input feature matrix. Each missing kbody term
     # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
@@ -303,6 +311,13 @@ class _Transformer:
     """
     return self._selections
 
+  @property
+  def num_ghosts(self):
+    """
+    Return the number of ghosts atoms.
+    """
+    return self._num_ghosts
+
   def transform(self, coordinates, energies=None):
     """
     Transform the given atomic coordinates and energies to input features and
@@ -325,8 +340,21 @@ class _Transformer:
     mapping = self._dist2inputs_mapping
     offsets = self._kbody_offsets
 
+    num_ghosts = self._num_ghosts
+    if num_ghosts > 0:
+      gvecs = np.zeros((self._num_ghosts, 3))
+    else:
+      gvecs = None
+
     for i in range(num_examples):
-      dists = pairwise_distances(coordinates[i]).flatten()
+      if num_ghosts > 0:
+        coords = np.vstack((coordinates[i], gvecs))
+        dists = pairwise_distances(coords)
+        dists[:, -num_ghosts:] = np.inf
+        dists[-num_ghosts:, :] = np.inf
+        dists = dists.flatten()
+      else:
+        dists = pairwise_distances(coordinates[i]).flatten()
       rr = exponential(dists, self._lmat, order=self._order)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
@@ -364,7 +392,8 @@ class MultiTransformer:
   A flexible transformer targeting on AxByCz ... molecular compositions.
   """
 
-  def __init__(self, atom_types, many_body_k=3, max_occurs=None, order=1):
+  def __init__(self, atom_types, many_body_k=3, max_occurs=None, order=1,
+               two_body=False):
     """
     Initialization method.
 
@@ -373,12 +402,22 @@ class MultiTransformer:
       many_body_k: a `int` as the many body expansion factor.
       max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
         If an atom is explicitly specied, it can appear infinity times.
+      two_body: a `bool` indicating whether we shall use a standalone two-body
+        term or not..
 
     """
+    if two_body and many_body_k >= 3:
+      num_ghosts = many_body_k - 2
+      if GHOST not in atom_types:
+        atom_types = list(atom_types) + [GHOST] * num_ghosts
+    else:
+      num_ghosts = 0
     self._many_body_k = many_body_k
     self._atom_types = list(set(atom_types))
     species = []
     max_occurs = {} if max_occurs is None else dict(max_occurs)
+    if num_ghosts > 0:
+      max_occurs[GHOST] = num_ghosts
     for specie in self._atom_types:
       species.extend(list(repeat(specie, max_occurs.get(specie, many_body_k))))
       if specie not in max_occurs:
@@ -390,6 +429,7 @@ class MultiTransformer:
     self._order = order
     self._ordered_species = sorted(list(max_occurs.keys()))
     self._nat = len(self._ordered_species)
+    self._num_ghosts = num_ghosts
 
   @property
   def many_body_k(self):
@@ -426,6 +466,13 @@ class MultiTransformer:
     """
     return self._nat
 
+  @property
+  def standalone_two_body(self):
+    """
+    Return True if a standalone two-body term is included.
+    """
+    return self._num_ghosts > 0
+
   def accept_species(self, species):
     """
     Return True if the given species can be transformed by this transformer.
@@ -451,6 +498,10 @@ class MultiTransformer:
       clf: a `Transformer`.
 
     """
+
+    if self._num_ghosts > 0:
+      species = list(species) + [GHOST] * self._num_ghosts
+
     formula = get_formula(species)
     clf = self._transformers.get(formula)
     if not isinstance(clf, _Transformer):
@@ -549,7 +600,7 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, many_body_k=3, order=1):
+  def __init__(self, max_occurs, many_body_k=3, order=1, two_body=False):
     """
     Initialization method. 
     
@@ -557,6 +608,9 @@ class FixedLenMultiTransformer(MultiTransformer):
       max_occurs: a `Dict[str, int]` as the maximum appearances for each kind of 
         atomic specie. 
       many_body_k: a `int` as the many body expansion factor.
+      order: a `int` as the feature exponential order. 
+      two_body: a `bool` indicating whether we shall use a standalone two-body
+        term or not..
     
     """
     super(FixedLenMultiTransformer, self).__init__(
@@ -564,6 +618,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       many_body_k=many_body_k,
       max_occurs=max_occurs,
       order=order,
+      two_body=two_body,
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
@@ -597,6 +652,10 @@ class FixedLenMultiTransformer(MultiTransformer):
       clf: a `Transformer`.
 
     """
+
+    if self._num_ghosts > 0:
+      species = list(species) + [GHOST] * self._num_ghosts
+
     formula = get_formula(species)
     clf = self._transformers.get(formula)
     if not isinstance(clf, _Transformer):

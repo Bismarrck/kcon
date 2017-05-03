@@ -53,6 +53,29 @@ class TransformerTest(tf.test.TestCase):
     orders = np.argsort(features[0, -1, [0, 1, 3]]).tolist()
     self.assertListEqual(orders, list(range(3)))
 
+  def test_ghost(self):
+    species = get_species({"C": 7, "H": 9, "N": 3, "X": 1})
+    kbody_terms = sorted(list(set(
+      [",".join(sorted(c)) for c in combinations(species, 3)])))
+    num_terms = len(kbody_terms)
+    coords = np.array([
+      [0.15625000, 1.42857141, 0.00000000],
+      [0.51290443, 0.41976140, 0.00000000],
+      [0.51292284, 1.93296960, 0.87365150],
+      [0.51292284, 1.93296960, -0.87365150],
+      [-0.91375000, 1.42858459, 0.00000000]
+    ], dtype=np.float64).reshape((1, 5, 3))
+    clf = kbody_transform._Transformer(
+      get_species({"C": 1, "H": 4, "X": 1}),
+      many_body_k=3,
+      kbody_terms=kbody_terms
+    )
+
+    features, _ = clf.transform(coords, [0.0])
+    print(features)
+    # 4CH + 6HH + 6CHH + 4HHH + (10 - 2) + (6 - 2) = 32
+    self.assertTupleEqual(features.shape, (1, 18, 3))
+
   def test_fixed_kbody_terms(self):
     species = get_species({"C": 7, "H": 9, "N": 3})
     kbody_terms = sorted(list(set(
