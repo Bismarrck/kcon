@@ -10,6 +10,7 @@ import numpy as np
 import tensorflow as tf
 import sys
 import json
+import warnings
 from scipy.misc import comb
 from itertools import combinations, product, repeat, chain
 from sklearn.metrics import pairwise_distances
@@ -58,6 +59,26 @@ def get_formula(species):
   Return the molecular formula given a list of atomic species.
   """
   return "".join(species)
+
+
+def _compute_one_body_weights(coef, y, ghost=False):
+  """
+  Solve the linear equations of Ax + Bz = y to get the initial one_body weights.
+  
+  Args:
+    coef: a 2D array of shape `[num_examples, Nat + 1]` as the `[A, B]`.
+    y: a 1D array of shape `[num_examples, ]` as the `y`.
+    ghost: a `bool` indicating whether the ghost is included or not.
+
+  Returns:
+    x: 1 1D array of shape `[Nat + 1]` as the solution.
+
+  """
+  rank = np.linalg.matrix_rank(np.dot(coef.T, coef))
+  if rank + int(ghost) + 1 < coef.shape[1]:
+    warnings.warn("The coefficients matrix is not full rank!")
+
+  return np.negative(np.dot(np.linalg.pinv(coef), y))
 
 
 def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
@@ -201,7 +222,7 @@ class _Transformer:
       assert len(split_dims) == len(kbody_terms)
 
     num_ghosts = list(species).count(GHOST)
-    if num_ghosts > 2 or many_body_k - num_ghosts != 2:
+    if num_ghosts != 0 and (num_ghosts > 2 or many_body_k - num_ghosts != 2):
       raise ValueError("The number of ghosts is wrong!")
 
     if kbody_terms is None:
@@ -731,7 +752,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Transforming %s finished!" % filename)
 
       if one_body_weights:
-        return np.negative(np.dot(np.linalg.pinv(coef), energies))
+        return _compute_one_body_weights(coef, energies, self._num_ghosts > 0)
       else:
         return None
 

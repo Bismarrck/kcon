@@ -79,7 +79,7 @@ def print_activations(tensor):
   """
   dims = ",".join(["{:7d}".format(dim if dim is not None else -1)
                    for dim in tensor.get_shape().as_list()])
-  print("%-25s : [%s]" % (tensor.op.name, dims))
+  tf.logging.info("%-25s : [%s]" % (tensor.op.name, dims))
 
 
 def get_number_of_trainable_parameters(verbose=False):
@@ -94,17 +94,17 @@ def get_number_of_trainable_parameters(verbose=False):
     ntotal: the total number of trainable parameters.
 
   """
-  print("")
-  print("Compute the total number of trainable parameters ...")
-  print("")
+  tf.logging.info("")
+  tf.logging.info("Compute the total number of trainable parameters ...")
+  tf.logging.info("")
   ntotal = 0
   for var in tf.trainable_variables():
     nvar = np.prod(var.get_shape().as_list(), dtype=int)
     if verbose:
-      print("{:<38s}   {:>8d}".format(var.name, nvar))
+      tf.logging.info("{:<38s}   {:>8d}".format(var.name, nvar))
     ntotal += nvar
-  print("Total number of parameters: %d" % ntotal)
-  print("")
+  tf.logging.info("Total number of parameters: %d" % ntotal)
+  tf.logging.info("")
 
 
 def inputs(train=True, shuffle=True):
@@ -163,7 +163,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   """
 
   if verbose:
-    print("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
+    tf.logging.info("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
 
   num_layers = len(sizes)
   activation_fn = list(repeat(tf.nn.tanh, num_layers))
@@ -218,7 +218,7 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   )
   if verbose:
     print_activations(kbody_energies)
-    print("")
+    tf.logging.info("")
 
   # Directly return the 4D tensor of kbody energies. The sum/flatten will be
   # done in the main inference function.

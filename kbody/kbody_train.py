@@ -9,7 +9,6 @@ import tensorflow as tf
 import json
 import time
 import kbody
-from datetime import datetime
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
 from utils import get_xargs, set_logging_configs
@@ -154,10 +153,10 @@ def train_model():
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
-          format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
+          format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
                        "(%6.1f examples/sec; %7.3f sec/batch)"
           tf.logging.info(
-            format_str % (datetime.now(), self._step, self._epoch, loss_value,
+            format_str % (self._step, self._epoch, loss_value,
                           examples_per_sec, sec_per_batch)
           )
 
