@@ -222,7 +222,7 @@ class _Transformer:
       assert len(split_dims) == len(kbody_terms)
 
     num_ghosts = list(species).count(GHOST)
-    if num_ghosts > 2 or many_body_k - num_ghosts != 2:
+    if num_ghosts != 0 and (num_ghosts > 2 or many_body_k - num_ghosts != 2):
       raise ValueError("The number of ghosts is wrong!")
 
     if kbody_terms is None:
