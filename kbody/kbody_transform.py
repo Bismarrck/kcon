@@ -11,6 +11,7 @@ import tensorflow as tf
 import sys
 import json
 import warnings
+from ase.atoms import Atoms
 from scipy.misc import comb
 from itertools import combinations, product, repeat, chain
 from sklearn.metrics import pairwise_distances
@@ -339,7 +340,7 @@ class _Transformer:
     """
     return self._num_ghosts
 
-  def transform(self, coordinates, energies=None):
+  def transform(self, coordinates, energies=None, lattices=None, pbcs=None):
     """
     Transform the given atomic coordinates and energies to input features and
     training targets and return them as numpy arrays.
@@ -347,6 +348,8 @@ class _Transformer:
     Args:
       coordinates: a 3D array as the atomic coordinates of sturctures.
       energies: a 1D array as the desired energies.
+      lattices: a 2D array as the periodic lattices.
+      pbcs: a 2D array as the peridic conditions.
 
     Returns:
       features: a 4D array as the transformed input features.
@@ -368,14 +371,19 @@ class _Transformer:
       gvecs = None
 
     for i in range(num_examples):
-      if num_ghosts > 0:
-        coords = np.vstack((coordinates[i], gvecs))
-        dists = pairwise_distances(coords)
-        dists[:, -num_ghosts:] = np.inf
-        dists[-num_ghosts:, :] = np.inf
-        dists = dists.flatten()
+      if not FLAGS.periodic:
+        if num_ghosts > 0:
+          coords = np.vstack((coordinates[i], gvecs))
+          dists = pairwise_distances(coords)
+          dists[:, -num_ghosts:] = np.inf
+          dists[-num_ghosts:, :] = np.inf
+          dists = dists.flatten()
+        else:
+          dists = pairwise_distances(coordinates[i]).flatten()
       else:
-        dists = pairwise_distances(coordinates[i]).flatten()
+        cell = lattices[i].reshape((3, 3))
+        atoms = Atoms(self._species, coordinates[i], cell=cell, pbc=pbcs[i])
+        dists = atoms.get_all_distances(mic=True).flatten()
       rr = exponential(dists, self._lmat, order=self._order)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
@@ -414,7 +422,7 @@ class MultiTransformer:
   """
 
   def __init__(self, atom_types, many_body_k=3, max_occurs=None, order=1,
-               two_body=False):
+               two_body=False, periodic=False):
     """
     Initialization method.
 
@@ -425,6 +433,8 @@ class MultiTransformer:
         If an atom is explicitly specied, it can appear infinity times.
       two_body: a `bool` indicating whether we shall use a standalone two-body
         term or not..
+      periodic: a `bool` indicating whether we shall use periodic boundary 
+        conditions.
 
     """
     if two_body and many_body_k >= 3:
@@ -451,6 +461,7 @@ class MultiTransformer:
     self._ordered_species = sorted(list(max_occurs.keys()))
     self._nat = len(self._ordered_species)
     self._num_ghosts = num_ghosts
+    self._periodic = periodic
 
   @property
   def many_body_k(self):
@@ -494,6 +505,13 @@ class MultiTransformer:
     """
     return self._num_ghosts > 0
 
+  @property
+  def periodic(self):
+    """
+    Return True if this is a periodic transformer.
+    """
+    return self._periodic
+
   def accept_species(self, species):
     """
     Return True if the given species can be transformed by this transformer.
@@ -535,7 +553,7 @@ class MultiTransformer:
       self._transformers[formula] = clf
     return clf
 
-  def transform(self, species, coords, energies=None):
+  def transform(self, species, coords, energies=None, lattices=None, pbcs=None):
     """
     Transform the atomic coordinates to input features.
 
@@ -544,6 +562,8 @@ class MultiTransformer:
       coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
         it should represents the N-by-3 coordinates of a single molecule.
       energies: a 1D array as the total energies. 
+      lattices: a 2D array as the periodic lattices.
+      pbcs: a 2D array as the peridic conditions.
 
     Returns:
       features: a 4D array as the input features.
@@ -571,7 +591,8 @@ class MultiTransformer:
 
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
-    features, targets = clf.transform(coords, energies)
+    features, targets = clf.transform(
+      coords, energies, lattices=lattices, pbcs=pbcs)
 
     ntotal = coords.shape[0]
     occurs = np.zeros((ntotal, len(self._ordered_species)), dtype=np.float32)
@@ -691,7 +712,8 @@ class FixedLenMultiTransformer(MultiTransformer):
     return clf
 
   def _transform_and_save(self, array_of_species, energies, coords, filename,
-                          verbose=True, one_body_weights=True):
+                          lattices=None, pbcs=None, verbose=True,
+                          one_body_weights=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -719,9 +741,17 @@ class FixedLenMultiTransformer(MultiTransformer):
       for i in range(len(array_of_species)):
         species = array_of_species[i]
         n = len(species)
+        if lattices is None:
+          cell = None
+          pbc = None
+        else:
+          cell = np.atleast_2d(lattices[i])
+          pbc = np.atleast_2d(pbcs[i])
         features, split_dims, targets, multipliers, occurs = self.transform(
           species,
-          coords[i, :n]
+          coords[i, :n],
+          lattices=cell,
+          pbcs=pbc,
         )
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
@@ -792,7 +822,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       }, f, indent=2)
 
   def transform_and_save(self, array_of_species, energies, coords, filename,
-                         indices=None, verbose=True, one_body_weights=True):
+                         indices=None, lattices=None, pbcs=None, verbose=True,
+                         one_body_weights=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -807,12 +838,14 @@ class FixedLenMultiTransformer(MultiTransformer):
       verbose: a `bool` indicating whether logging the transformation progress.
       one_body_weights: a `bool` indicating whether we should compute and save 
         the one-body weights or not.
+      lattices: a 2D array as the periodic lattices.
+      pbcs: a 2D array as the peridic conditions.
 
     """
     try:
       initial_one_body_weights = self._transform_and_save(
         array_of_species, energies, coords, filename, verbose=verbose,
-        one_body_weights=one_body_weights
+        lattices=lattices, pbcs=pbcs, one_body_weights=one_body_weights
       )
     except Exception as excp:
       if isfile(filename):

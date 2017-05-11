@@ -49,6 +49,8 @@ flags.DEFINE_boolean('run_input_test', False,
                      """Run the input unit test if True.""")
 flags.DEFINE_float('unit', None,
                    """Override the default unit if this is not None.""")
+flags.DEFINE_boolean('periodic', False,
+                     """The isomers are periodic structures.""")
 
 FLAGS = flags.FLAGS
 
@@ -90,7 +92,8 @@ def _get_regex_patt_and_unit(xyz_format):
 
   """
   if xyz_format.lower() == 'grendel':
-    energy_patt = re.compile(r".*energy=([\d.-]+).*")
+    energy_patt = re.compile(r"Lattice=\"(.*)\".*"
+                             r"energy=([\d.-]+)\s+pbc=\"(.*)\"")
     string_patt = re.compile(
       r"([A-Za-z]{1,2})\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+"
       "\d+\s+\d.\d+\s+\d+\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)")
@@ -146,6 +149,8 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
   dtype = get_float_type(convert=False)
   energies = np.zeros((num_examples,), dtype=np.float64)
   coords = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
+  lattices = np.zeros((num_examples, 9))
+  pbcs = np.zeros((num_examples, 3), dtype=bool)
   array_of_species = []
   species = []
   stage = 0
@@ -181,6 +186,10 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
         if m:
           if xyz_format.lower() == 'extxyz':
             energies[i] = float(m.group(3)) * unit
+          elif xyz_format.lower() == 'grendel':
+            energies[i] = float(m.group(2)) * unit
+            lattices[i] = [float(x) for x in m.group(1).split()]
+            pbcs[i] = [True if x == "T" else False for x in m.group(3).split()]
           else:
             energies[i] = float(m.group(1)) * unit
           stage += 1
@@ -210,8 +219,10 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
     coords = np.resize(coords, (i, num_atoms, 3))
     if forces is not None:
       forces = np.resize(forces, (i, num_atoms, 3))
+    lattices = np.resize(lattices, (i, 9))
+    pbcs = np.resize(pbcs, (i, 3))
 
-  return array_of_species, energies, coords, forces
+  return array_of_species, energies, coords, forces, lattices, pbcs
 
 
 def get_filenames(train=True):
@@ -263,7 +274,7 @@ def may_build_dataset(verbose=True):
 
   # Read atomic symbols, DFT energies, atomic coordinates and atomic forces from
   # the xyz file.
-  species, energies, coordinates, forces = extract_xyz(
+  species, energies, coordinates, forces, lattices, pbcs = extract_xyz(
     xyzfile,
     num_examples=FLAGS.num_examples,
     num_atoms=FLAGS.num_atoms,
@@ -281,11 +292,15 @@ def may_build_dataset(verbose=True):
   (coords_train, coords_test,
    energies_train, energies_test,
    indices_train, indices_test,
-   species_train, species_test) = train_test_split(
+   species_train, species_test,
+   lattices_train, lattices_test,
+   pbcs_train, pbcs_test) = train_test_split(
     coordinates,
     energies,
     indices,
     species,
+    lattices,
+    pbcs,
     test_size=FLAGS.test_size,
     random_state=SEED
   )
@@ -306,9 +321,11 @@ def may_build_dataset(verbose=True):
     two_body=FLAGS.two_body,
   )
   clf.transform_and_save(species_test, energies_test, coords_test,
-                         test_file, indices_test, one_body_weights=False)
+                         test_file, indices_test, lattices_test, pbcs_test,
+                         one_body_weights=False)
   clf.transform_and_save(species_train, energies_train, coords_train,
-                         train_file, indices_train, one_body_weights=True)
+                         train_file, indices_train, lattices_train, pbcs_train,
+                         one_body_weights=True)
 
 
 def read_and_decode(filename_queue, cnk, ck2, nat):
@@ -446,7 +463,7 @@ def test_extract_mixed_xyz():
   from scipy.io import loadmat
 
   mixed_file = join(dirname(__file__), "..", "datasets", "qm7.xyz")
-  array_of_species, energies, coords, _ = extract_xyz(
+  array_of_species, energies, coords, _, _, _ = extract_xyz(
     mixed_file,
     num_examples=100000,
     num_atoms=23,
@@ -478,7 +495,7 @@ def test_build_dataset():
   if not isfile(xyzfile):
     raise IOError("The dataset file %s can not be accessed!" % xyzfile)
 
-  array_of_species, raw_energies, raw_coordinates, _ = extract_xyz(
+  array_of_species, raw_energies, raw_coordinates, _, _, _ = extract_xyz(
     xyzfile,
     num_examples=8000,
     num_atoms=23,
@@ -542,6 +559,10 @@ def main(unused):
     test_extract_mixed_xyz()
     test_build_dataset()
   else:
+    if FLAGS.periodic and (FLAGS.format != 'grendel'):
+      tf.logging.error(
+        "The xyz format must be `grendel` if `periodic` is True!")
+      exit(1)
     may_build_dataset(verbose=True)
 
 
