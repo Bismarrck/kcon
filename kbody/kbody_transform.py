@@ -381,9 +381,18 @@ class _Transformer:
         else:
           dists = pairwise_distances(coordinates[i]).flatten()
       else:
+        if num_ghosts > 0:
+          coords = np.vstack((coordinates[i], gvecs))
+        else:
+          coords = coordinates[i]
         cell = lattices[i].reshape((3, 3))
-        atoms = Atoms(self._species, coordinates[i], cell=cell, pbc=pbcs[i])
-        dists = atoms.get_all_distances(mic=True).flatten()
+        atoms = Atoms(self._species, coords, cell=cell, pbc=pbcs[i])
+        dists = atoms.get_all_distances(mic=True)
+        if num_ghosts > 0:
+          dists[:, -num_ghosts:] = np.inf
+          dists[-num_ghosts:, :] = np.inf
+        dists = dists.flatten()
+
       rr = exponential(dists, self._lmat, order=self._order)
       samples[i].fill(0.0)
       for j, term in enumerate(kbody_terms):
