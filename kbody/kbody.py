@@ -243,14 +243,15 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
   num_outputs = 1
   kernel_size = 1
 
-  if initial_one_body_weights is None:
+  if FLAGS.initial_one_body_weights is not None:
     weights = FLAGS.initial_one_body_weights
-    if weights is None:
-      values = np.ones(nat, dtype=np.float32)
-    else:
-      values = [float(x) for x in weights.split(",")]
-  else:
+    values = [float(x) for x in weights.split(",")]
+    if nat > 1 and len(values) == 1:
+      values = np.ones(nat, dtype=np.float32) * values[0]
+  elif initial_one_body_weights is not None:
     values = initial_one_body_weights
+  else:
+    values = np.ones(nat, dtype=np.float32)
   if len(values) != nat:
     raise Exception("The number of initial weights should be %d!" % nat)
 
