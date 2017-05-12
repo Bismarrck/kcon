@@ -89,6 +89,7 @@ def train_model():
     batch_split_dims = tf.placeholder(
       tf.int64, [len(split_dims), ], name="split_dims"
     )
+    is_training = tf.placeholder(tf.bool, name="is_training")
 
     # Parse the convolution layer sizes
     conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
@@ -101,6 +102,7 @@ def train_model():
       batch_occurs,
       batch_weights,
       nat=nat,
+      is_training=is_training,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       conv_sizes=conv_sizes,
@@ -201,7 +203,7 @@ def train_model():
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
-      feed_dict = {batch_split_dims: split_dims}
+      feed_dict = {batch_split_dims: split_dims, is_training: True}
 
       while not mon_sess.should_stop():
         if FLAGS.timeline:

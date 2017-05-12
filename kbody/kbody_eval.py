@@ -150,6 +150,7 @@ def evaluate():
     batch_split_dims = tf.placeholder(
       tf.int64, [len(split_dims), ], name="split_dims"
     )
+    is_training = tf.placeholder(tf.bool, name="is_training")
 
     # Parse the convolution layer sizes
     conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
@@ -161,6 +162,7 @@ def evaluate():
       batch_occurs,
       batch_weights,
       nat=nat,
+      is_training=is_training,
       split_dims=batch_split_dims,
       kbody_terms=kbody_terms,
       verbose=True,
@@ -184,7 +186,7 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
     # Build the feed dict
-    feed_dict = {batch_split_dims: split_dims}
+    feed_dict = {batch_split_dims: split_dims, is_training: False}
 
     while True:
       eval_once(saver, summary_writer, y_true, y_pred, mae_op,

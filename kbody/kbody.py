@@ -8,7 +8,7 @@ import tensorflow as tf
 import numpy as np
 import kbody_input
 from itertools import repeat
-from tensorflow.contrib.layers.python.layers import conv2d, flatten
+from tensorflow.contrib.layers.python.layers import conv2d, flatten, batch_norm
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from scipy.misc import comb
@@ -39,6 +39,8 @@ tf.app.flags.DEFINE_boolean('xavier', True,
                             """Use the xavier algorithm to initialize weights 
                             if this is True. Otherwise the truncated normal 
                             will be used.""")
+tf.app.flags.DEFINE_boolean('batch_norm', False,
+                            """Use batch normalization if True.""")
 
 
 # Constants describing the training process.
@@ -143,8 +145,8 @@ def inputs_settings(train=True):
   return kbody_input.inputs_settings(train=train)
 
 
-def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
-                        verbose=True):
+def inference_sum_kbody(conv, kbody_term, ck2, is_training,
+                        sizes=(60, 120, 120, 60), verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -153,6 +155,8 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
       the molecule and M is the number of features.
     kbody_term: a `str` Tensor as the name of this k-body term.
     ck2: a `int` as the value of C(k,2).
+    is_training: a `bool` type placeholder tensor indicating whether this 
+      inference is for training or not.
     sizes: a `List[int]` as the number of convolution kernels for each layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
@@ -177,23 +181,31 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
   # the number of atoms.
   conv.set_shape([None, 1, None, ck2])
 
+  # Setup the initializers and normalization function.
   if FLAGS.xavier:
     weights_initializer = initializers.xavier_initializer(
-      seed=kbody_input.SEED, dtype=dtype
-    )
+      seed=kbody_input.SEED, dtype=dtype)
   else:
     weights_initializer = init_ops.truncated_normal_initializer(
-      seed=kbody_input.SEED, dtype=dtype
-    )
+      seed=kbody_input.SEED, dtype=dtype)
 
-  for i, units in enumerate(sizes):
-    if FLAGS.disable_biases:
-      biases_initializer = None
-    else:
-      biases_initializer = init_ops.zeros_initializer(dtype=dtype)
+  if FLAGS.disable_biases:
+    biases_initializer = None
+  else:
+    biases_initializer = init_ops.zeros_initializer(dtype=dtype)
+
+  if FLAGS.batch_norm:
+    normalizer_fn = batch_norm
+    normalizer_params = dict(is_training=is_training)
+  else:
+    normalizer_fn = None
+    normalizer_params = {}
+
+  # Build the network for this block
+  for i, n_units in enumerate(sizes):
     conv = conv2d(
       conv,
-      units,
+      n_units,
       kernel_size,
       activation_fn=activation_fn[i],
       stride=stride,
@@ -201,6 +213,8 @@ def inference_sum_kbody(conv, kbody_term, ck2, sizes=(60, 120, 120, 60),
       scope="Hidden{:d}".format(i + 1),
       weights_initializer=weights_initializer,
       biases_initializer=biases_initializer,
+      normalizer_fn=normalizer_fn,
+      normalizer_params=normalizer_params,
     )
     if verbose:
       print_activations(conv)
@@ -270,8 +284,8 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
 
 
 def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
-              kbody_terms, verbose=True, conv_sizes=(60, 120, 120, 60),
-              initial_one_body_weights=None):
+              kbody_terms, is_training, verbose=True,
+              conv_sizes=(60, 120, 120, 60), initial_one_body_weights=None):
   """
   The general inference function.
 
@@ -285,6 +299,8 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
       output tensor along split_dim.
     nat: a `int` as the number of atom types.
     kbody_terms: a `List[str]` as the names of the k-body terms.
+    is_training: a `bool` type placeholder indicating whether this inference is
+      for training or not.
     verbose: boolean indicating whether the layers shall be printed or not.
     conv_sizes: a `Tuple[int]` as the sizes of the convolution layers.
     initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
@@ -346,8 +362,9 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
         conv,
         kbody_terms[i],
         ck2,
+        is_training=is_training,
         sizes=conv_sizes,
-        verbose=verbose
+        verbose=verbose,
       )
     kbody_energies.append(kbody)
 
@@ -454,8 +471,16 @@ def get_train_op(total_loss, global_step):
   # Generate moving averages of all losses and associated summaries.
   loss_averages_op = _add_loss_summaries(total_loss)
 
+  # Add the update ops if batch_norm is True.
+  # If we don't include the update ops as dependencies on the train step, the
+  # batch_normalization layers won't update their population statistics, which
+  # will cause the model to fail at inference time
+  dependencies = [loss_averages_op]
+  if FLAGS.batch_norm:
+    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
+
   # Compute gradients.
-  with tf.control_dependencies([loss_averages_op]):
+  with tf.control_dependencies(dependencies):
     opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
     grads = opt.compute_gradients(total_loss)
 
