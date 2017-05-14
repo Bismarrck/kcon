@@ -559,7 +559,7 @@ def main(unused):
     test_extract_mixed_xyz()
     test_build_dataset()
   else:
-    if FLAGS.periodic and (FLAGS.format != 'grendel'):
+    if FLAGS.is_periodic and (FLAGS.format != 'grendel'):
       tf.logging.error(
         "The xyz format must be `grendel` if `periodic` is True!")
       exit(1)

@@ -7,10 +7,11 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import time
-from kbody_transform import MultiTransformer
-from kbody_input import hartree_to_ev
+import re
+from kbody_transform import MultiTransformer, GHOST
+from kbody_input import extract_xyz
 from os.path import join, dirname
-from itertools import repeat
+from collections import Counter
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -21,35 +22,77 @@ class CNNPredictor:
   An energy predictor based on the deep neural network of 'sum-kbody-cnn'.
   """
 
-  def __init__(self, atom_types, model_path, many_body_k=3, max_occurs=None,
-               order=1, **kwargs):
+  def __init__(self, model_path, periodic=False, order=1, **kwargs):
     """
     Initialization method.
 
     Args:
-      atom_types: a `List[str]` as the target atomic species.
       model_path: a `str` as the model to load. This `model_path` should contain 
         the model name and the global step, eg 'model.ckpt-500'.
-      many_body_k: a `int` as the many body expansion factor.
-      max_occurs: a `Dict[str, int]` as the maximum appearance for a specie.
+      periodic: a `bool` indicating whether this model is used for periodic 
+        structures or not.
+      order: a `int` as the exponential order.
       kwargs: additional key-value arguments for importing the meta model.
 
     """
-    self.transformer = MultiTransformer(
-      atom_types,
-      many_body_k=many_body_k,
-      max_occurs=max_occurs,
-      order=order,
-    )
     self.sess = tf.Session()
     self._import_model(model_path, **kwargs)
+    self._transformer = self._get_transformer(periodic=periodic, order=order)
+    self._y_atomic_1body = self._get_y_atomic_1body(
+      self._transformer.ordered_species)
 
   @property
   def many_body_k(self):
     """
     Return the many-body expansion factor for this model.
     """
-    return self.transformer.many_body_k
+    return self._transformer.many_body_k
+
+  @property
+  def is_periodic(self):
+    """
+    Return True if this model is used for periodic structures.
+    """
+    return self._transformer.is_periodic
+
+  @staticmethod
+  def _check_atom_types():
+    """
+    Automatically check the atom types and max occurances.
+    """
+    patt = re.compile(r'([A-Za-z]+)/k-Body/.*')
+    kbody_terms = []
+    for node in tf.get_default_graph().as_graph_def().node:
+      m = patt.search(node.name)
+      if m:
+        kbody_terms.append(m.group(1))
+    kbody_terms = set(kbody_terms)
+    max_occurs = {}
+    many_body_k = 0
+    two_body = False
+    if max(map(len, kbody_terms)) <= 2:
+      many_body_k = 2
+      atom_types = list(kbody_terms)
+    else:
+      max_occurs = Counter()
+      for kbody_term in kbody_terms:
+        atoms = []
+        for atom in kbody_term:
+          if atom.isupper():
+            atoms.append(atom)
+          else:
+            atoms[-1] += atom
+        for atom, n in Counter(atoms).items():
+          max_occurs[atom] = max(max_occurs[atom], n)
+        many_body_k = len(atoms)
+      atom_types = list(max_occurs.keys())
+      max_occurs = {k: v for k, v in max_occurs.items() if v < many_body_k}
+      if GHOST in max_occurs:
+        two_body = True
+        del max_occurs[GHOST]
+    if many_body_k < 2:
+      raise Exception("The parsed `many_body_k` is invalid!")
+    return many_body_k, atom_types, max_occurs, two_body
 
   def _import_model(self, model_path, **kwargs):
     """
@@ -88,14 +131,56 @@ class CNNPredictor:
     self._default_batch_weights = np.zeros(
       self._shuffle_batch_weights.get_shape().as_list(), dtype=np.float32)
 
-  def predict(self, species, coords):
+  def _get_transformer(self, periodic=False, order=1):
+    """
+    Return the feature transformer for this model.
+    
+    Args:
+      periodic: a `bool` indicating whether this is a periodic model or not.
+      order: a `int` as the exponential scaling order.
+
+    Returns:
+      transformer: a `MultiTransformer` for this model.
+
+    """
+    many_body_k, atom_types, max_occurs, two_body = self._check_atom_types()
+    return MultiTransformer(
+      atom_types,
+      many_body_k=many_body_k,
+      max_occurs=max_occurs,
+      order=order,
+      two_body=two_body,
+      periodic=periodic,
+    )
+
+  def _get_y_atomic_1body(self, species):
+    """
+    Return the 
+    
+    Args:
+      species: a `List[str]` as the ordered species for this model.
+    
+    Returns:
+      y_atomic_1body: a `Dict[str, float]` as the 1body energy for 
+        each kind of atom.
+    
+    """
+    weights = self.sess.run(
+      tf.get_default_graph().get_tensor_by_name("one-body/weights:0"))
+    return dict(zip(species, weights.flatten().tolist()))
+
+  def predict(self, species, coords, lattices=None, pbcs=None):
     """
     Make the prediction for the given molecule.
 
     Args:
       species: a `List[str]` as the ordered atomic species.
       coords: a 3D array of shape `[num_examples, num_atoms, 3]` as the atomic 
-        coordinates. 
+        coordinates.
+      lattices: a 2D array of shape `[num_examples, 9]` as the periodic lattice
+        matrix for each structure. Required if `self.is_periodic == True.`
+      pbcs: a 2D boolean array of shape `[num_examples, 3]` as the periodic 
+        conditions along XYZ. Required if `self.is_periodic == True.`
 
     Returns:
       y_total: a 1D array of shape `[num_examples, ]` as the total energies.
@@ -116,14 +201,18 @@ class CNNPredictor:
       num_mols, num_atoms = coords.shape[0:2]
       assert num_atoms == len(species)
 
+    # Check the lattices and pbcs for periodic structures.
+    if self.is_periodic:
+      assert (lattices is not None) and (pbcs is not None)
+
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.
-    features, split_dims, _, weights, occurs = self.transformer.transform(
-      species, coords
+    features, split_dims, _, weights, occurs = self._transformer.transform(
+      species, coords, lattices=lattices, pbcs=pbcs
     )
 
     # Build the feed dict for running the session.
-    features = features.reshape((num_mols, 1, -1, self.transformer.ck2))
+    features = features.reshape((num_mols, 1, -1, self._transformer.ck2))
     weights = weights.reshape((num_mols, 1, -1, 1))
     occurs = occurs.reshape((num_mols, 1, 1, -1))
 
@@ -153,8 +242,8 @@ class CNNPredictor:
 
     # Transform the kbody energies to atomic energies.
     y_kbody = np.squeeze(y_kbody, axis=(1, 3))
-    y_atomic = self.transformer.compute_atomic_energies(
-      species, y_kbody, y_1body)
+    y_atomic = self._transformer.compute_atomic_energies(
+      species, y_kbody, self._y_atomic_1body)
 
     return (np.negative(np.atleast_1d(y_total)),
             np.negative(np.atleast_1d(y_1body)),
@@ -165,7 +254,7 @@ class CNNPredictor:
 def _print_predictions(y_total, y_true, y_atomic, species):
   """
   A helper function for printing predicted results of the unittests.
-    
+
   Args:
     y_total: a 1D array of shape [N, ] as the predicted energies. 
     y_true: a 1D array of shape [N, ] as the real energies.
@@ -189,63 +278,28 @@ def _print_predictions(y_total, y_true, y_atomic, species):
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def test(unused):
 
-  # Initialize a `CNNPredictor` instance. This step is relatively slow.
   tic = time.time()
-  model_path = join(dirname(__file__), "models", "Bx-.v4", "model.ckpt-162026")
-  calculator = CNNPredictor(["B"], model_path=model_path)
+  model_path = join(
+    dirname(__file__), "models", "TiO2.v5.k123", "model.ckpt-1302661")
+  calculator = CNNPredictor(model_path, periodic=True)
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
   print("")
 
   print("-----------")
-  print("Tests: B39-")
+  print("Tests: TiO2")
   print("-----------")
 
-  coords = np.array([
-    [10.9558051422, 8.4324055731, 7.1650782800],
-    [12.8798039225, 9.9809890079, 10.694438864],
-    [11.2518368552, 7.8085313659, 8.6417850140],
-    [8.6204692072, 12.0177364175, 12.197340876],
-    [7.5458126821, 11.4390544234, 9.6488879901],
-    [10.8456613407, 11.6708997171, 7.1650145881],
-    [8.3944716451, 7.3401128933, 9.0854876478],
-    [10.3526362965, 8.1889678262, 12.785240061],
-    [9.9468364743, 7.2144797836, 9.6488983306],
-    [11.4976472641, 12.6466840199, 10.216873813],
-    [12.0264298588, 11.5906619661, 11.310570999],
-    [9.7741469986, 11.0341867464, 12.996161842],
-    [8.5426200819, 12.5627665713, 10.694502532],
-    [9.4952023628, 9.1164302401, 7.0045568720],
-    [8.4308030550, 12.7206121860, 9.0854619208],
-    [11.3580669554, 11.2702740413, 12.785123803],
-    [12.1290407115, 9.1942001072, 8.0232959107],
-    [13.0722871488, 9.9988610240, 9.0853531897],
-    [12.4049640874, 11.4060361814, 9.6487962737],
-    [10.9835146464, 10.0639706257, 7.0045352104],
-    [11.2379418637, 12.2391961420, 8.6417477545],
-    [10.9401722214, 9.6787761264, 12.996224479],
-    [12.3688448155, 10.1860887811, 12.197317509],
-    [9.9643630513, 12.7848866657, 9.7021304444],
-    [9.5992709686, 12.3060475196, 8.0233165342],
-    [8.1692757606, 8.5592986433, 8.0233361876],
-    [10.2960239612, 7.4499879889, 11.310600580],
-    [12.3612281120, 8.6385916241, 9.7020863701],
-    [9.4187447099, 10.8791331889, 7.0045404488],
-    [11.4749509512, 7.3798656111, 10.216879023],
-    [6.9251379988, 10.0329639677, 10.216916138],
-    [8.0960860914, 9.9562229122, 7.1650504080],
-    [7.4078254843, 10.0118212975, 8.6417688406],
-    [9.1833267140, 9.3466612012, 12.996160671],
-    [8.9084241724, 7.8557575756, 12.197337874],
-    [8.4752762218, 7.5157629578, 10.694522188],
-    [8.1869297816, 10.6003442110, 12.785156028],
-    [7.5719811474, 8.6360757658, 9.7021370730],
-    [7.5753246831, 11.0188510179, 11.310557800],
-  ]).reshape((1, 39, 3))
-  species = list(repeat("B", 39))
-  y_true = -109.6028783440 * hartree_to_ev
+  xyzfile = join(dirname(__file__), "..", "test_files", "TiO2_x9_sample.xyz")
+  sample = extract_xyz(
+    xyzfile, num_examples=1, num_atoms=27, xyz_format='grendel')
 
-  y_total, _, y_atomic, _ = calculator.predict(species, coords)
+  species = sample[0][0]
+  y_true = float(sample[1])
+  coords = sample[2]
+  lattice = sample[4]
+  pbc = sample[5]
+  y_total, _, y_atomic, _ = calculator.predict(species, coords, lattice, pbc)
   _print_predictions(y_total, [y_true], y_atomic, species)
 
 
