@@ -84,6 +84,7 @@ def tower_loss(scope):
   # inference model.
   batch_split_dims = tf.constant(np.array(split_dims, dtype=np.int64),
                                  dtype=tf.int64, name="split_dims")
+  is_training = tf.placeholder(tf.bool, name="is_training")
 
   # Parse the convolution layer sizes
   conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
@@ -96,6 +97,7 @@ def tower_loss(scope):
     batch_occurs,
     batch_weights,
     nat=nat,
+    is_training=is_training,
     split_dims=batch_split_dims,
     kbody_terms=kbody_terms,
     conv_sizes=conv_sizes,
@@ -224,7 +226,12 @@ def train_with_multiple_gpus():
         summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
 
     # Apply the gradients to adjust the shared variables.
-    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+    if FLAGS.batch_norm:
+      dependencies = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    else:
+      dependencies = []
+    with tf.control_dependencies(dependencies):
+      apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     # Add histograms for trainable variables.
     for var in tf.trainable_variables():
