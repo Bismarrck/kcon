@@ -186,13 +186,17 @@ def exponential(inputs, factor, order=1):
     inputs: Union[float, np.ndarray] as the inputs to scale.
     factor: a float or an array with the same shape of `inputs` as the scaling 
       factor(s).
-    order: a `int` as the exponential order.
+    order: a `int` as the exponential order. If `order` is 0, the inputs will 
+      not be scaled by `factor`.
 
   Returns:
     scaled: the scaled inputs.
 
   """
-  return np.exp(np.negative((inputs / factor)**order))
+  if order == 0:
+    return np.exp(-inputs)
+  else:
+    return np.exp(np.negative((inputs / factor)**order))
 
 
 def _bytes_feature(value):
