@@ -685,13 +685,16 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, many_body_k=3, order=1, two_body=False):
+  def __init__(self, max_occurs, periodic=False, many_body_k=3, order=1,
+               two_body=False):
     """
     Initialization method. 
     
     Args:
       max_occurs: a `Dict[str, int]` as the maximum appearances for each kind of 
-        atomic specie. 
+        atomic specie.
+      periodic: a `bool` indicating whether this transformer is used for 
+        periodic structures or not.
       many_body_k: a `int` as the many body expansion factor.
       order: a `int` as the feature exponential order. 
       two_body: a `bool` indicating whether we shall use a standalone two-body
@@ -704,6 +707,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       max_occurs=max_occurs,
       order=order,
       two_body=two_body,
+      periodic=periodic,
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)

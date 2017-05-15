@@ -316,7 +316,8 @@ def may_build_dataset(verbose=True):
   # much easier if the all input samples are fixed-length.
   clf = kbody_transform.FixedLenMultiTransformer(
     max_occurs,
-    many_body_k,
+    many_body_k=many_body_k,
+    periodic=FLAGS.periodic,
     order=FLAGS.order,
     two_body=FLAGS.two_body,
   )
@@ -559,7 +560,7 @@ def main(unused):
     test_extract_mixed_xyz()
     test_build_dataset()
   else:
-    if FLAGS.is_periodic and (FLAGS.format != 'grendel'):
+    if FLAGS.periodic and (FLAGS.format != 'grendel'):
       tf.logging.error(
         "The xyz format must be `grendel` if `periodic` is True!")
       exit(1)
