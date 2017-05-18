@@ -55,11 +55,17 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       # Restores from checkpoint
       saver.restore(sess, ckpt.model_checkpoint_path)
       # Assuming model_checkpoint_path looks something like:
-      #   /my-favorite-path/cifar10_train/model.ckpt-0,
+      #   /my-favorite-path/model.ckpt-0,
       # extract global_step from it.
       global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
+      global_step = int(global_step)
     else:
-      print('No checkpoint file found')
+      tf.logging.info('No checkpoint file found')
+      return
+
+    # Wait until the parsed global step is not zero.
+    if (not FLAGS.run_once) and global_step <= 1:
+      tf.logging.info("The global step is <= 1. Wait ...")
       return
 
     # Start the queue runners.
@@ -92,7 +98,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       precision = maes.mean()
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
       dtime = datetime.now()
-      tf.logging.info('%s: step      = %d' % (dtime, int(global_step)))
+      tf.logging.info('%s: step      = %d' % (dtime, global_step))
       tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
 
