@@ -316,7 +316,8 @@ def may_build_dataset(verbose=True):
   # much easier if the all input samples are fixed-length.
   clf = kbody_transform.FixedLenMultiTransformer(
     max_occurs,
-    many_body_k,
+    many_body_k=many_body_k,
+    periodic=FLAGS.periodic,
     order=FLAGS.order,
     two_body=FLAGS.two_body,
   )

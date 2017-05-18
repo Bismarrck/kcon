@@ -186,13 +186,17 @@ def exponential(inputs, factor, order=1):
     inputs: Union[float, np.ndarray] as the inputs to scale.
     factor: a float or an array with the same shape of `inputs` as the scaling 
       factor(s).
-    order: a `int` as the exponential order.
+    order: a `int` as the exponential order. If `order` is 0, the inputs will 
+      not be scaled by `factor`.
 
   Returns:
     scaled: the scaled inputs.
 
   """
-  return np.exp(np.negative((inputs / factor)**order))
+  if order == 0:
+    return np.exp(-inputs)
+  else:
+    return np.exp(np.negative((inputs / factor)**order))
 
 
 def _bytes_feature(value):
@@ -206,7 +210,7 @@ class _Transformer:
   """
 
   def __init__(self, species, many_body_k=3, kbody_terms=None, split_dims=None,
-               order=1):
+               order=1, periodic=False):
     """
     Initialization method.
 
@@ -217,6 +221,8 @@ class _Transformer:
       split_dims: a `List[int]` as the dimensions for splitting inputs. If this
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
+      periodic: a `bool` indicating whether this transformer is used for 
+        periodic structures or not.
 
     """
     if split_dims is not None:
@@ -269,6 +275,7 @@ class _Transformer:
     self._multipliers = multipliers
     self._order = order
     self._num_ghosts = num_ghosts
+    self._periodic = periodic
 
     # The major dimension of each input feature matrix. Each missing kbody term
     # will be assigned with a zero row vector. `len(kbody_terms) - len(mapping)`
@@ -340,6 +347,13 @@ class _Transformer:
     """
     return self._num_ghosts
 
+  @property
+  def is_periodic(self):
+    """
+    Return True if this transformer is used for periodic structures.
+    """
+    return self._periodic
+
   def transform(self, coordinates, energies=None, lattices=None, pbcs=None):
     """
     Transform the given atomic coordinates and energies to input features and
@@ -371,7 +385,7 @@ class _Transformer:
       gvecs = None
 
     for i in range(num_examples):
-      if not FLAGS.periodic:
+      if not self.is_periodic:
         if num_ghosts > 0:
           coords = np.vstack((coordinates[i], gvecs))
           dists = pairwise_distances(coords)
@@ -517,7 +531,7 @@ class MultiTransformer:
     return self._num_ghosts > 0
 
   @property
-  def periodic(self):
+  def is_periodic(self):
     """
     Return True if this is a periodic transformer.
     """
@@ -559,7 +573,8 @@ class MultiTransformer:
         species,
         self.many_body_k,
         kbody_terms=self.kbody_terms,
-        order=self._order
+        order=self._order,
+        periodic=self._periodic
       )
       self._transformers[formula] = clf
     return clf
@@ -616,34 +631,51 @@ class MultiTransformer:
     weights = np.tile(clf.multipliers, (ntotal, 1))
     return features, split_dims, targets, weights, occurs
 
-  def compute_atomic_energies(self, species, y_kbody, y_1body):
+  def compute_atomic_energies(self, species, y_kbody, y_atomic_1body):
     """
     Compute the atomic energies given predicted kbody contributions.
     
     Args:
       species: a `List[str]` as the ordered atomic species for molecules.
       y_kbody: a 2D array as the k-body contribs.
-      y_1body: a 2D array as the one-body contribs.
+      y_atomic_1body: a `Dict[str, float]` as the one-body energy of each kind 
+        of atom.
 
     Returns:
       y_atomics: a 2D array as the atomic energies of each molecule.
 
     """
+
+    # Get the feature transformer
     clf = self._get_transformer(species)
-    split_dims = clf.split_dims
+
+    # Allocate arrays
     num_mols = y_kbody.shape[0]
     num_atoms = len(species)
+    split_dims = clf.split_dims
     y_atomics = np.zeros((num_mols, num_atoms))
+
+    # Setup the 1-body atomic energies.
+    for i in range(num_atoms):
+      y_atomics[:, i] = y_atomic_1body[species[i]]
+
+    # Add the higher order (2, 3, ...) corrections to the atomic energies.
+    ick2 = 1.0 / float(clf.ck2)
     for step in range(num_mols):
       for i, term in enumerate(clf.kbody_terms):
         if term not in clf.kbody_selections:
           continue
+        if GHOST in term:
+          n = 2
+          scale = 0.5
+        else:
+          n = int(clf.ck2)
+          scale = ick2
         istart = 0 if i == 0 else int(sum(split_dims[:i]))
-        for kbody_i, indices in enumerate(clf.kbody_selections[term]):
-          for atom_i in indices:
-            y_atomics[step, atom_i] += \
-              y_kbody[step, istart + kbody_i]
-    return y_atomics / float(self.ck2)
+        for ki, indices in enumerate(clf.kbody_selections[term]):
+          for ai in indices[:n]:
+            y_atomics[step, ai] += y_kbody[step, istart + ki] * scale
+    return y_atomics
 
 
 class FixedLenMultiTransformer(MultiTransformer):
@@ -653,13 +685,16 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, many_body_k=3, order=1, two_body=False):
+  def __init__(self, max_occurs, periodic=False, many_body_k=3, order=1,
+               two_body=False):
     """
     Initialization method. 
     
     Args:
       max_occurs: a `Dict[str, int]` as the maximum appearances for each kind of 
-        atomic specie. 
+        atomic specie.
+      periodic: a `bool` indicating whether this transformer is used for 
+        periodic structures or not.
       many_body_k: a `int` as the many body expansion factor.
       order: a `int` as the feature exponential order. 
       two_body: a `bool` indicating whether we shall use a standalone two-body
@@ -672,6 +707,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       max_occurs=max_occurs,
       order=order,
       two_body=two_body,
+      periodic=periodic,
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
@@ -717,7 +753,8 @@ class FixedLenMultiTransformer(MultiTransformer):
         self.many_body_k,
         self.kbody_terms,
         split_dims=self._split_dims,
-        order=self._order
+        order=self._order,
+        periodic=self._periodic
       )
       self._transformers[formula] = clf
     return clf
