@@ -280,7 +280,7 @@ def test(unused):
 
   tic = time.time()
   model_path = join(
-    dirname(__file__), "models", "TiO2.v5.k123", "model.ckpt-1302661")
+    dirname(__file__), "models", "TiO2.v5.k123", "model.ckpt-1733772")
   calculator = CNNPredictor(model_path, periodic=True)
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
