@@ -147,9 +147,7 @@ def evaluate():
     kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
 
     # Get features and energies for evaluation.
-    batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
-      train=False, shuffle=True,
-    )
+    batches = kbody.inputs(train=False, shuffle=False)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -164,9 +162,9 @@ def evaluate():
       raise ValueError("At least three convolution layers are required!")
 
     y_pred, _ = kbody.inference(
-      batch_inputs,
-      batch_occurs,
-      batch_weights,
+      batches[0],
+      batches[2],
+      batches[3],
       nat=nat,
       is_training=is_training,
       split_dims=batch_split_dims,
@@ -174,7 +172,8 @@ def evaluate():
       verbose=True,
       conv_sizes=conv_sizes
     )
-    y_true = tf.cast(batch_true, tf.float32)
+    y_true = tf.cast(batches[1], tf.float32)
+    y_pred.set_shape(y_true.get_shape().as_list())
 
     # Calculate predictions.
     mae_op = tf.losses.absolute_difference(y_true, y_pred)

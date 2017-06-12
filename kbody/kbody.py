@@ -401,21 +401,24 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
   return y_total, contribs
 
 
-def loss(y_true, y_pred):
+def loss(y_true, y_pred, weights=None):
   """
   Return the total loss tensor.
 
   Args:
     y_true: the desired energies.
     y_pred: the predicted energies.
+    weights: the loss weights for the energies.
 
   Returns:
     loss: the total loss tensor.
 
   """
   with tf.name_scope("RMSE"):
+    if weights is None:
+      weights = 1.0
     mean_squared_error = tf.losses.mean_squared_error(
-      y_true, y_pred, scope="sMSE", loss_collection=None)
+      y_true, y_pred, scope="sMSE", loss_collection=None, weights=weights)
     rmse = tf.sqrt(mean_squared_error, name="sRMSE")
     tf.add_to_collection('losses', rmse)
     return tf.add_n(tf.get_collection('losses'), name='total_loss')

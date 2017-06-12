@@ -12,47 +12,50 @@ import time
 import sys
 import json
 import kbody_transform
-from os.path import join, isfile, isdir, dirname
+from os.path import join, isfile, isdir
 from os import makedirs
 from sklearn.model_selection import train_test_split
 from scipy.misc import comb
 from collections import Counter
+from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
-flags = tf.app.flags
 
-flags.DEFINE_string("binary_dir", "./binary",
-                    """The directory for storing binary datasets.""")
-flags.DEFINE_string('dataset', 'TaB20opted',
-                    """Define the dataset to use. This is also the name
-                    of the xyz file to load.""")
-flags.DEFINE_string('format', 'xyz',
-                    """The format of the xyz file.""")
-flags.DEFINE_integer('num_examples', 5000,
-                     """The total number of examples to use.""")
-flags.DEFINE_integer('num_atoms', 17,
-                     """The number of atoms in each molecule.""")
-flags.DEFINE_integer('many_body_k', 3,
-                     """The many-body-expansion order.""")
-flags.DEFINE_boolean('two_body', False,
-                     """Include a standalone two-body term or not.""")
-flags.DEFINE_float('test_size', 0.2,
-                   """The proportion of the dataset to include in the test 
-                   split""")
-flags.DEFINE_integer("order", 1,
-                     """The exponential order for normalizing distances.""")
-flags.DEFINE_boolean('use_fp64', False,
-                     """Use double precision floats if True.""")
-flags.DEFINE_boolean('run_input_test', False,
-                     """Run the input unit test if True.""")
-flags.DEFINE_float('unit', None,
-                   """Override the default unit if this is not None.""")
-flags.DEFINE_boolean('periodic', False,
-                     """The isomers are periodic structures.""")
+tf.app.flags.DEFINE_string("binary_dir", "./binary",
+                           """The directory for storing binary datasets.""")
+tf.app.flags.DEFINE_string('dataset', 'TaB20opted',
+                           """Define the dataset to use. This is also the name
+                           of the xyz file to load.""")
+tf.app.flags.DEFINE_string('format', 'xyz',
+                           """The format of the xyz file.""")
+tf.app.flags.DEFINE_integer('num_examples', 5000,
+                            """The total number of examples to use.""")
+tf.app.flags.DEFINE_integer('num_atoms', 17,
+                            """The number of atoms in each molecule.""")
+tf.app.flags.DEFINE_integer('many_body_k', 3,
+                            """The many-body-expansion order.""")
+tf.app.flags.DEFINE_boolean('two_body', False,
+                            """Include a standalone two-body term or not.""")
+tf.app.flags.DEFINE_float('test_size', 0.2,
+                          """The proportion of the dataset to include in the 
+                          test split""")
+tf.app.flags.DEFINE_integer("order", 1,
+                            """The exponential order for normalizing 
+                            distances.""")
+tf.app.flags.DEFINE_boolean('use_fp64', False,
+                            """Use double precision floats if True.""")
+tf.app.flags.DEFINE_boolean('run_input_test', False,
+                            """Run the input unit test if True.""")
+tf.app.flags.DEFINE_float('unit', None,
+                          """Override the default unit if this is not None.""")
+tf.app.flags.DEFINE_boolean('periodic', False,
+                            """The isomers are periodic structures.""")
+tf.app.flags.DEFINE_float('weighted_loss', None,
+                          """The kT (eV) for computing the weighted loss. """)
 
-FLAGS = flags.FLAGS
+FLAGS = tf.app.flags.FLAGS
 
 # Set the random state
 SEED = 218
@@ -65,6 +68,15 @@ hartree_to_ev = 27.211
 
 # a.u to angstroms
 au_to_angstrom = 0.52917721092
+
+
+def exp_loss_weight_fn(x, x0=0.0, beta=1.0):
+  """
+  An exponential function for computing the weighted loss.
+
+  I.e. \\(y = \e^{-\beta \cdot (x - x_0)}\\).
+  """
+  return np.float32(np.exp(-(x - x0) * beta))
 
 
 def get_float_type(convert=False):
@@ -225,13 +237,14 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
   return array_of_species, energies, coords, forces, lattices, pbcs
 
 
-def get_filenames(train=True):
+def get_filenames(train=True, dataset=None):
   """
   Return the binary data file and the config file.
 
   Args:
     train: boolean indicating whether the training data file or the testing file
       should be returned.
+    dataset: a `str` as the name of the dataset.
 
   Returns:
     (binfile, jsonfile): the binary file to read data and the json file to read
@@ -243,7 +256,7 @@ def get_filenames(train=True):
   if not isdir(binary_dir):
     makedirs(binary_dir)
 
-  fname = FLAGS.dataset
+  fname = dataset or FLAGS.dataset
   records = {"train": (join(binary_dir, "%s-train.tfrecords" % fname),
                        join(binary_dir, "%s-train.json" % fname)),
              "test": (join(binary_dir, "%s-test.tfrecords" % fname),
@@ -255,17 +268,18 @@ def get_filenames(train=True):
     return records['test']
 
 
-def may_build_dataset(verbose=True):
+def may_build_dataset(dataset=None, verbose=True):
   """
   Build the dataset if needed.
 
   Args:
     verbose: boolean indicating whether the building progress shall be printed
       or not.
+    dataset: a `str` as the name of the dataset.
 
   """
-  train_file, _ = get_filenames(train=True)
-  test_file, _ = get_filenames(train=False)
+  train_file, _ = get_filenames(train=True, dataset=dataset)
+  test_file, _ = get_filenames(train=False, dataset=dataset)
 
   # Check if the xyz file is accessible.
   xyzfile = join("..", "datasets", "%s.xyz" % FLAGS.dataset)
@@ -281,6 +295,7 @@ def may_build_dataset(verbose=True):
     verbose=verbose,
     xyz_format=FLAGS.format,
   )
+  min_ener = energies.min()
   indices = list(range(len(coordinates)))
 
   # Transform the coordinates to input features and save these features in a
@@ -312,6 +327,13 @@ def may_build_dataset(verbose=True):
     for specie, times in c.items():
       max_occurs[specie] = max(max_occurs.get(specie, 0), times)
 
+  # Setup the function for computing weighted losses.
+  if FLAGS.weighted_loss is None:
+    loss_weight_fn = None
+  else:
+    beta = 1.0 / FLAGS.weighted_loss
+    loss_weight_fn = partial(exp_loss_weight_fn, x0=min_ener, beta=beta)
+
   # Use a `FixedLenMultiTransformer` to generate features because it will be
   # much easier if the all input samples are fixed-length.
   clf = kbody_transform.FixedLenMultiTransformer(
@@ -323,10 +345,10 @@ def may_build_dataset(verbose=True):
   )
   clf.transform_and_save(species_test, energies_test, coords_test,
                          test_file, indices_test, lattices_test, pbcs_test,
-                         one_body_weights=False)
+                         one_body_weights=False, loss_weight_fn=loss_weight_fn)
   clf.transform_and_save(species_train, energies_train, coords_train,
                          train_file, indices_train, lattices_train, pbcs_train,
-                         one_body_weights=True)
+                         one_body_weights=True, loss_weight_fn=loss_weight_fn)
 
 
 def read_and_decode(filename_queue, cnk, ck2, nat):
@@ -357,6 +379,7 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
       'energy': tf.FixedLenFeature([], tf.string),
       'occurs': tf.FixedLenFeature([], tf.string),
       'weights': tf.FixedLenFeature([], tf.string),
+      'loss_weight': tf.FixedLenFeature([], tf.float32)
     })
 
   features = tf.decode_raw(example['features'], dtype)
@@ -375,10 +398,12 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
   weights.set_shape([cnk, ])
   weights = tf.reshape(weights, [1, cnk, 1])
 
-  return features, energy, occurs, weights
+  loss_weight = tf.cast(example['loss_weight'], tf.float32)
+
+  return features, energy, occurs, weights, loss_weight
 
 
-def inputs(train, batch_size=25, shuffle=True):
+def inputs(train, batch_size=25, shuffle=True, dataset=None):
   """
   Reads mixed input data.
 
@@ -386,24 +411,26 @@ def inputs(train, batch_size=25, shuffle=True):
     train: Selects between the training (True) and validation (False) data.
     batch_size: Number of examples per returned batch.
     shuffle: boolean indicating whether the batches shall be shuffled or not.
+    dataset: a `str` as the name of the dataset.
 
   Returns:
-    A tuple (features, energies, weights), where:
-    * features is a float tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
-      the range [0.0, 1.0].
-    * energies is a float tensor with shape [batch_size, ].
-    * weights is a float tensor with shape [batch_size, C(N,k)].
-    * occurs is a float tensor with shape [batch_size, num_atom_types].
+    batch: a `Batch`.
+      * features: a `float` tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
+        the range [0.0, 1.0].
+      * energies: a `float` tensor with shape [batch_size, ].
+      * weights: a `float` tensor with shape [batch_size, C(N,k)].
+      * occurs: a `float` tensor with shape [batch_size, num_atom_types].
+      * loss_weight: a `float`.
 
     Note that an tf.train.QueueRunner is added to the graph, which
     must be run using e.g. tf.train.start_queue_runners().
 
   """
 
-  filename, _ = get_filenames(train=train)
+  filename, _ = get_filenames(train=train, dataset=dataset)
   filenames = [filename]
 
-  settings = inputs_settings(train=train)
+  settings = inputs_settings(train=train, dataset=dataset)
   cnk = settings["total_dim"]
   nat = settings["nat"]
   ck2 = comb(FLAGS.many_body_k, 2, exact=True)
@@ -415,7 +442,7 @@ def inputs(train, batch_size=25, shuffle=True):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, occurs, weights = read_and_decode(
+    features, energies, occurs, weights, loss_weight = read_and_decode(
       filename_queue, cnk, ck2, nat
     )
 
@@ -424,134 +451,37 @@ def inputs(train, batch_size=25, shuffle=True):
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
       batches = tf.train.batch(
-        [features, energies, occurs, weights],
+        [features, energies, occurs, weights, loss_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
       batches = tf.train.shuffle_batch(
-        [features, energies, occurs, weights],
+        [features, energies, occurs, weights, loss_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
         min_after_dequeue=1000
       )
-
     return batches
 
 
-def inputs_settings(train=True):
+def inputs_settings(train=True, dataset=None):
   """
   Return the global settings for inputs.
 
   Args:
     train: boolean indicating if one should return settings for training or
       validation.
+    dataset: a `str` as the name of the dataset.
 
   Returns:
     settings: a dict of settings.
 
   """
-  _, cfgfile = get_filenames(train=train)
+  _, cfgfile = get_filenames(train=train, dataset=dataset)
   with open(cfgfile) as f:
     return dict(json.load(f))
-
-
-def test_extract_mixed_xyz():
-  """
-  Test parsing the mixed xyz file `qm7.xyz`.
-  """
-  from scipy.io import loadmat
-
-  mixed_file = join(dirname(__file__), "..", "datasets", "qm7.xyz")
-  array_of_species, energies, coords, _, _, _ = extract_xyz(
-    mixed_file,
-    num_examples=100000,
-    num_atoms=23,
-  )
-  qm7_mat = join(dirname(__file__), "..", "datasets", "qm7.mat")
-  ar = loadmat(qm7_mat)
-  kcal_to_hartree = 1.0 / 627.509474
-  t = ar["T"].flatten() * kcal_to_hartree * hartree_to_ev
-  r = np.multiply(ar["R"], au_to_angstrom)
-  lefts = np.ones(len(array_of_species), dtype=bool)
-  for i in range(len(array_of_species)):
-    j = np.argmin(np.abs(energies[i] - t))
-    if lefts[j]:
-      n = len(array_of_species[i])
-      d = np.linalg.norm(coords[i][:n] - r[j][:n])
-      if d < 0.1:
-        lefts[j] = False
-  assert not np.all(lefts)
-
-
-def test_build_dataset():
-  """
-  Test building the mixed QM7 dataset.
-  """
-
-  from sklearn.metrics import pairwise_distances
-
-  xyzfile = join("..", "datasets", "qm7.xyz")
-  if not isfile(xyzfile):
-    raise IOError("The dataset file %s can not be accessed!" % xyzfile)
-
-  array_of_species, raw_energies, raw_coordinates, _, _, _ = extract_xyz(
-    xyzfile,
-    num_examples=8000,
-    num_atoms=23,
-    verbose=False,
-  )
-  indices = list(range(len(raw_coordinates)))
-
-  (coords_train, coords_test,
-   energies_train, energies_test,
-   indices_train, indices_test,
-   array_of_species_train, array_of_species_test) = train_test_split(
-    raw_coordinates,
-    raw_energies,
-    indices,
-    array_of_species,
-    test_size=0.2,
-    random_state=SEED
-  )
-
-  r_cc = 1.5
-  many_body_k = 3
-  max_occurs = {}
-  for symbols in array_of_species:
-    c = Counter(symbols)
-    for specie, times in c.items():
-      max_occurs[specie] = max(max_occurs.get(specie, 0), times)
-  clf = kbody_transform.FixedLenMultiTransformer(max_occurs, many_body_k)
-
-  train_file = join(FLAGS.binary_dir, "qm7-train.tfrecords")
-  if not isfile(train_file):
-    clf.transform_and_save(array_of_species_train, energies_train, coords_train,
-                           train_file, indices=indices)
-
-  with tf.Session() as sess:
-
-    x_op, y_pred_op, z_op, w_op = inputs(
-      train=True, shuffle=False, batch_size=5
-    )
-    tf.train.start_queue_runners(sess=sess)
-
-    # --------
-    # Features
-    # --------
-    features, energies, occurs, weights = sess.run(
-      [x_op, y_pred_op, z_op, w_op]
-    )
-    species = array_of_species_train[1]
-    n = len(species)
-    coords = coords_train[1][:n]
-    dists = pairwise_distances(coords[:3])
-    v = np.sort(np.exp(-dists / r_cc)[[0, 0, 1], [1, 2, 2]])
-    assert np.linalg.norm(v - features[1, 0, 0]) < 0.001
-    assert np.abs(weights[1].flatten().sum() - comb(n, 3)) < 0.001
-
-    time.sleep(5)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring

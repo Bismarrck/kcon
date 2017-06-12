@@ -80,9 +80,7 @@ def train_model():
     initial_one_body_weights = settings["initial_one_body_weights"]
 
     # Get features and energies.
-    batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
-      train=True
-    )
+    batches = kbody.inputs(train=True)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
@@ -98,9 +96,9 @@ def train_model():
 
     # Inference
     y_pred, _ = kbody.inference(
-      batch_inputs,
-      batch_occurs,
-      batch_weights,
+      batches[0],
+      batches[2],
+      batches[3],
       nat=nat,
       is_training=is_training,
       split_dims=batch_split_dims,
@@ -112,11 +110,11 @@ def train_model():
 
     # Cast the true values to float32 and set the shape of the `y_pred`
     # explicitly.
-    y_true = tf.cast(batch_true, tf.float32)
+    y_true = tf.cast(batches[1], tf.float32)
     y_pred.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kbody.loss(y_true, y_pred)
+    loss = kbody.loss(y_true, y_pred, batches[4])
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
