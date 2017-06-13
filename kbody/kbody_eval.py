@@ -13,7 +13,7 @@ import numpy as np
 import tensorflow as tf
 import kbody
 from utils import set_logging_configs
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join
 
 FLAGS = tf.app.flags.FLAGS
@@ -32,9 +32,11 @@ tf.app.flags.DEFINE_boolean('run_once', False,
                             """Whether to run eval only once.""")
 tf.app.flags.DEFINE_string('logfile', 'eval.log',
                            """The file to write evaluation logs.""")
+tf.app.flags.DEFINE_boolean('output_acc_error', False,
+                            """Output the accumulative error.""")
 
 
-def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
+def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
               feed_dict):
   """
   Run Eval once.
@@ -44,7 +46,6 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
     summary_writer: Summary writer.
     y_true_op: The Tensor used for fetching true predictions.
     y_pred_op: The Tensor used for fetching neural network predictions.
-    mae_op: The `mean-absolute-error` op.
     summary_op: Summary op.
     feed_dict: The dict used for `sess.run`.
   
@@ -76,27 +77,23 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
         threads.extend(qr.create_threads(sess, coord=coord, daemon=True,
                                          start=True))
-
-      num_iter = int(math.ceil(FLAGS.num_evals / FLAGS.batch_size))
-      maes = np.zeros((num_iter, ), dtype=np.float32)
-      y_true = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
-      y_pred = np.zeros((FLAGS.num_evals, ), dtype=np.float32)
+      num_evals = FLAGS.num_evals
+      num_iter = int(math.ceil(num_evals / FLAGS.batch_size))
+      y_true = np.zeros((num_evals, ), dtype=np.float32)
+      y_pred = np.zeros((num_evals, ), dtype=np.float32)
       step = 0
       while step < num_iter and not coord.should_stop():
-        mae_val, y_true_, y_pred_ = sess.run(
-          [mae_op, y_true_op, y_pred_op],
-          feed_dict=feed_dict
-        )
-        maes[step] = mae_val
+        y_true_, y_pred_ = sess.run([y_true_op, y_pred_op], feed_dict=feed_dict)
         istart = step * FLAGS.batch_size
-        istop = min(istart + FLAGS.batch_size, FLAGS.num_evals)
-        y_true[istart: istop] = y_true_
-        y_pred[istart: istop] = y_pred_
+        istop = min(istart + FLAGS.batch_size, num_evals)
+        y_true[istart: istop] = -y_true_
+        y_pred[istart: istop] = -y_pred_
         step += 1
 
       # Compute the Mean-Absolute-Error @ 1.
-      precision = maes.mean()
+      precision = mean_absolute_error(y_true, y_pred)
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+
       dtime = datetime.now()
       tf.logging.info('%s: step      = %d' % (dtime, global_step))
       tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
@@ -107,10 +104,19 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, mae_op, summary_op,
       tf.logging.info(" * R2 score: %.6f" % score)
 
       # Randomly output 10 predictions and true values
-      indices = np.random.choice(range(FLAGS.num_evals), size=10)
-      for i in indices:
-        tf.logging.info(
-          " * Predicted: %10.6f,  Real: %10.6f" % (y_pred[i], y_true[i]))
+      if FLAGS.output_acc_error:
+        y_diff = np.abs(y_true - y_pred)
+        y_diff = y_diff[np.argsort(y_true)]
+        for i in range(1, 10):
+          percent = float(i) / 10.0
+          n = int(percent * num_evals)
+          mae = np.mean(y_diff[:n])
+          tf.logging.info(" * %2d%% MAE: % 8.3f" % (percent * 100.0, mae))
+      else:
+        indices = np.random.choice(range(FLAGS.num_evals), size=10)
+        for i in indices:
+          tf.logging.info(
+            " * Predicted: % 15.6f,  Real: % 15.6f" % (y_pred[i], y_true[i]))
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
@@ -175,9 +181,6 @@ def evaluate():
     y_true = tf.cast(batches[1], tf.float32)
     y_pred.set_shape(y_true.get_shape().as_list())
 
-    # Calculate predictions.
-    mae_op = tf.losses.absolute_difference(y_true, y_pred)
-
     # Restore the moving average version of the learned variables for eval.
     # variable_averages = tf.train.ExponentialMovingAverage(
     #     kbody.MOVING_AVERAGE_DECAY)
@@ -194,8 +197,7 @@ def evaluate():
     feed_dict = {batch_split_dims: split_dims, is_training: False}
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_pred, mae_op,
-                summary_op, feed_dict)
+      eval_once(saver, summary_writer, y_true, y_pred, summary_op, feed_dict)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)
