@@ -49,7 +49,7 @@ MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
 # names of the summaries when visualizing a model.
-TOWER_NAME = 'gpu'
+TOWER_NAME = 'tower'
 
 
 def variable_summaries(tensor):
@@ -380,7 +380,6 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
     print_activations(one_body)
 
   with tf.name_scope("Outputs"):
-
     with tf.name_scope("kbody"):
       y_total_kbody = tf.reduce_sum(contribs, axis=axis, name="Total")
       y_total_kbody.set_shape([None, 1, 1])
@@ -395,9 +394,8 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
 
     y_total = tf.add(y_total_1body, y_total_kbody, "MBE")
 
-    if verbose:
-      get_number_of_trainable_parameters(verbose=verbose)
-
+  if verbose:
+    get_number_of_trainable_parameters(verbose=verbose)
   return y_total, contribs
 
 
@@ -416,10 +414,10 @@ def loss(y_true, y_pred, weights=None):
   """
   with tf.name_scope("RMSE"):
     if weights is None:
-      weights = 1.0
+      weights = tf.constant(1.0, name='weight')
     mean_squared_error = tf.losses.mean_squared_error(
-      y_true, y_pred, scope="sMSE", loss_collection=None, weights=weights)
-    rmse = tf.sqrt(mean_squared_error, name="sRMSE")
+      y_true, y_pred, scope="MSE", loss_collection=None, weights=weights)
+    rmse = tf.sqrt(mean_squared_error, name="RMSE")
     tf.add_to_collection('losses', rmse)
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
