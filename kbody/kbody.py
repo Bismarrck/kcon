@@ -7,10 +7,12 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import kbody_input
-from itertools import repeat
+from kbody_input import SEED
+from utils import leaky_relu
+from tensorflow.python.ops import init_ops
 from tensorflow.contrib.layers.python.layers import conv2d, flatten, batch_norm
 from tensorflow.contrib.layers.python.layers import initializers
-from tensorflow.python.ops import init_ops
+from tensorflow.contrib.framework.python.ops import arg_scope
 from scipy.misc import comb
 
 __author__ = 'Xin Chen'
@@ -21,8 +23,6 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_boolean('disable_biases', False,
-                            """Disable biases for all conv layers.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.1,
                           """The initial learning rate.""")
 tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
@@ -31,16 +31,12 @@ tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            """Comma-separated floats as the initial one-body 
                            weights. Defaults to `ones_initialier`.""")
-tf.app.flags.DEFINE_boolean('use_linear_output', True,
-                            """Set this to True to use linear outputs.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('xavier', True,
-                            """Use the xavier algorithm to initialize weights 
-                            if this is True. Otherwise the truncated normal 
-                            will be used.""")
 tf.app.flags.DEFINE_boolean('batch_norm', False,
                             """Use batch normalization if True.""")
+tf.app.flags.DEFINE_string('activation_fn', "lrelu",
+                           """Set the activation function for conv layers.""")
 
 
 # Constants describing the training process.
@@ -50,6 +46,31 @@ MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
 # to differentiate the operations. Note that this prefix is removed from the
 # names of the summaries when visualizing a model.
 TOWER_NAME = 'tower'
+
+
+def get_activation_fn(name='tanh'):
+  """
+  Return a callable activation function.
+
+  Args:
+    name: a `str` as the name of the activation function.
+
+  Returns:
+    fn: a `Callable` as the activation function.
+
+  """
+  if name.lower() == 'tanh':
+    return tf.nn.tanh
+  elif name.lower() == 'relu':
+    return tf.nn.relu
+  elif name.lower() == 'leaky_relu' or name.lower() == 'lrelu':
+    return leaky_relu
+  elif name.lower() == 'softplus':
+    return tf.nn.softplus
+  elif name.lower() == 'sigmoid':
+    return tf.nn.sigmoid
+  else:
+    raise ValueError("The %s activation is not supported!".format(name))
 
 
 def variable_summaries(tensor):
@@ -145,8 +166,8 @@ def inputs_settings(train=True):
   return kbody_input.inputs_settings(train=train)
 
 
-def inference_sum_kbody(conv, kbody_term, ck2, is_training,
-                        sizes=(60, 120, 120, 60), verbose=True):
+def inference_sum_kbody(conv, kbody_term, ck2, is_training, activation_fn,
+                        conv_sizes=None, verbose=True):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -157,7 +178,8 @@ def inference_sum_kbody(conv, kbody_term, ck2, is_training,
     ck2: a `int` as the value of C(k,2).
     is_training: a `bool` type placeholder tensor indicating whether this 
       inference is for training or not.
-    sizes: a `List[int]` as the number of convolution kernels for each layer.
+    activation_fn: a `Callable` as the activation function for each conv layer.
+    conv_sizes: a `List[int]` as the number of kernels for each conv layer.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
 
   Returns:
@@ -169,11 +191,8 @@ def inference_sum_kbody(conv, kbody_term, ck2, is_training,
   if verbose:
     tf.logging.info("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
 
-  num_layers = len(sizes)
-  activation_fn = list(repeat(tf.nn.tanh, num_layers))
+  conv_sizes = conv_sizes or (40, 50, 60, 40)
   kernel_size = 1
-  stride = 1
-  padding = 'SAME'
   dtype = tf.float32
 
   # Explicitly set the shape of the input tensor. There are two flexible axis in
@@ -182,61 +201,33 @@ def inference_sum_kbody(conv, kbody_term, ck2, is_training,
   conv.set_shape([None, 1, None, ck2])
 
   # Setup the initializers and normalization function.
-  if FLAGS.xavier:
-    weights_initializer = initializers.xavier_initializer(
-      seed=kbody_input.SEED, dtype=dtype)
-  else:
-    weights_initializer = init_ops.truncated_normal_initializer(
-      seed=kbody_input.SEED, dtype=dtype)
-
-  if FLAGS.disable_biases:
-    biases_initializer = None
-  else:
-    biases_initializer = init_ops.zeros_initializer(dtype=dtype)
+  weights_initializer = initializers.xavier_initializer(seed=SEED, dtype=dtype)
 
   if FLAGS.batch_norm:
     normalizer_fn = batch_norm
-    normalizer_params = dict(is_training=is_training)
   else:
     normalizer_fn = None
-    normalizer_params = {}
 
-  # Build the network for this block
-  for i, n_units in enumerate(sizes):
-    conv = conv2d(
-      conv,
-      n_units,
-      kernel_size,
-      activation_fn=activation_fn[i],
-      stride=stride,
-      padding=padding,
-      scope="Hidden{:d}".format(i + 1),
-      weights_initializer=weights_initializer,
-      biases_initializer=biases_initializer,
-      normalizer_fn=normalizer_fn,
-      normalizer_params=normalizer_params,
-    )
+  # Build the convolution neural network for this interaction block
+  with arg_scope([conv2d],
+                 kernel_size=kernel_size,
+                 weights_initializer=weights_initializer,
+                 normalizer_params=dict(is_training=is_training)):
+    for i, num_kernels in enumerate(conv_sizes):
+      conv = conv2d(conv,
+                    num_outputs=num_kernels,
+                    activation_fn=activation_fn,
+                    scope="Hidden{:d}".format(i + 1),
+                    normalizer_fn=normalizer_fn)
+      if verbose:
+        print_activations(conv)
+
+    conv = conv2d(conv, num_outputs=1, activation_fn=None,
+                  biases_initializer=None, scope="k-Body")
     if verbose:
       print_activations(conv)
-
-  kbody_energies = conv2d(
-    conv,
-    1,
-    kernel_size,
-    activation_fn=None if FLAGS.use_linear_output else tf.nn.relu,
-    biases_initializer=None,
-    weights_initializer=weights_initializer,
-    stride=stride,
-    padding=padding,
-    scope="k-Body"
-  )
-  if verbose:
-    print_activations(kbody_energies)
-    tf.logging.info("")
-
-  # Directly return the 4D tensor of kbody energies. The sum/flatten will be
-  # done in the main inference function.
-  return kbody_energies
+      tf.logging.info("")
+    return conv
 
 
 def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
@@ -270,7 +261,6 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
     raise Exception("The number of initial weights should be %d!" % nat)
 
   weights_initializer = init_ops.constant_initializer(values)
-
   return conv2d(
     batch_occurs,
     num_outputs=num_outputs,
@@ -279,13 +269,49 @@ def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
     weights_initializer=weights_initializer,
     biases_initializer=None,
     scope='one-body',
-    trainable=(not FLAGS.fixed_one_body),
   )
 
 
+def _add_placeholders(ck2, nat):
+  """
+  Return the placeholder tensors. With these placeholders we can use trained
+  meta models without inference.
+  """
+  with tf.name_scope("placeholders"):
+    use_extra_ = tf.placeholder_with_default(
+      False, shape=None, name="use_extra_inputs")
+    inputs_ = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, ck2]), shape=[None, 1, None, ck2], name="extra_inputs")
+    weights_ = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, 1]), shape=[None, 1, None, 1], name="extra_weights")
+    occurs_ = tf.placeholder_with_default(
+      tf.zeros([1, 1, 1, nat]), shape=[None, 1, 1, nat], name="extra_occurs")
+    return use_extra_, inputs_, weights_, occurs_
+
+
+def _split_inputs(batches, ck2, nat, split_dims):
+  """
+  Split the inputs into separated interaction partitions.
+  """
+  use_extra_, inputs_, occurs_, weights_ = _add_placeholders(ck2, nat)
+
+  # Choose the inputs tensor based on `use_placeholder`.
+  with tf.name_scope("InputsFlow"):
+    features, occurs, weights = tf.cond(
+      use_extra_,
+      fn1=lambda: (inputs_, occurs_, weights_),
+      fn2=lambda: batches,
+      name="select"
+    )
+    convs = tf.split(features, split_dims, axis=2, name="partition")
+    occurs.set_shape([None, 1, 1, nat])
+    weights.set_shape([None, 1, None, 1])
+    return convs, occurs, weights
+
+
 def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
-              kbody_terms, is_training, verbose=True,
-              conv_sizes=(60, 120, 120, 60), initial_one_body_weights=None):
+              kbody_terms, is_training, verbose=True, conv_sizes=None,
+              initial_one_body_weights=None):
   """
   The general inference function.
 
@@ -313,75 +339,38 @@ def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
 
   """
 
-  # Build up the placeholder tensors.
-  #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
-  #     alternative inputs which can be directly feeded.
-  #   use_extra: a boolean Tensor indicating whether we should use the
-  #     placeholder inputs or the batch inputs.
-
-  with tf.name_scope("placeholders"):
-    ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
-    use_extra = tf.placeholder_with_default(
-      False,
-      shape=None,
-      name="use_extra_inputs"
-    )
-    extra_inputs = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, ck2]),
-      shape=[None, 1, None, ck2],
-      name="extra_inputs"
-    )
-    extra_weights = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, 1]),
-      shape=[None, 1, None, 1],
-      name="extra_weights"
-    )
-    extra_occurs = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, nat]),
-      shape=[None, 1, 1, nat],
-      name="extra_occurs"
-    )
-
-  # Choose the inputs tensor based on `use_placeholder`.
-  with tf.name_scope("InputsFlow"):
-    selected_inputs, selected_occurs, selected_weights = tf.cond(
-      use_extra,
-      lambda: (extra_inputs, extra_occurs, extra_weights),
-      lambda: (batch_inputs, batch_occurs, batch_weights),
-      name="selected"
-    )
-
-    axis = tf.constant(2, dtype=tf.int32, name="CNK")
-    convs = tf.split(selected_inputs, split_dims, axis=axis, name="Partition")
+  ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
+  batches = (batch_inputs, batch_occurs, batch_weights)
+  convs, occurs, weights = _split_inputs(batches, ck2, nat, split_dims)
 
   kbody_energies = []
-
   for i, conv in enumerate(convs):
     with tf.variable_scope(kbody_terms[i]):
       kbody = inference_sum_kbody(
         conv,
         kbody_terms[i],
         ck2,
+        activation_fn=get_activation_fn(FLAGS.activation_fn),
         is_training=is_training,
-        sizes=conv_sizes,
+        conv_sizes=conv_sizes,
         verbose=verbose,
       )
     kbody_energies.append(kbody)
 
-  contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
-  contribs = tf.multiply(contribs, selected_weights, name="Weighted")
+  contribs = tf.concat(kbody_energies, axis=2, name="Contribs")
+  contribs = tf.multiply(contribs, weights, name="Weighted")
   tf.summary.histogram("kbody_contribs", contribs)
   if verbose:
     print_activations(contribs)
 
-  one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
+  one_body = inference_one_body(occurs, nat, initial_one_body_weights)
   tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)
 
   with tf.name_scope("Outputs"):
     with tf.name_scope("kbody"):
-      y_total_kbody = tf.reduce_sum(contribs, axis=axis, name="Total")
+      y_total_kbody = tf.reduce_sum(contribs, axis=2, name="Total")
       y_total_kbody.set_shape([None, 1, 1])
       if verbose:
         print_activations(y_total_kbody)

@@ -182,12 +182,10 @@ def evaluate():
     y_pred.set_shape(y_true.get_shape().as_list())
 
     # Restore the moving average version of the learned variables for eval.
-    # variable_averages = tf.train.ExponentialMovingAverage(
-    #     kbody.MOVING_AVERAGE_DECAY)
-    # variables_to_restore = variable_averages.variables_to_restore()
-    # saver = tf.train.Saver(variables_to_restore)
-    # FIXME: there is something wrong with the moving average.
-    saver = tf.train.Saver()
+    variable_averages = tf.train.ExponentialMovingAverage(
+        kbody.MOVING_AVERAGE_DECAY)
+    variables_to_restore = variable_averages.variables_to_restore()
+    saver = tf.train.Saver(variables_to_restore)
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()

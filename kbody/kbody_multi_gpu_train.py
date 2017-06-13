@@ -316,9 +316,6 @@ def train_with_multiple_gpus():
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(argv=None):
-  if FLAGS.batch_norm:
-    print("This multi-gpu version does not support batch normalization yet!")
-    exit(0)
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)
   train_with_multiple_gpus()
