@@ -76,9 +76,7 @@ def tower_loss(scope):
   initial_one_body_weights = settings["initial_one_body_weights"]
 
   # Get features and energies.
-  batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
-    train=True
-  )
+  batches = kbody.inputs(train=True)
 
   # Build a Graph that computes the logits predictions from the
   # inference model.
@@ -93,9 +91,9 @@ def tower_loss(scope):
 
   # Inference
   y_pred, _ = kbody.inference(
-    batch_inputs,
-    batch_occurs,
-    batch_weights,
+    batches[0],
+    batches[2],
+    batches[3],
     nat=nat,
     is_training=is_training,
     split_dims=batch_split_dims,
@@ -112,7 +110,7 @@ def tower_loss(scope):
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.
-  _ = kbody.loss(y_true, y_pred)
+  kbody.loss(y_true, y_pred, weights=batches[4])
 
   # Assemble all of the losses for the current tower only.
   losses = tf.get_collection('losses', scope)
@@ -120,14 +118,20 @@ def tower_loss(scope):
   # Calculate the total loss for the current tower.
   total_loss = tf.add_n(losses, name='total_loss')
 
+  # Compute the moving average of all individual losses and the total loss.
+  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages_op = loss_averages.apply(losses + [total_loss])
+
   # Attach a scalar summary to all individual losses and the total loss; do the
   # same for the averaged version of the losses.
   for l in losses + [total_loss]:
     # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
-    loss_name = re.sub('%s_[0-9]*/' % kbody.TOWER_NAME, '', l.op.name)
+    loss_name = re.sub('%s[0-9]*/' % kbody.TOWER_NAME, '', l.op.name)
     tf.summary.scalar(loss_name, l)
 
+  with tf.control_dependencies([loss_averages_op]):
+    total_loss = tf.identity(total_loss)
   return total_loss
 
 
@@ -187,7 +191,7 @@ def train_with_multiple_gpus():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Create an optimizer that performs gradient descent.
-    opt = tf.train.AdadeltaOptimizer(FLAGS.learning_rate)
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
@@ -198,7 +202,7 @@ def train_with_multiple_gpus():
     with tf.variable_scope(tf.get_variable_scope()):
       for i in range(FLAGS.num_gpus):
         with tf.device('/gpu:%d' % i):
-          with tf.name_scope('%s_%d' % (kbody.TOWER_NAME, i)) as scope:
+          with tf.name_scope('%s%02d' % (kbody.TOWER_NAME, i)) as scope:
             # Calculate the loss for one tower of the sum-kbody-cnn model.
             # This function constructs the entire model but shares the variables
             # across all towers.
@@ -226,12 +230,7 @@ def train_with_multiple_gpus():
         summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
 
     # Apply the gradients to adjust the shared variables.
-    if FLAGS.batch_norm:
-      dependencies = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    else:
-      dependencies = []
-    with tf.control_dependencies(dependencies):
-      apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     # Add histograms for trainable variables.
     for var in tf.trainable_variables():
@@ -265,12 +264,6 @@ def train_with_multiple_gpus():
       log_device_placement=FLAGS.log_device_placement))
     sess.run(init)
 
-    # Start the queue runners.
-    tf.train.start_queue_runners(sess=sess)
-
-    # Create the summary writer
-    summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
-
     # Restore the previous checkpoint
     init_step = 0
     if FLAGS.restore:
@@ -279,7 +272,13 @@ def train_with_multiple_gpus():
         saver.restore(sess, ckpt.model_checkpoint_path)
         init_step = sess.run(global_step)
 
-    for step in range(init_step, FLAGS.max_steps, 1):
+    # Start the queue runners.
+    tf.train.start_queue_runners(sess=sess)
+
+    # Create the summary writer
+    summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
+
+    for step in range(init_step, FLAGS.max_steps):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss])
       duration = time.time() - start_time
@@ -309,6 +308,9 @@ def train_with_multiple_gpus():
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(argv=None):
+  if FLAGS.batch_norm:
+    print("This multi-gpu version does not support batch normalization yet!")
+    exit(0)
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)
   train_with_multiple_gpus()

@@ -49,7 +49,7 @@ MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
 # names of the summaries when visualizing a model.
-TOWER_NAME = 'tower'
+TOWER_NAME = 'gpu'
 
 
 def variable_summaries(tensor):
