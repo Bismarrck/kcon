@@ -23,9 +23,9 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_float('learning_rate', 0.1,
+tf.app.flags.DEFINE_float('learning_rate', 0.001,
                           """The initial learning rate.""")
-tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
+tf.app.flags.DEFINE_string('conv_sizes', '40,50,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
@@ -41,6 +41,8 @@ tf.app.flags.DEFINE_string('activation_fn', "lrelu",
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
+
+BATCH_NORM_DECAY_FACTOR = 0.999        # The decay for batch normalization
 
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
@@ -207,12 +209,20 @@ def inference_sum_kbody(conv, kbody_term, ck2, is_training, activation_fn,
     normalizer_fn = batch_norm
   else:
     normalizer_fn = None
+  batch_norm_params = {
+    "is_training": is_training,
+    "decay": BATCH_NORM_DECAY_FACTOR,
+    "param_initializers": {
+      "gamma_initializer": init_ops.constant_initializer(0.5),
+      "moving_variance_initializer": init_ops.constant_initializer(0.5)
+    }
+  }
 
   # Build the convolution neural network for this interaction block
   with arg_scope([conv2d],
                  kernel_size=kernel_size,
                  weights_initializer=weights_initializer,
-                 normalizer_params=dict(is_training=is_training)):
+                 normalizer_params=batch_norm_params):
     for i, num_kernels in enumerate(conv_sizes):
       conv = conv2d(conv,
                     num_outputs=num_kernels,
