@@ -203,6 +203,10 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
+def _float_feature(value):
+  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
+
 class _Transformer:
   """
   This class is used to transform atomic coordinates and energies to input
@@ -761,7 +765,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 
   def _transform_and_save(self, array_of_species, energies, coords, filename,
                           lattices=None, pbcs=None, verbose=True,
-                          one_body_weights=True):
+                          one_body_weights=True, loss_weight_fn=None):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -772,6 +776,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       coords: a 3D array as the atomic coordinates of sturctures.
       filename: a `str` as the file to save examples.
       verbose: boolean indicating whether.
+      loss_weight_fn: a `Callable` for computing the loss weight.
 
     """
 
@@ -805,6 +810,11 @@ class FixedLenMultiTransformer(MultiTransformer):
         y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
         z = _bytes_feature(occurs.tostring())
         w = _bytes_feature(multipliers.tostring())
+        if loss_weight_fn is None:
+          loss_weight = 1.0
+        else:
+          loss_weight = loss_weight_fn(energies[i])
+        loss_weight = _float_feature(loss_weight)
 
         example = Example(
           features=Features(feature={
@@ -812,6 +822,7 @@ class FixedLenMultiTransformer(MultiTransformer):
             'features': x,
             'occurs': z,
             'weights': w,
+            'loss_weight': loss_weight,
           }))
         writer.write(example.SerializeToString())
 
@@ -871,7 +882,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 
   def transform_and_save(self, array_of_species, energies, coords, filename,
                          indices=None, lattices=None, pbcs=None, verbose=True,
-                         one_body_weights=True):
+                         one_body_weights=True, loss_weight_fn=None):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -888,12 +899,14 @@ class FixedLenMultiTransformer(MultiTransformer):
         the one-body weights or not.
       lattices: a 2D array as the periodic lattices.
       pbcs: a 2D array as the peridic conditions.
+      loss_weight_fn: a `Callable` for computing the loss weight.
 
     """
     try:
       initial_one_body_weights = self._transform_and_save(
         array_of_species, energies, coords, filename, verbose=verbose,
-        lattices=lattices, pbcs=pbcs, one_body_weights=one_body_weights
+        lattices=lattices, pbcs=pbcs, one_body_weights=one_body_weights,
+        loss_weight_fn=loss_weight_fn
       )
     except Exception as excp:
       if isfile(filename):
