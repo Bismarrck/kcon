@@ -430,9 +430,9 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
   filename, _ = get_filenames(train=train, dataset=dataset)
   filenames = [filename]
 
-  settings = inputs_settings(train=train, dataset=dataset)
-  cnk = settings["total_dim"]
-  nat = settings["nat"]
+  configs = inputs_configs(train=train, dataset=dataset)
+  cnk = configs["total_dim"]
+  nat = configs["nat"]
   ck2 = comb(FLAGS.many_body_k, 2, exact=True)
 
   with tf.name_scope('input'):
@@ -466,9 +466,9 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
     return batches
 
 
-def inputs_settings(train=True, dataset=None):
+def inputs_configs(train=True, dataset=None):
   """
-  Return the global settings for inputs.
+  Return the configs for inputs.
 
   Args:
     train: boolean indicating if one should return settings for training or
@@ -476,7 +476,7 @@ def inputs_settings(train=True, dataset=None):
     dataset: a `str` as the name of the dataset.
 
   Returns:
-    settings: a dict of settings.
+    configs: a `dict` of configs.
 
   """
   _, cfgfile = get_filenames(train=train, dataset=dataset)
