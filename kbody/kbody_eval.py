@@ -11,7 +11,7 @@ import math
 import time
 import numpy as np
 import tensorflow as tf
-import kbody
+from kbody import sum_kbody_cnn_from_dataset as inference
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join
@@ -147,42 +147,12 @@ def evaluate():
     logfile=join(FLAGS.eval_dir, FLAGS.logfile)
   )
 
-  with tf.Graph().as_default() as g:
+  with tf.Graph().as_default() as graph:
 
-    # Read dataset configurations
-    settings = kbody.inputs_settings(train=False)
-    split_dims = settings["split_dims"]
-    nat = settings["nat"]
-    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
-
-    # Get features and energies for evaluation.
-    batches = kbody.inputs(train=False, shuffle=False)
-
-    # Build a Graph that computes the logits predictions from the
-    # inference model.
-    batch_split_dims = tf.placeholder(
-      tf.int64, [len(split_dims), ], name="split_dims"
-    )
-    is_training = tf.placeholder(tf.bool, name="is_training")
-
-    # Parse the convolution layer sizes
-    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
-    if len(conv_sizes) < 2:
-      raise ValueError("At least three convolution layers are required!")
-
-    y_pred, _ = kbody.inference(
-      batches[0],
-      batches[2],
-      batches[3],
-      nat=nat,
-      is_training=is_training,
-      split_dims=batch_split_dims,
-      kbody_terms=kbody_terms,
-      verbose=True,
-      conv_sizes=conv_sizes
-    )
-    y_true = tf.cast(batches[1], tf.float32)
-    y_pred.set_shape(y_true.get_shape().as_list())
+    # Inference the model of `sum-kbody-cnn` for evaluation
+    y_nn, y_true, _, feed_dict = inference(FLAGS.dataset, for_training=False)
+    y_true = tf.cast(y_true, tf.float32)
+    y_nn.set_shape(y_true.get_shape().as_list())
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -192,13 +162,10 @@ def evaluate():
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
-
-    # Build the feed dict
-    feed_dict = {batch_split_dims: split_dims, is_training: False}
+    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_pred, summary_op, feed_dict)
+      eval_once(saver, summary_writer, y_true, y_nn, summary_op, feed_dict)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

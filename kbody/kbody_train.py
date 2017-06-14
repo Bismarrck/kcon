@@ -4,11 +4,11 @@ This script is used to train the kbody network.
 """
 from __future__ import print_function, absolute_import
 
-import numpy as np
 import tensorflow as tf
 import json
 import time
 import kbody
+from kbody import sum_kbody_cnn_from_dataset as inference
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
 from utils import get_xargs, set_logging_configs
@@ -42,7 +42,7 @@ tf.app.flags.DEFINE_integer('max_to_keep', None,
                             """The maximum number of checkpoints to keep.""")
 
 
-def _save_training_flags():
+def save_training_flags():
   """
   Save the training flags to the train_dir.
   """
@@ -72,56 +72,25 @@ def train_model():
     # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
-    # Read dataset configurations
-    settings = kbody.inputs_settings(train=True)
-    split_dims = settings["split_dims"]
-    nat = settings["nat"]
-    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
-    initial_one_body_weights = settings["initial_one_body_weights"]
-
-    # Get features and energies.
-    batches = kbody.inputs(train=True)
-
-    # Build a Graph that computes the logits predictions from the
-    # inference model.
-    batch_split_dims = tf.placeholder(
-      tf.int64, [len(split_dims), ], name="split_dims"
-    )
-    is_training = tf.placeholder(tf.bool, name="is_training")
-
-    # Parse the convolution layer sizes
-    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
-    if len(conv_sizes) < 2:
-      raise ValueError("At least three convolution layers are required!")
-
-    # Inference
-    y_pred, _ = kbody.inference(
-      batches[0],
-      batches[2],
-      batches[3],
-      nat=nat,
-      is_training=is_training,
-      split_dims=batch_split_dims,
-      kbody_terms=kbody_terms,
-      conv_sizes=conv_sizes,
-      initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
-      verbose=True,
+    # Inference the sum-kbody-cnn model
+    y_nn, y_true, y_weight, feed_dict = inference(
+      FLAGS.dataset, for_training=True
     )
 
     # Cast the true values to float32 and set the shape of the `y_pred`
     # explicitly.
-    y_true = tf.cast(batches[1], tf.float32)
-    y_pred.set_shape(y_true.get_shape().as_list())
+    y_true = tf.cast(y_true, tf.float32)
+    y_nn.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kbody.loss(y_true, y_pred, batches[4])
+    loss = kbody.loss(y_true, y_nn, y_weight)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
     train_op = kbody.get_train_op(loss, global_step)
 
     # Save the training flags
-    _save_training_flags()
+    save_training_flags()
 
     # noinspection PyMissingOrEmptyDocstring
     class _LoggerHook(tf.train.SessionRunHook):
@@ -200,8 +169,6 @@ def train_model():
         scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
-
-      feed_dict = {batch_split_dims: split_dims, is_training: True}
 
       while not mon_sess.should_stop():
         if FLAGS.timeline:
