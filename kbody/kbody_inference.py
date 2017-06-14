@@ -22,9 +22,16 @@ __email__ = 'Bismarrck@me.com'
 # The constant seed for initializing weights.
 WEIGHT_INIT_SEED = 218
 
+# The decay for batch normalization
+BATCH_NORM_DECAY_FACTOR = 0.999
 
-def inference_kbody_cnn(inputs, kbody_term, ck2, is_training,
-                        activation_fn=lrelu, num_kernels=None, verbose=True):
+# Collection containing all the variables.
+MODEL_VARIABLES = '_model_variables_'
+
+
+def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
+                         use_batch_norm=False, activation_fn=lrelu,
+                         num_kernels=None):
   """
   Infer the k-body term of `sum-kbody-cnn`.
 
@@ -34,6 +41,8 @@ def inference_kbody_cnn(inputs, kbody_term, ck2, is_training,
     ck2: a `int` as the value of C(k,2).
     is_training: a `bool` type placeholder tensor indicating whether this
       inference is for training or not.
+    use_batch_norm: a `bool` indicating whether we should use batch
+      normalization or not.
     activation_fn: a `Callable` as the activation function for each conv layer.
     num_kernels: a `List[int]` as the number of kernels.
     verbose: a bool. If Ture, the shapes of the layers will be printed.
@@ -59,10 +68,7 @@ def inference_kbody_cnn(inputs, kbody_term, ck2, is_training,
   # Setup the initializers and normalization function.
   weights_initializer = initializers.xavier_initializer(
     seed=WEIGHT_INIT_SEED, dtype=dtype)
-  if FLAGS.batch_norm:
-    normalizer_fn = batch_norm
-  else:
-    normalizer_fn = None
+  normalizer_fn = batch_norm if use_batch_norm else None
   batch_norm_params = {
     "is_training": is_training,
     "decay": BATCH_NORM_DECAY_FACTOR,
@@ -76,7 +82,8 @@ def inference_kbody_cnn(inputs, kbody_term, ck2, is_training,
   with arg_scope([conv2d],
                  kernel_size=kernel_size,
                  weights_initializer=weights_initializer,
-                 normalizer_params=batch_norm_params):
+                 normalizer_params=batch_norm_params,
+                 variables_collections=[MODEL_VARIABLES]):
     for i, num_kernels in enumerate(num_kernels):
       inputs = conv2d(inputs,
                       num_outputs=num_kernels,
@@ -94,7 +101,7 @@ def inference_kbody_cnn(inputs, kbody_term, ck2, is_training,
     return inputs
 
 
-def inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
+def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
   """
   Inference the one-body part.
 
@@ -113,7 +120,7 @@ def inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
   kernel_size = 1
 
   if initial_one_body_weights is not None:
-    values = initial_one_body_weights
+    values = np.asarray(initial_one_body_weights, dtype=np.float32)
   else:
     values = np.ones(num_atom_types, dtype=np.float32)
   if len(values) != num_atom_types:
@@ -128,6 +135,7 @@ def inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
     weights_initializer=weights_initializer,
     biases_initializer=None,
     scope='one-body',
+    variables_collections=[MODEL_VARIABLES],
   )
 
 
@@ -178,17 +186,17 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   # certain atomic interaction. The number of parts is equal to the number of
   # k-body terms.
   num_cols = int(comb(max_k, 2, exact=True))
-  splited_inputs, = _split_inputs(inputs, split_dims)
+  splited_inputs = _split_inputs(inputs, split_dims)
 
   # Inference the convolution network for each k-body interaction
   y_contribs = []
   for i, conv in enumerate(splited_inputs):
     with tf.variable_scope(kbody_terms[i]):
-      y_contribs.append(inference_kbody_cnn(conv, kbody_terms[i], num_cols,
-                                            activation_fn=activation_fn,
-                                            is_training=is_training,
-                                            num_kernels=num_kernels,
-                                            verbose=verbose))
+      y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
+                                             activation_fn=activation_fn,
+                                             is_training=is_training,
+                                             num_kernels=num_kernels,
+                                             verbose=verbose))
 
   # Concat the k-body contribs from all k-body terms. The new tensor has the
   # shape of `[-1, 1, D, 1]`.
@@ -204,9 +212,9 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     print_activations(contribs)
 
   # Inference the one-body expression.
-  one_body = inference_1body_nn(occurs,
-                                num_atom_types,
-                                initial_one_body_weights=one_body_weights)
+  one_body = _inference_1body_nn(occurs,
+                                 num_atom_types,
+                                 initial_one_body_weights=one_body_weights)
   tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)
