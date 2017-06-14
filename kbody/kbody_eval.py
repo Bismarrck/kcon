@@ -93,11 +93,16 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
       # Compute the Mean-Absolute-Error @ 1.
       precision = mean_absolute_error(y_true, y_pred)
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+      y_diff = np.abs(y_true - y_pred)
+      emax = y_diff.max()
+      emin = y_diff.min()
 
       dtime = datetime.now()
-      tf.logging.info('%s: step      = %d' % (dtime, global_step))
-      tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
+      tf.logging.info("%s: step      = %d" % (dtime, global_step))
+      tf.logging.info("%s: precision = %10.6f" % (dtime, precision))
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
+      tf.logging.info("%s: minimum   = %10.6f" % (dtime, emin))
+      tf.logging.info("%s: maximum   = %10.6f" % (dtime, emax))
 
       # Compute the linear coefficient
       score = r2_score(y_true, y_pred)
@@ -105,12 +110,11 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
 
       # Randomly output 10 predictions and true values
       if FLAGS.output_acc_error:
-        y_diff = np.abs(y_true - y_pred)
         y_diff = y_diff[np.argsort(y_true)]
         for i in range(1, 10):
           percent = float(i) / 10.0
           n = int(percent * num_evals)
-          mae = np.mean(y_diff[:n])
+          mae = y_diff[:n].mean()
           tf.logging.info(" * %2d%% MAE: % 8.3f" % (percent * 100.0, mae))
       else:
         indices = np.random.choice(range(FLAGS.num_evals), size=10)
