@@ -50,7 +50,7 @@ BATCH_NORM_DECAY_FACTOR = 0.999        # The decay for batch normalization
 TOWER_NAME = 'tower'
 
 
-def get_activation_fn(name='tanh'):
+def get_activation_fn(name='lrelu'):
   """
   Return a callable activation function.
 
@@ -71,6 +71,8 @@ def get_activation_fn(name='tanh'):
     return tf.nn.softplus
   elif name.lower() == 'sigmoid':
     return tf.nn.sigmoid
+  elif name.lower() == 'elu':
+    return tf.nn.elu
   else:
     raise ValueError("The %s activation is not supported!".format(name))
 
