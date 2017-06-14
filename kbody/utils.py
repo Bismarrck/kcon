@@ -21,7 +21,7 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-def leaky_relu(x, alpha=0.2, name=None):
+def lrelu(x, alpha=0.1, name=None):
   """
   A simple implementation of leaky relu.
 
@@ -59,16 +59,12 @@ def get_xargs(pid=None):
   """
   if platform != "linux":
     return None
-
   if not pid:
     pid = getpid()
 
   p = Popen("xargs -0 < /proc/{}/cmdline".format(pid), stdout=PIPE, stderr=PIPE,
             shell=True)
-  try:
-    (stdout, stderr) = p.communicate()
-  except Exception:
-    return None
+  stdout, stderr = p.communicate()
   if len(stderr) > 0:
     return None
   elif version_info > (3, 0):
