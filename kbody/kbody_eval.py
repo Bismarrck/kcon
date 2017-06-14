@@ -90,12 +90,13 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
         y_pred[istart: istop] = -y_pred_
         step += 1
 
-      # Compute the Mean-Absolute-Error @ 1.
+      # Compute the common evaluation metrics.
       precision = mean_absolute_error(y_true, y_pred)
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
       y_diff = np.abs(y_true - y_pred)
       emax = y_diff.max()
       emin = y_diff.min()
+      score = r2_score(y_true, y_pred)
 
       dtime = datetime.now()
       tf.logging.info("%s: step      = %d" % (dtime, global_step))
@@ -103,10 +104,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
       tf.logging.info("%s: minimum   = %10.6f" % (dtime, emin))
       tf.logging.info("%s: maximum   = %10.6f" % (dtime, emax))
-
-      # Compute the linear coefficient
-      score = r2_score(y_true, y_pred)
-      tf.logging.info(" * R2 score: %.6f" % score)
+      tf.logging.info("%s: score     = %.6f" % (dtime, score))
 
       # Randomly output 10 predictions and true values
       if FLAGS.output_acc_error:
@@ -124,7 +122,8 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
-        np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
+        np.savez("{}_at_{}.npz".format(FLAGS.dataset, global_step),
+                 y_true=y_true, y_pred=y_pred)
 
       else:
         summary = tf.Summary()
