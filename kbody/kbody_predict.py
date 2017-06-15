@@ -7,14 +7,33 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import time
-import re
-from kbody_transform import MultiTransformer, GHOST
+import json
+from kbody_transform import MultiTransformer
 from kbody_input import extract_xyz
+from save_model import get_tensors_to_restore
 from os.path import join, dirname
-from collections import Counter
+from tensorflow.core.framework import graph_pb2
+from tensorflow.python.framework import importer
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
+
+def restore_transformer(graph, session):
+  """
+  Restore a `MultiTransformer` from the freezed graph.
+
+  Args:
+    graph: a `tf.Graph`.
+    session: a `tf.Session` to execute ops.
+
+  Returns:
+    clf: a `MultiTransformer` restored from the graph.
+
+  """
+  tensor = graph.get_tensor_by_name("transformer/json:0")
+  params = dict(json.loads(session.run(tensor).decode()))
+  return MultiTransformer(**params)
 
 
 class CNNPredictor:
@@ -22,22 +41,27 @@ class CNNPredictor:
   An energy predictor based on the deep neural network of 'sum-kbody-cnn'.
   """
 
-  def __init__(self, model_path, periodic=False, order=1, **kwargs):
+  def __init__(self, graph_model_path):
     """
     Initialization method.
 
     Args:
-      model_path: a `str` as the model to load. This `model_path` should contain 
-        the model name and the global step, eg 'model.ckpt-500'.
-      periodic: a `bool` indicating whether this model is used for periodic 
-        structures or not.
-      order: a `int` as the exponential order.
-      kwargs: additional key-value arguments for importing the meta model.
+      graph_model_path: a `str` as the freezed graph model to load.
 
     """
-    self.sess = tf.Session()
-    self._import_model(model_path, **kwargs)
-    self._transformer = self._get_transformer(periodic=periodic, order=order)
+
+    graph = tf.Graph()
+
+    with graph.as_default():
+      output_graph_def = graph_pb2.GraphDef()
+      with open(graph_model_path, "rb") as f:
+        output_graph_def.ParseFromString(f.read())
+        importer.import_graph_def(output_graph_def, name="")
+
+    self._graph = graph
+    self._sess = tf.Session(graph=graph)
+    self._initialize_tensors()
+    self._transformer = restore_transformer(self._graph, self._sess)
     self._y_atomic_1body = self._get_y_atomic_1body(
       self._transformer.ordered_species)
 
@@ -55,103 +79,42 @@ class CNNPredictor:
     """
     return self._transformer.is_periodic
 
-  @staticmethod
-  def _check_atom_types():
+  @property
+  def sess(self):
     """
-    Automatically check the atom types and max occurances.
+    Return the associated session for this predictor.
     """
-    patt = re.compile(r'([A-Za-z]+)/k-Body/.*')
-    kbody_terms = []
-    for node in tf.get_default_graph().as_graph_def().node:
-      m = patt.search(node.name)
-      if m:
-        kbody_terms.append(m.group(1))
-    kbody_terms = set(kbody_terms)
-    max_occurs = {}
-    many_body_k = 0
-    two_body = False
-    if max(map(len, kbody_terms)) <= 2:
-      many_body_k = 2
-      atom_types = list(kbody_terms)
-    else:
-      max_occurs = Counter()
-      for kbody_term in kbody_terms:
-        atoms = []
-        for atom in kbody_term:
-          if atom.isupper():
-            atoms.append(atom)
-          else:
-            atoms[-1] += atom
-        for atom, n in Counter(atoms).items():
-          max_occurs[atom] = max(max_occurs[atom], n)
-        many_body_k = len(atoms)
-      atom_types = list(max_occurs.keys())
-      max_occurs = {k: v for k, v in max_occurs.items() if v < many_body_k}
-      if GHOST in max_occurs:
-        two_body = True
-        del max_occurs[GHOST]
-    if many_body_k < 2:
-      raise Exception("The parsed `many_body_k` is invalid!")
-    return many_body_k, atom_types, max_occurs, two_body
+    return self._sess
 
-  def _import_model(self, model_path, **kwargs):
+  @property
+  def graph(self):
     """
-    Import and restore the meta-model.
-
-    Args:
-      model_path: a `str` as the model to load. This `model_path` should contain 
-        the model name and the global step, eg 'model.ckpt-500'.
-      kwargs: additional key-value arguments for restoring the model.
-
+    Return the restored freezed graph.
     """
-    self.saver = tf.train.import_meta_graph("{}.meta".format(model_path))
-    self.saver.restore(self.sess, model_path, **kwargs)
+    return self._graph
 
-    # Recover the tensors from the graph.
-    graph = tf.get_default_graph()
-    self.y_kbody_op = graph.get_tensor_by_name("Contribs:0")
-    self.y_1body_op = graph.get_tensor_by_name("one-body/convolution:0")
-    self._use_extra = graph.get_tensor_by_name(
-      "placeholders/use_extra_inputs:0")
-    self._extra_weights = graph.get_tensor_by_name(
-      "placeholders/extra_weights:0")
-    self._extra_inputs = graph.get_tensor_by_name("placeholders/extra_inputs:0")
-    self._extra_occurs = graph.get_tensor_by_name("placeholders/extra_occurs:0")
-    self._split_dims = graph.get_tensor_by_name("split_dims:0")
-    self._shuffle_batch_inputs = graph.get_tensor_by_name(
-      "input/shuffle_batch:0")
-    self._shuffle_batch_occurs = graph.get_tensor_by_name(
-      "input/shuffle_batch:2")
-    self._shuffle_batch_weights = graph.get_tensor_by_name(
-      "input/shuffle_batch:3")
-    self._default_batch_input = np.zeros(
-      self._shuffle_batch_inputs.get_shape().as_list(), dtype=np.float32)
-    self._default_batch_occurs = np.ones(
-      self._shuffle_batch_occurs.get_shape().as_list(), dtype=np.float32)
-    self._default_batch_weights = np.zeros(
-      self._shuffle_batch_weights.get_shape().as_list(), dtype=np.float32)
-
-  def _get_transformer(self, periodic=False, order=1):
+  def _initialize_tensors(self):
     """
-    Return the feature transformer for this model.
-    
-    Args:
-      periodic: a `bool` indicating whether this is a periodic model or not.
-      order: a `int` as the exponential scaling order.
-
-    Returns:
-      transformer: a `MultiTransformer` for this model.
-
+    Initialize the tensors.
     """
-    many_body_k, atom_types, max_occurs, two_body = self._check_atom_types()
-    return MultiTransformer(
-      atom_types,
-      many_body_k=many_body_k,
-      max_occurs=max_occurs,
-      order=order,
-      two_body=two_body,
-      periodic=periodic,
-    )
+    tensors = {}
+    for name, tensor_name in get_tensors_to_restore().items():
+      tensors[name] = self._graph.get_tensor_by_name(tensor_name)
+
+    # operations
+    self._op_y_nn = tensors["Sum/1_and_k"]
+    self._op_y_kbody = tensors["y_contribs"]
+    self._op_y_1body = tensors["one-body/convolution"]
+
+    # tensor
+    self._t_1body = tensors["one-body/weights"]
+
+    # placeholders
+    self._pl_inputs = tensors["placeholders/inputs"]
+    self._pl_occurs = tensors["placeholders/occurs"]
+    self._pl_weights = tensors["placeholders/weights"]
+    self._pl_split_dims = tensors["placeholders/split_dims"]
+    self._pl_is_training = tensors["placeholders/is_training"]
 
   def _get_y_atomic_1body(self, species):
     """
@@ -165,8 +128,7 @@ class CNNPredictor:
         each kind of atom.
     
     """
-    weights = self.sess.run(
-      tf.get_default_graph().get_tensor_by_name("one-body/weights:0"))
+    weights = self._sess.run(self._t_1body)
     return dict(zip(species, weights.flatten().tolist()))
 
   def predict(self, species, coords, lattices=None, pbcs=None):
@@ -217,30 +179,20 @@ class CNNPredictor:
     occurs = occurs.reshape((num_mols, 1, 1, -1))
 
     feed_dict = {
-      # Make the model use `extra_inputs` as the input features.
-      self._use_extra: True,
-      self._extra_inputs: features,
-      self._extra_weights: weights,
-      self._extra_occurs: occurs,
-      # This must be feeded but it will not be used.
-      self._shuffle_batch_inputs: self._default_batch_input,
-      self._shuffle_batch_weights: self._default_batch_weights,
-      self._shuffle_batch_occurs: self._default_batch_occurs,
-      # The dimensions for splitting the input features.
-      self._split_dims: split_dims
+      self._pl_inputs: features,
+      self._pl_occurs: occurs,
+      self._pl_weights: weights,
+      self._pl_is_training: False,
+      self._pl_split_dims: split_dims
     }
 
     # Run the operations to get the predicted energies.
-    y_kbody_raw, y_1body_raw = self.sess.run(
-      [self.y_kbody_op, self.y_1body_op], feed_dict=feed_dict
+    y_total, y_kbody, y_1body = self._sess.run(
+      [self._op_y_nn, self._op_y_kbody, self._op_y_1body], feed_dict=feed_dict
     )
+    y_1body = np.squeeze(y_1body)
 
-    # Compute the total energies
-    y_1body = np.squeeze(y_1body_raw)
-    y_kbody = np.multiply(y_kbody_raw, weights)
-    y_total = np.squeeze(np.sum(y_kbody, axis=2, keepdims=True)) + y_1body
-
-    # Transform the kbody energies to atomic energies.
+    # Compute the atomic energies from kbody contribs.
     y_kbody = np.squeeze(y_kbody, axis=(1, 3))
     y_atomic = self._transformer.compute_atomic_energies(
       species, y_kbody, self._y_atomic_1body)
@@ -279,27 +231,26 @@ def _print_predictions(y_total, y_true, y_atomic, species):
 def test(unused):
 
   tic = time.time()
-  model_path = join(
-    dirname(__file__), "models", "TiO2.v5.k123", "model.ckpt-1733772")
-  calculator = CNNPredictor(model_path, periodic=True)
+  graph_model_path = join(
+    dirname(__file__), "models", "C9H7N.PBE.v5", "C9H7N.PBE-1000000.pb")
+  calculator = CNNPredictor(graph_model_path)
   elapsed = time.time() - tic
   print("Predictor initialized. Time: %.3f s" % elapsed)
   print("")
 
-  print("-----------")
-  print("Tests: TiO2")
-  print("-----------")
+  print("------------")
+  print("Tests: C9H7N")
+  print("------------")
 
-  xyzfile = join(dirname(__file__), "..", "test_files", "TiO2_x9_sample.xyz")
-  sample = extract_xyz(
-    xyzfile, num_examples=1, num_atoms=27, xyz_format='grendel')
+  xyzfile = join(dirname(__file__), "..", "datasets", "C9H7N.PBE.xyz")
+  samples = extract_xyz(
+    xyzfile, num_examples=5000, num_atoms=17, xyz_format='grendel')
 
-  species = sample[0][0]
-  y_true = float(sample[1])
-  coords = sample[2]
-  lattice = sample[4]
-  pbc = sample[5]
-  y_total, _, y_atomic, _ = calculator.predict(species, coords, lattice, pbc)
+  species = samples[0][0]
+  y_true = float(samples[1][0])
+  coords = samples[2][0]
+
+  y_total, _, y_atomic, _ = calculator.predict(species, coords)
   _print_predictions(y_total, [y_true], y_atomic, species)
 
 
