@@ -200,13 +200,13 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
 
   # Concat the k-body contribs from all k-body terms. The new tensor has the
   # shape of `[-1, 1, D, 1]`.
-  contribs = tf.concat(y_contribs, axis=2, name="Contribs")
+  contribs = tf.concat(y_contribs, axis=2, name="raw_contribs")
 
   # Obtain the weighted k-body contribs.
   # In general we hope zero inputs lead to zero contribs. But the convolution
   # kernels have biases so the output may not be zero. To fix this potential
   # problem we multiply the calculated k-body contribs with binary weights.
-  contribs = tf.multiply(contribs, weights, name="Weighted")
+  contribs = tf.multiply(contribs, weights, name="y_contribs")
   tf.summary.histogram("kbody_contribs", contribs)
   if verbose:
     print_activations(contribs)

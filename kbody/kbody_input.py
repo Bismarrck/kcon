@@ -403,7 +403,7 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
   return features, energy, occurs, weights, loss_weight
 
 
-def inputs(train, batch_size=25, shuffle=True, dataset=None):
+def inputs(train, batch_size=50, shuffle=True, dataset=None):
   """
   Reads mixed input data.
 
@@ -432,8 +432,8 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
 
   configs = inputs_configs(train=train, dataset=dataset)
   cnk = configs["total_dim"]
-  nat = configs["nat"]
-  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
+  ck2 = comb(configs["many_body_k"], 2, exact=True)
+  num_atom_types = configs["num_atom_types"]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -442,8 +442,8 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, occurs, weights, loss_weight = read_and_decode(
-      filename_queue, cnk, ck2, nat
+    features, y_true, occurs, weights, y_weight = read_and_decode(
+      filename_queue, cnk, ck2, num_atom_types
     )
 
     # Shuffle the examples and collect them into batch_size batches.
@@ -451,13 +451,13 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
       batches = tf.train.batch(
-        [features, energies, occurs, weights, loss_weight],
+        [features, y_true, occurs, weights, y_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
       batches = tf.train.shuffle_batch(
-        [features, energies, occurs, weights, loss_weight],
+        [features, y_true, occurs, weights, y_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.

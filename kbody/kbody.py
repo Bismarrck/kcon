@@ -169,22 +169,24 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
   return y_total
 
 
-def extract_configs(configs):
+def extract_configs(configs, for_training=True):
   """
   Extract the config of a dataset.
 
   Args:
     configs: a `dict` as the configs of a dataset.
+    for_training: a `bool` indicating whether the configs should be used for
+      training or not.
 
   Returns:
-    kwargs: a `dict` as the parameters for inference.
+    params: a `dict` as the parameters for inference.
     feed_dict: a `dict` as the feed dict for tensorflow sessions.
 
   """
 
   # Extract the constant configs from the dict
   split_dims = configs["split_dims"]
-  num_atom_types = configs["nat"]
+  num_atom_types = configs["num_atom_types"]
   kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
   weights = np.array(configs["initial_one_body_weights"])
   num_terms = len(split_dims)
@@ -195,12 +197,12 @@ def extract_configs(configs):
   is_training_ = tf.placeholder(tf.bool, name="is_training")
 
   # Create the parameter dict and the feed dict
-  kwargs = dict(split_dims=split_dims_, kbody_terms=kbody_terms,
+  params = dict(split_dims=split_dims_, kbody_terms=kbody_terms,
                 is_training=is_training_, one_body_weights=weights,
                 num_atom_types=num_atom_types, num_kernels=num_kernels)
   feed_dict = {split_dims_: split_dims, is_training_: for_training}
 
-  return kwargs, feed_dict
+  return params, feed_dict
 
 
 def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
@@ -223,7 +225,7 @@ def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
   """
   batch = get_batch(train=for_training, dataset=dataset)
   configs = get_batch_configs(train=for_training, dataset=dataset)
-  params, feed_dict = extract_configs(configs)
+  params, feed_dict = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
       params[key] = val
