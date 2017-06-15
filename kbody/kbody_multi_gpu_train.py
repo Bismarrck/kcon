@@ -12,6 +12,7 @@ import time
 from kbody import BatchIndex
 from kbody import extract_configs, get_batch, get_batch_configs
 from kbody import sum_kbody_cnn as inference
+from save_model import save_model
 from datetime import datetime
 from os.path import join
 from utils import get_xargs, set_logging_configs
@@ -32,6 +33,9 @@ tf.app.flags.DEFINE_integer('save_frequency', 200,
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """The frequency, in number of global steps, that
                             the training progress wiil be logged.""")
+tf.app.flags.DEFINE_integer('freeze_frequency', 100000,
+                            """The frequency, in number of global steps, that
+                            the graph will be freezed and exported.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
@@ -176,7 +180,7 @@ def train_with_multiple_gpus():
     batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
       batch, capacity=2 * FLAGS.num_gpus)
     configs = get_batch_configs(train=True)
-    params, feed_dict = extract_configs(configs)
+    params, feed_dict = extract_configs(configs, for_training=True)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
@@ -253,12 +257,12 @@ def train_with_multiple_gpus():
     sess.run(init)
 
     # Restore the previous checkpoint
-    init_step = 0
+    start_step = 0
     if FLAGS.restore:
       ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
       if ckpt and ckpt.model_checkpoint_path:
         saver.restore(sess, ckpt.model_checkpoint_path)
-        init_step = sess.run(global_step)
+        start_step = sess.run(global_step)
 
     # Start the queue runners.
     tf.train.start_queue_runners(sess=sess)
@@ -266,7 +270,7 @@ def train_with_multiple_gpus():
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-    for step in range(init_step, FLAGS.max_steps):
+    for step in range(start_step, FLAGS.max_steps):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
       duration = time.time() - start_time
@@ -292,6 +296,9 @@ def train_with_multiple_gpus():
               (step + 1) == FLAGS.max_steps:
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
+
+      if step % FLAGS.freeze_frequency == 0 or (step + 1) == FLAGS.max_steps:
+        save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
