@@ -20,6 +20,9 @@ __email__ = 'Bismarrck@me.com'
 
 FLAGS = tf.app.flags.FLAGS
 
+tf.app.flags.DEFINE_string("checkpoint_dir", "./events",
+                           """The directory where to read model checkpoints.""")
+
 
 def _get_transformer_repr(configs):
   """
@@ -133,7 +136,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       variables_to_restore = tf.get_collection(MODEL_VARIABLES)
-      saver = tf.train.Saver(var_list=variables_to_restore)
+      saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
       saver.restore(sess, ckpt.model_checkpoint_path)
       global_step = int(
         ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
@@ -173,13 +176,14 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
                               output_node_names, restore_op_name,
                               filename_tensor_name, graph_path,
                               clear_devices, "")
+
     if verbose:
       tf.logging.info("Export the model to {}".format(graph_path))
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes, verbose=True)
+  save_model(FLAGS.checkpoint_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 if __name__ == "__main__":
