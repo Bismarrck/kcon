@@ -49,9 +49,10 @@ def _get_output_node_names():
   Return the names of the tensors that should be
   """
   return ",".join(["Sum/1_and_k", "y_contribs", "one-body/weights",
-                   "transformer/json", "placeholders/inputs",
-                   "placeholders/occurs", "placeholders/weights",
-                   "placeholders/split_dims", "placeholders/is_training"])
+                   "one-body/convolution", "transformer/json",
+                   "placeholders/inputs", "placeholders/occurs",
+                   "placeholders/weights", "placeholders/split_dims",
+                   "placeholders/is_training"])
 
 
 def get_tensors_to_restore():
@@ -63,7 +64,7 @@ def get_tensors_to_restore():
     tensors: a `dict` as the tensors that should be restored.
 
   """
-  return {"{}": "{}:0".format(name, name)
+  return {"{}".format(name): "{}:0".format(name)
           for name in _get_output_node_names().split(",")}
 
 
