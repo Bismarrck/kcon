@@ -21,7 +21,7 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-def lrelu(x, alpha=0.1, name=None):
+def lrelu(x, alpha=0.2, name=None):
   """
   A simple implementation of leaky relu.
 
