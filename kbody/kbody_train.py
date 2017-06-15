@@ -9,6 +9,7 @@ import json
 import time
 import kbody
 from kbody import sum_kbody_cnn_from_dataset as inference
+from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
 from utils import get_xargs, set_logging_configs
@@ -30,6 +31,11 @@ tf.app.flags.DEFINE_integer('save_frequency', 200,
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """The frequency, in number of global steps, that
                             the training progress wiil be logged.""")
+tf.app.flags.DEFINE_integer('freeze_frequency', 100000,
+                            """The frequency, in number of global steps, that
+                            the graph will be freezed and exported.""")
+tf.app.flags.DEFINE_integer('max_to_keep', 50,
+                            """The maximum number of checkpoints to keep.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_boolean('timeline', False,
@@ -38,8 +44,6 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
-tf.app.flags.DEFINE_integer('max_to_keep', None,
-                            """The maximum number of checkpoints to keep.""")
 
 
 def save_training_flags():
@@ -92,33 +96,74 @@ def train_model():
     # Save the training flags
     save_training_flags()
 
-    # noinspection PyMissingOrEmptyDocstring
-    class _LoggerHook(tf.train.SessionRunHook):
-      """ Logs loss and runtime."""
+    class _RunHook(tf.train.SessionRunHook):
+      """ Log loss and runtime and regularly freeze the model. """
 
       def __init__(self):
-        super(_LoggerHook, self).__init__()
+        """
+        Initialization method.
+        """
+        super(_RunHook, self).__init__()
         self._step = -1
         self._start_time = 0
         self._epoch = 0.0
         self._log_frequency = FLAGS.log_frequency
+        self._freeze_frequency = FLAGS.freeze_frequency
 
       def begin(self):
-        self._step = -1
+        """
+        Called once before using the session.
+        """
+        self._step = -2
 
       def before_run(self, run_context):
+        """
+        Called before each call to run().
+
+        Args:
+          run_context: a `tf.train.SessionRunContext` as the context to execute
+            ops and tensors.
+
+        Returns:
+          args: a `tf.train.SessionRunArgs` as the ops and tensors to execute
+            under `run_context`.
+
+        """
         self._step += 1
         self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
         self._start_time = time.time()
-        return tf.train.SessionRunArgs({"loss": loss})
+        return tf.train.SessionRunArgs({"loss": loss,
+                                        "global_step": global_step})
 
       def should_log(self):
+        """
+        Return True if we should log the stats of current step.
+        """
         return self._step % self._log_frequency == 0
 
+      def should_freeze(self):
+        """
+        Return True if we should freeze the current graph and values.
+        """
+        return self._step % self._freeze_frequency == 0
+
       def after_run(self, run_context, run_values):
+        """
+        Called after each call to run().
+
+        Args:
+          run_context: a `tf.train.SessionRunContext` as the context to execute
+           ops and tensors.
+          run_values: results of requested ops/tensors by `before_run()`.
+
+        """
+        if self._step < 0:
+          self._step = run_values.results["global_step"]
+
         duration = time.time() - self._start_time
         loss_value = run_values.results["loss"]
         num_examples_per_step = FLAGS.batch_size
+
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
@@ -128,6 +173,9 @@ def train_model():
             format_str % (self._step, self._epoch, loss_value,
                           examples_per_sec, sec_per_batch)
           )
+
+        if self.should_freeze():
+          save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
@@ -164,7 +212,7 @@ def train_model():
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
-               _LoggerHook(),
+               _RunHook(),
                _TimelineHook()],
         scaffold=scaffold,
         config=tf.ConfigProto(
@@ -180,6 +228,9 @@ def train_model():
           )
         else:
           mon_sess.run(train_op, feed_dict=feed_dict)
+
+  # Do not forget to export the final model
+  save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
