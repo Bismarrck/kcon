@@ -314,8 +314,6 @@ def get_train_op(total_loss, global_step):
   # batch_normalization layers won't update their population statistics, which
   # will cause the model to fail at inference time
   dependencies = [loss_averages_op]
-  if FLAGS.batch_norm:
-    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 
   # Compute gradients.
   with tf.control_dependencies(dependencies):
