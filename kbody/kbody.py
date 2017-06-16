@@ -7,40 +7,32 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import kbody_input
-from itertools import repeat
-from tensorflow.contrib.layers.python.layers import conv2d, flatten, batch_norm
-from tensorflow.contrib.layers.python.layers import initializers
-from tensorflow.python.ops import init_ops
-from scipy.misc import comb
+
+from kbody_inference import inference
+from utils import lrelu
+
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
 
 FLAGS = tf.app.flags.FLAGS
 
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_boolean('disable_biases', False,
-                            """Disable biases for all conv layers.""")
-tf.app.flags.DEFINE_float('learning_rate', 0.1,
+tf.app.flags.DEFINE_float('learning_rate', 0.001,
                           """The initial learning rate.""")
-tf.app.flags.DEFINE_string('conv_sizes', '60,120,120,60',
+tf.app.flags.DEFINE_string('conv_sizes', '40,50,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            """Comma-separated floats as the initial one-body 
                            weights. Defaults to `ones_initialier`.""")
-tf.app.flags.DEFINE_boolean('use_linear_output', True,
-                            """Set this to True to use linear outputs.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('xavier', True,
-                            """Use the xavier algorithm to initialize weights 
-                            if this is True. Otherwise the truncated normal 
-                            will be used.""")
-tf.app.flags.DEFINE_boolean('batch_norm', False,
-                            """Use batch normalization if True.""")
+tf.app.flags.DEFINE_string('activation_fn', "lrelu",
+                           """Set the activation function for conv layers.""")
 
 
 # Constants describing the training process.
@@ -52,70 +44,52 @@ MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
 TOWER_NAME = 'tower'
 
 
-def variable_summaries(tensor):
+def get_activation_fn(name='lrelu'):
   """
-  Attach a lot of summaries to a Tensor (for TensorBoard visualization).
+  Return a callable activation function.
 
   Args:
-    tensor: a Tensor.
-
-  """
-  with tf.name_scope('summaries'):
-    mean = tf.reduce_mean(tensor)
-    tf.summary.scalar('mean', mean)
-    with tf.name_scope('stddev'):
-      stddev = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(tensor, mean))))
-      tf.summary.scalar('stddev', stddev)
-    tf.summary.scalar('max', tf.reduce_max(tensor))
-    tf.summary.scalar('min', tf.reduce_min(tensor))
-    tf.summary.histogram('histogram', tensor)
-
-
-def print_activations(tensor):
-  """
-  Print the name and shape of the input Tensor.
-
-  Args:
-    tensor: a Tensor.
-
-  """
-  dims = ",".join(["{:7d}".format(dim if dim is not None else -1)
-                   for dim in tensor.get_shape().as_list()])
-  tf.logging.info("%-25s : [%s]" % (tensor.op.name, dims))
-
-
-def get_number_of_trainable_parameters(verbose=False):
-  """
-  Return the number of trainable parameters in current graph.
-
-  Args:
-    verbose: a bool. If True, the number of parameters for each variable will
-    also be printed.
+    name: a `str` as the name of the activation function.
 
   Returns:
-    ntotal: the total number of trainable parameters.
+    fn: a `Callable` as the activation function.
 
   """
-  tf.logging.info("")
-  tf.logging.info("Compute the total number of trainable parameters ...")
-  tf.logging.info("")
-  ntotal = 0
-  for var in tf.trainable_variables():
-    nvar = np.prod(var.get_shape().as_list(), dtype=int)
-    if verbose:
-      tf.logging.info("{:<38s}   {:>8d}".format(var.name, nvar))
-    ntotal += nvar
-  tf.logging.info("Total number of parameters: %d" % ntotal)
-  tf.logging.info("")
+  if name.lower() == 'tanh':
+    return tf.nn.tanh
+  elif name.lower() == 'relu':
+    return tf.nn.relu
+  elif name.lower() == 'leaky_relu' or name.lower() == 'lrelu':
+    return lrelu
+  elif name.lower() == 'softplus':
+    return tf.nn.softplus
+  elif name.lower() == 'sigmoid':
+    return tf.nn.sigmoid
+  elif name.lower() == 'elu':
+    return tf.nn.elu
+  else:
+    raise ValueError("The %s activation is not supported!".format(name))
 
 
-def inputs(train=True, shuffle=True):
+class BatchIndex:
+  """
+  The indices for manipulating the tuple from `get_batch`.
+  """
+  inputs = 0
+  y_true = 1
+  occurs = 2
+  weights = 3
+  loss_weight = 4
+
+
+def get_batch(train=True, shuffle=True, dataset=None):
   """
   Construct input for k-body evaluation using the Reader ops.
 
   Args:
-    train: bool, indicating if one should use the train or eval data set.
-    shuffle: bool, indicating if the batches shall be shuffled or not.
+    train: a `bool` indicating if one should use the train or eval data set.
+    shuffle: a `bool` indicating if the batches shall be shuffled or not.
+    dataset: a `str` as the dataset to use.
 
   Returns:
     features: Behler features for the molecules. 4D tensor of shape
@@ -126,289 +100,150 @@ def inputs(train=True, shuffle=True):
   return kbody_input.inputs(
     train=train,
     batch_size=FLAGS.batch_size,
-    shuffle=shuffle
+    shuffle=shuffle,
+    dataset=dataset
   )
 
 
-def inputs_settings(train=True):
+def get_batch_configs(train=True, dataset=None):
   """
-  Return the dict of global settings for inputs.
+  Return the configs for inputs.
 
   Args:
     train: boolean indicating if one should return the training settings or
       validation settings.
+    dataset: a `str` as the name of the dataset.
 
   Returns:
-    setting: a dict of settings.
+    configs: a `dict` as the configs for the dataset.
 
   """
-  return kbody_input.inputs_settings(train=train)
+  return kbody_input.inputs_configs(train=train, dataset=dataset)
 
 
-def inference_sum_kbody(conv, kbody_term, ck2, is_training,
-                        sizes=(60, 120, 120, 60), verbose=True):
+def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
+                  kbody_terms, is_training, num_kernels=None, verbose=True,
+                  one_body_weights=None):
   """
-  Infer the k-body term of `sum-kbody-cnn`.
+  Inference the model of `sum-kbody-cnn`.
 
   Args:
-    conv: a `[-1, 1, N, M]` Tensor as the input. N is the number of atoms in
-      the molecule and M is the number of features.
-    kbody_term: a `str` Tensor as the name of this k-body term.
-    ck2: a `int` as the value of C(k,2).
-    is_training: a `bool` type placeholder tensor indicating whether this 
-      inference is for training or not.
-    sizes: a `List[int]` as the number of convolution kernels for each layer.
-    verbose: a bool. If Ture, the shapes of the layers will be printed.
-
-  Returns:
-    kbody_energies: a Tensor of `[-1, 1, N, 1]` as the energy contributions of 
-      all kbody terms.
-
-  """
-
-  if verbose:
-    tf.logging.info("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
-
-  num_layers = len(sizes)
-  activation_fn = list(repeat(tf.nn.tanh, num_layers))
-  kernel_size = 1
-  stride = 1
-  padding = 'SAME'
-  dtype = tf.float32
-
-  # Explicitly set the shape of the input tensor. There are two flexible axis in
-  # this tensor: axis=0 represents the batch size and axis=2 is determined by
-  # the number of atoms.
-  conv.set_shape([None, 1, None, ck2])
-
-  # Setup the initializers and normalization function.
-  if FLAGS.xavier:
-    weights_initializer = initializers.xavier_initializer(
-      seed=kbody_input.SEED, dtype=dtype)
-  else:
-    weights_initializer = init_ops.truncated_normal_initializer(
-      seed=kbody_input.SEED, dtype=dtype)
-
-  if FLAGS.disable_biases:
-    biases_initializer = None
-  else:
-    biases_initializer = init_ops.zeros_initializer(dtype=dtype)
-
-  if FLAGS.batch_norm:
-    normalizer_fn = batch_norm
-    normalizer_params = dict(is_training=is_training)
-  else:
-    normalizer_fn = None
-    normalizer_params = {}
-
-  # Build the network for this block
-  for i, n_units in enumerate(sizes):
-    conv = conv2d(
-      conv,
-      n_units,
-      kernel_size,
-      activation_fn=activation_fn[i],
-      stride=stride,
-      padding=padding,
-      scope="Hidden{:d}".format(i + 1),
-      weights_initializer=weights_initializer,
-      biases_initializer=biases_initializer,
-      normalizer_fn=normalizer_fn,
-      normalizer_params=normalizer_params,
-    )
-    if verbose:
-      print_activations(conv)
-
-  kbody_energies = conv2d(
-    conv,
-    1,
-    kernel_size,
-    activation_fn=None if FLAGS.use_linear_output else tf.nn.relu,
-    biases_initializer=None,
-    weights_initializer=weights_initializer,
-    stride=stride,
-    padding=padding,
-    scope="k-Body"
-  )
-  if verbose:
-    print_activations(kbody_energies)
-    tf.logging.info("")
-
-  # Directly return the 4D tensor of kbody energies. The sum/flatten will be
-  # done in the main inference function.
-  return kbody_energies
-
-
-def inference_one_body(batch_occurs, nat, initial_one_body_weights=None):
-  """
-  Inference the one-body part.
-  
-  Args:
-    batch_occurs: a 4D Tensor of shape `[-1, 1, 1, Nat]` as the occurances of 
-      the atom types.
-    nat: a `int` as the number of atom types.
-    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
-      weights of the one-body kernel.
-
-  Returns:
-    one_body: a 4D Tensor of shape `[-1, 1, 1, 1]` as the one-body contribs.
-
-  """
-  num_outputs = 1
-  kernel_size = 1
-
-  if FLAGS.initial_one_body_weights is not None:
-    weights = FLAGS.initial_one_body_weights
-    values = [float(x) for x in weights.split(",")]
-    if nat > 1 and len(values) == 1:
-      values = np.ones(nat, dtype=np.float32) * values[0]
-  elif initial_one_body_weights is not None:
-    values = initial_one_body_weights
-  else:
-    values = np.ones(nat, dtype=np.float32)
-  if len(values) != nat:
-    raise Exception("The number of initial weights should be %d!" % nat)
-
-  weights_initializer = init_ops.constant_initializer(values)
-
-  return conv2d(
-    batch_occurs,
-    num_outputs=num_outputs,
-    kernel_size=kernel_size,
-    activation_fn=None,
-    weights_initializer=weights_initializer,
-    biases_initializer=None,
-    scope='one-body',
-    trainable=(not FLAGS.fixed_one_body),
-  )
-
-
-def inference(batch_inputs, batch_occurs, batch_weights, split_dims, nat,
-              kbody_terms, is_training, verbose=True,
-              conv_sizes=(60, 120, 120, 60), initial_one_body_weights=None):
-  """
-  The general inference function.
-
-  Args:
-    batch_inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
-    batch_occurs: a Tensor of shape `[-1, Nat]` as the occurances of the atom 
-      types. `Nat` is the number of atom types.
-    batch_weights: a Tensor of shape `[-1, -1]` as the weights of the k-body 
+    inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
+    occurs: a Tensor of shape `[-1, num_atom_types]` as the number of occurances
+      of each type of atom.
+    weights: a Tensor of shape `[-1, -1, D, -1]` as the weights of the k-body
       contribs.
-    split_dims: a `List[int]` or a 1-D Tensor containing the sizes of each 
-      output tensor along split_dim.
-    nat: a `int` as the number of atom types.
+    split_dims: a `List[int]` or a 1D Tensor of `int` as the dims to split the
+      input feature matrix.
+    num_atom_types: a `int` as the number of atom types.
     kbody_terms: a `List[str]` as the names of the k-body terms.
     is_training: a `bool` type placeholder indicating whether this inference is
       for training or not.
     verbose: boolean indicating whether the layers shall be printed or not.
-    conv_sizes: a `Tuple[int]` as the sizes of the convolution layers.
-    initial_one_body_weights: a 1D array of shape `[nat, ]` as the initial 
+    num_kernels: a `Tuple[int]` as the number of kernels of the convolution
+      layers. This also determines the number of layers in each atomic network.
+    one_body_weights: a 1D array of shape `[nat, ]` as the initial
       weights of the one-body kernel.
 
   Returns:
-    total_energies: a Tensor representing the predicted total energies.
-    contribs: a Tensor representing the predicted contributions of the kbody
-      terms.
+    y_total: a Tensor of shape `[-1, ]` as the predicted total energies.
 
   """
 
-  # Build up the placeholder tensors.
-  #   extra_inputs: a placeholder Tensor of shape `[-1, 1, -1, D]` as the
-  #     alternative inputs which can be directly feeded.
-  #   use_extra: a boolean Tensor indicating whether we should use the
-  #     placeholder inputs or the batch inputs.
+  num_kernels = num_kernels or (40, 50, 60, 40)
+  activation_fn = get_activation_fn(FLAGS.activation_fn)
 
-  with tf.name_scope("placeholders"):
-    ck2 = int(comb(FLAGS.many_body_k, 2, exact=True))
-    use_extra = tf.placeholder_with_default(
-      False,
-      shape=None,
-      name="use_extra_inputs"
-    )
-    extra_inputs = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, ck2]),
-      shape=[None, 1, None, ck2],
-      name="extra_inputs"
-    )
-    extra_weights = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, 1]),
-      shape=[None, 1, None, 1],
-      name="extra_weights"
-    )
-    extra_occurs = tf.placeholder_with_default(
-      tf.zeros([1, 1, 1, nat]),
-      shape=[None, 1, 1, nat],
-      name="extra_occurs"
-    )
+  if FLAGS.initial_one_body_weights is not None:
+    one_body_weights = FLAGS.initial_one_body_weights
+    one_body_weights = np.array([float(x) for x in one_body_weights.split(",")])
+    if num_atom_types > 1 and len(one_body_weights) == 1:
+      one_body_weights = np.ones(
+        num_atom_types, dtype=np.float32) * one_body_weights[0]
 
-  # Choose the inputs tensor based on `use_placeholder`.
-  with tf.name_scope("InputsFlow"):
-    selected_inputs, selected_occurs, selected_weights = tf.cond(
-      use_extra,
-      lambda: (extra_inputs, extra_occurs, extra_weights),
-      lambda: (batch_inputs, batch_occurs, batch_weights),
-      name="selected"
-    )
-
-    axis = tf.constant(2, dtype=tf.int32, name="CNK")
-    convs = tf.split(selected_inputs, split_dims, axis=axis, name="Partition")
-
-  kbody_energies = []
-
-  for i, conv in enumerate(convs):
-    with tf.variable_scope(kbody_terms[i]):
-      kbody = inference_sum_kbody(
-        conv,
-        kbody_terms[i],
-        ck2,
-        is_training=is_training,
-        sizes=conv_sizes,
-        verbose=verbose,
-      )
-    kbody_energies.append(kbody)
-
-  contribs = tf.concat(kbody_energies, axis=axis, name="Contribs")
-  contribs = tf.multiply(contribs, selected_weights, name="Weighted")
-  tf.summary.histogram("kbody_contribs", contribs)
-  if verbose:
-    print_activations(contribs)
-
-  one_body = inference_one_body(selected_occurs, nat, initial_one_body_weights)
-  tf.summary.histogram("1body_contribs", one_body)
-  if verbose:
-    print_activations(one_body)
-
-  with tf.name_scope("Outputs"):
-
-    with tf.name_scope("kbody"):
-      y_total_kbody = tf.reduce_sum(contribs, axis=axis, name="Total")
-      y_total_kbody.set_shape([None, 1, 1])
-      if verbose:
-        print_activations(y_total_kbody)
-      y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
-      tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
-
-    with tf.name_scope("1body"):
-      y_total_1body = tf.squeeze(one_body, name="squeeze")
-      tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
-
-    y_total = tf.add(y_total_1body, y_total_kbody, "MBE")
-
-    if verbose:
-      get_number_of_trainable_parameters(verbose=verbose)
-
-  return y_total, contribs
+  y_total, _ = inference(inputs, occurs, weights, split_dims,
+                         num_atom_types=num_atom_types, kbody_terms=kbody_terms,
+                         is_training=is_training, max_k=FLAGS.many_body_k,
+                         num_kernels=num_kernels, activation_fn=activation_fn,
+                         one_body_weights=one_body_weights, verbose=verbose)
+  return y_total
 
 
-def loss(y_true, y_pred, weights=None):
+def extract_configs(configs, for_training=True):
+  """
+  Extract the config of a dataset.
+
+  Args:
+    configs: a `dict` as the configs of a dataset.
+    for_training: a `bool` indicating whether the configs should be used for
+      training or not.
+
+  Returns:
+    params: a `dict` as the parameters for inference.
+
+  """
+
+  # Extract the constant configs from the dict
+  split_dims = np.asarray(configs["split_dims"], dtype=np.int64)
+  num_atom_types = configs["num_atom_types"]
+  kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
+  num_kernels = [int(units) for units in FLAGS.conv_sizes.split(",")]
+
+  # The last weight corresponds to the average contribs from k_max-body terms.
+  weights = np.array(configs["initial_one_body_weights"], dtype=np.float32)
+  if len(weights) == 0:
+    weights = np.ones((num_atom_types, ), dtype=np.float32)
+  else:
+    weights = weights[:-1]
+
+  # Create the parameter dict and the feed dict
+  params = dict(split_dims=split_dims, kbody_terms=kbody_terms,
+                is_training=for_training, one_body_weights=weights,
+                num_atom_types=num_atom_types, num_kernels=num_kernels)
+  return params
+
+
+def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
+  """
+  Inference the `sum-kbody-cnn` based on the given dataset.
+
+  Args:
+    dataset: a `str` as the name of the dataset.
+    for_training: a `bool` indicating whether this inference is for training or
+      evaluation.
+    kwargs: additional key-value parameters.
+
+  Returns:
+    y_total: a `float32` Tensor of shape `(-1, )` as the predicted total energy.
+    y_true: a `float32` Tensor of shape `(-1, )` as the true energy.
+    y_weight: a `float32` Tensor of shape `(-1, )` as the weights for computing
+      weighted RMSE loss.
+    feed_dict: a `dict` as the feed dict for tensorflow sessions.
+
+  """
+  batch = get_batch(train=for_training, dataset=dataset)
+  configs = get_batch_configs(train=for_training, dataset=dataset)
+  params = extract_configs(configs, for_training=for_training)
+  for key, val in kwargs.items():
+    if key in params:
+      params[key] = val
+    else:
+      tf.logging.warning("Unrecognized key={}".format(key))
+
+  y_true = batch[BatchIndex.y_true]
+  y_total = sum_kbody_cnn(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
+                          batch[BatchIndex.weights], **params)
+  y_weight = batch[BatchIndex.loss_weight]
+  return y_total, y_true, y_weight
+
+
+def loss(y_true, y_nn, weights=None):
   """
   Return the total loss tensor.
 
   Args:
     y_true: the desired energies.
-    y_pred: the predicted energies.
-    weights: the loss weights for the energies.
+    y_nn: the neural network predicted energies.
+    weights: the weights for the energies.
 
   Returns:
     loss: the total loss tensor.
@@ -416,10 +251,10 @@ def loss(y_true, y_pred, weights=None):
   """
   with tf.name_scope("RMSE"):
     if weights is None:
-      weights = 1.0
+      weights = tf.constant(1.0, name='weight')
     mean_squared_error = tf.losses.mean_squared_error(
-      y_true, y_pred, scope="sMSE", loss_collection=None, weights=weights)
-    rmse = tf.sqrt(mean_squared_error, name="sRMSE")
+      y_true, y_nn, scope="MSE", loss_collection=None, weights=weights)
+    rmse = tf.sqrt(mean_squared_error, name="RMSE")
     tf.add_to_collection('losses', rmse)
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
@@ -479,8 +314,6 @@ def get_train_op(total_loss, global_step):
   # batch_normalization layers won't update their population statistics, which
   # will cause the model to fail at inference time
   dependencies = [loss_averages_op]
-  if FLAGS.batch_norm:
-    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 
   # Compute gradients.
   with tf.control_dependencies(dependencies):

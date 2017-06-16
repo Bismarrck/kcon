@@ -7,9 +7,13 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import json
-import kbody
 import re
 import time
+import kbody
+from kbody import BatchIndex
+from kbody import extract_configs, get_batch, get_batch_configs
+from kbody import sum_kbody_cnn as inference
+from save_model import save_model
 from datetime import datetime
 from os.path import join
 from utils import get_xargs, set_logging_configs
@@ -30,6 +34,9 @@ tf.app.flags.DEFINE_integer('save_frequency', 200,
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """The frequency, in number of global steps, that
                             the training progress wiil be logged.""")
+tf.app.flags.DEFINE_integer('freeze_frequency', 100000,
+                            """The frequency, in number of global steps, that
+                            the graph will be freezed and exported.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
@@ -44,7 +51,7 @@ tf.app.flags.DEFINE_boolean('restore', True,
                             """Restore the previous checkpoint if possible.""")
 
 
-def _save_training_flags():
+def save_training_flags():
   """
   Save the training flags to the train_dir.
   """
@@ -59,60 +66,34 @@ def _save_training_flags():
     json.dump(args, f, indent=2)
 
 
-def tower_loss(scope):
+def tower_loss(batch, params, scope, reuse_variables=False):
   """Calculate the total loss on a single tower running the sum-kbody-cnn model.
 
   Args:
-    scope: unique prefix string identifying the tower, e.g. 'tower_0'
+    batch: a `tuple` of Tensors as the `inputs`, `y_true`, `occurs`, `weights`
+      and `y_weight`.
+    params: a `dict` as the parameters for inference.
+    scope: unique prefix string identifying the tower, e.g. 'tower0'
+    reuse_variables: a `bool` indicating whether we should reuse the variables.
 
   Returns:
     Tensor of shape [] containing the total loss for a batch of data
 
   """
-  settings = kbody.inputs_settings(train=True)
-  split_dims = settings["split_dims"]
-  nat = settings["nat"]
-  kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
-  initial_one_body_weights = settings["initial_one_body_weights"]
 
-  # Get features and energies.
-  batch_inputs, batch_true, batch_occurs, batch_weights = kbody.inputs(
-    train=True
-  )
-
-  # Build a Graph that computes the logits predictions from the
-  # inference model.
-  batch_split_dims = tf.constant(np.array(split_dims, dtype=np.int64),
-                                 dtype=tf.int64, name="split_dims")
-  is_training = tf.placeholder(tf.bool, name="is_training")
-
-  # Parse the convolution layer sizes
-  conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
-  if len(conv_sizes) < 2:
-    raise ValueError("At least three convolution layers are required!")
-
-  # Inference
-  y_pred, _ = kbody.inference(
-    batch_inputs,
-    batch_occurs,
-    batch_weights,
-    nat=nat,
-    is_training=is_training,
-    split_dims=batch_split_dims,
-    kbody_terms=kbody_terms,
-    conv_sizes=conv_sizes,
-    initial_one_body_weights=np.asarray(initial_one_body_weights[:-1]),
-    verbose=True,
-  )
+  # Inference the model of `sum-kbody-cnn`
+  with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
+    y_nn = inference(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
+                     batch[BatchIndex.weights], **params)
 
   # Cast the true values to float32 and set the shape of the `y_pred`
   # explicitly.
-  y_true = tf.cast(batch_true, tf.float32)
-  y_pred.set_shape(y_true.get_shape().as_list())
+  y_true = tf.cast(batch[BatchIndex.y_true], tf.float32)
+  y_nn.set_shape(y_true.get_shape().as_list())
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.
-  _ = kbody.loss(y_true, y_pred)
+  kbody.loss(y_true, y_nn, weights=batch[BatchIndex.loss_weight])
 
   # Assemble all of the losses for the current tower only.
   losses = tf.get_collection('losses', scope)
@@ -120,14 +101,20 @@ def tower_loss(scope):
   # Calculate the total loss for the current tower.
   total_loss = tf.add_n(losses, name='total_loss')
 
+  # Compute the moving average of all individual losses and the total loss.
+  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages_op = loss_averages.apply(losses + [total_loss])
+
   # Attach a scalar summary to all individual losses and the total loss; do the
   # same for the averaged version of the losses.
   for l in losses + [total_loss]:
-    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+    # Remove 'tower[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
-    loss_name = re.sub('%s_[0-9]*/' % kbody.TOWER_NAME, '', l.op.name)
+    loss_name = re.sub(r'%s[0-9]*/' % kbody.TOWER_NAME, '', l.op.name)
     tf.summary.scalar(loss_name, l)
 
+  with tf.control_dependencies([loss_averages_op]):
+    total_loss = tf.identity(total_loss)
   return total_loss
 
 
@@ -187,34 +174,44 @@ def train_with_multiple_gpus():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Create an optimizer that performs gradient descent.
-    opt = tf.train.AdadeltaOptimizer(FLAGS.learning_rate)
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+
+    # Initialize the input pipeline
+    batch = get_batch(train=True, shuffle=True)
+    batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
+      batch, capacity=2 * FLAGS.num_gpus)
+    configs = get_batch_configs(train=True)
+    params = extract_configs(configs, for_training=True)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
     summaries = []
     loss = None
+    reuse_variables = False
     assert FLAGS.num_gpus > 0
 
-    with tf.variable_scope(tf.get_variable_scope()):
-      for i in range(FLAGS.num_gpus):
-        with tf.device('/gpu:%d' % i):
-          with tf.name_scope('%s_%d' % (kbody.TOWER_NAME, i)) as scope:
-            # Calculate the loss for one tower of the sum-kbody-cnn model.
-            # This function constructs the entire model but shares the variables
-            # across all towers.
-            loss = tower_loss(scope)
+    for i in range(FLAGS.num_gpus):
+      with tf.device('/gpu:%d' % i):
+        with tf.name_scope('%s%d' % (kbody.TOWER_NAME, i)) as scope:
+          # Dequeues one batch for the GPU
+          gpu_batch = batch_queue.dequeue()
 
-            # Reuse variables for the next tower.
-            tf.get_variable_scope().reuse_variables()
+          # Calculate the loss for one tower of the sum-kbody-cnn model.
+          # This function constructs the entire model but shares the variables
+          # across all towers.
+          loss = tower_loss(gpu_batch, params, scope, reuse_variables)
 
-            # Retain the summaries from the final tower.
-            summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+          # Reuse variables for the next tower.
+          reuse_variables = True
 
-            # Calculate the gradients for the batch of data on this CIFAR tower.
-            grads = opt.compute_gradients(loss)
+          # Retain the summaries from the final tower.
+          summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
 
-            # Keep track of the gradients across all towers.
-            tower_grads.append(grads)
+          # Calculate the gradients for the batch of data on this CIFAR tower.
+          grads = opt.compute_gradients(loss)
+
+          # Keep track of the gradients across all towers.
+          tower_grads.append(grads)
 
     # We must calculate the mean of each gradient. Note that this is the
     # synchronization point across all towers.
@@ -226,12 +223,7 @@ def train_with_multiple_gpus():
         summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
 
     # Apply the gradients to adjust the shared variables.
-    if FLAGS.batch_norm:
-      dependencies = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    else:
-      dependencies = []
-    with tf.control_dependencies(dependencies):
-      apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     # Add histograms for trainable variables.
     for var in tf.trainable_variables():
@@ -246,7 +238,7 @@ def train_with_multiple_gpus():
     train_op = tf.group(apply_gradient_op, variables_averages_op)
 
     # Save the training flags
-    _save_training_flags()
+    save_training_flags()
 
     # Create a saver.
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
@@ -265,21 +257,21 @@ def train_with_multiple_gpus():
       log_device_placement=FLAGS.log_device_placement))
     sess.run(init)
 
+    # Restore the previous checkpoint
+    start_step = 0
+    if FLAGS.restore:
+      ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+      if ckpt and ckpt.model_checkpoint_path:
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        start_step = sess.run(global_step)
+
     # Start the queue runners.
     tf.train.start_queue_runners(sess=sess)
 
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-    # Restore the previous checkpoint
-    init_step = 0
-    if FLAGS.restore:
-      ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
-      if ckpt and ckpt.model_checkpoint_path:
-        saver.restore(sess, ckpt.model_checkpoint_path)
-        init_step = sess.run(global_step)
-
-    for step in range(init_step, FLAGS.max_steps, 1):
+    for step in range(start_step, FLAGS.max_steps):
       start_time = time.time()
       _, loss_value = sess.run([train_op, loss])
       duration = time.time() - start_time
@@ -292,7 +284,7 @@ def train_with_multiple_gpus():
         sec_per_batch = duration / FLAGS.num_gpus
         epoch = step * num_examples_per_step / (FLAGS.num_examples * 0.8)
         format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
-                     "(%6.1f examples/sec; %7.3f sec/batch)"
+                     "(%8.1f examples/sec; %8.3f sec/batch)"
         tf.logging.info(format_str % (datetime.now(), step, epoch, loss_value,
                                       examples_per_sec, sec_per_batch))
 
@@ -301,10 +293,14 @@ def train_with_multiple_gpus():
         summary_writer.add_summary(summary_str, step)
 
       # Save the model checkpoint periodically.
-      if step % (20 * FLAGS.save_frequency) == 0 or \
+      if step % (20 // FLAGS.num_gpus * FLAGS.save_frequency) == 0 or \
               (step + 1) == FLAGS.max_steps:
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
+
+      if step > 0 and (step % FLAGS.freeze_frequency == 0
+                       or (step + 1) == FLAGS.max_steps):
+        save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring

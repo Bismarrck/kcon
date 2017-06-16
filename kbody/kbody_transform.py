@@ -860,25 +860,28 @@ class FixedLenMultiTransformer(MultiTransformer):
     name = splitext(basename(filename))[0]
     workdir = dirname(filename)
     cfgfile = join(workdir, "{}.json".format(name))
-    if indices is not None:
-      indices = list(indices)
-    else:
-      indices = []
-    if initial_weights is not None:
-      initial_weights = list(initial_weights)
-    else:
-      initial_weights = []
+    indices = list(indices) if indices is not None else []
+    weights = list(initial_weights) if initial_weights is not None else []
+    max_occurs = {atom: times for atom, times in self._max_occurs.items()
+                  if times < self._many_body_k}
+
+    aux_dict = {
+      "kbody_terms": self._kbody_terms,
+      "split_dims": self._split_dims,
+      "total_dim": self._total_dim,
+      "lookup_indices": list([int(i) for i in indices]),
+      "num_atom_types": len(self._ordered_species),
+      "ordered_species": self._ordered_species,
+      "two_body": self._num_ghosts > 0,
+      "periodic": self._periodic,
+      "many_body_k": self._many_body_k,
+      "max_occurs": max_occurs,
+      "order": self._order,
+      "initial_one_body_weights": weights,
+    }
 
     with open(cfgfile, "w+") as f:
-      json.dump({
-        "kbody_terms": self._kbody_terms,
-        "split_dims": self._split_dims,
-        "total_dim": self._total_dim,
-        "inverse_indices": list([int(i) for i in indices]),
-        "nat": len(self._ordered_species),
-        "ordered_species": self._ordered_species,
-        "initial_one_body_weights": initial_weights
-      }, f, indent=2)
+      json.dump(aux_dict, fp=f, indent=2)
 
   def transform_and_save(self, array_of_species, energies, coords, filename,
                          indices=None, lattices=None, pbcs=None, verbose=True,

@@ -11,7 +11,8 @@ import math
 import time
 import numpy as np
 import tensorflow as tf
-import kbody
+from kbody import sum_kbody_cnn_from_dataset as inference
+from kbody import MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join
@@ -36,8 +37,7 @@ tf.app.flags.DEFINE_boolean('output_acc_error', False,
                             """Output the accumulative error.""")
 
 
-def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
-              feed_dict):
+def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
   """
   Run Eval once.
 
@@ -47,8 +47,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
     y_true_op: The Tensor used for fetching true predictions.
     y_pred_op: The Tensor used for fetching neural network predictions.
     summary_op: Summary op.
-    feed_dict: The dict used for `sess.run`.
-  
+
   """
   with tf.Session() as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
@@ -82,35 +81,40 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
       y_true = np.zeros((num_evals, ), dtype=np.float32)
       y_pred = np.zeros((num_evals, ), dtype=np.float32)
       step = 0
+      tic = time.time()
       while step < num_iter and not coord.should_stop():
-        y_true_, y_pred_ = sess.run([y_true_op, y_pred_op], feed_dict=feed_dict)
+        y_true_, y_pred_ = sess.run([y_true_op, y_pred_op])
         istart = step * FLAGS.batch_size
         istop = min(istart + FLAGS.batch_size, num_evals)
         y_true[istart: istop] = -y_true_
         y_pred[istart: istop] = -y_pred_
         step += 1
+      elpased = time.time() - tic
 
-      # Compute the Mean-Absolute-Error @ 1.
+      # Compute the common evaluation metrics.
       precision = mean_absolute_error(y_true, y_pred)
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+      y_diff = np.abs(y_true - y_pred)
+      emax = y_diff.max()
+      emin = y_diff.min()
+      score = r2_score(y_true, y_pred)
 
       dtime = datetime.now()
-      tf.logging.info('%s: step      = %d' % (dtime, global_step))
-      tf.logging.info('%s: precision = %10.6f' % (dtime, precision))
+      tf.logging.info("%s: step      = %d" % (dtime, global_step))
+      tf.logging.info("%s: time      = %.2f" % (dtime, elpased))
+      tf.logging.info("%s: precision = %10.6f" % (dtime, precision))
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
-
-      # Compute the linear coefficient
-      score = r2_score(y_true, y_pred)
-      tf.logging.info(" * R2 score: %.6f" % score)
+      tf.logging.info("%s: minimum   = %10.6f" % (dtime, emin))
+      tf.logging.info("%s: maximum   = %10.6f" % (dtime, emax))
+      tf.logging.info("%s: score     = %.6f" % (dtime, score))
 
       # Randomly output 10 predictions and true values
       if FLAGS.output_acc_error:
-        y_diff = np.abs(y_true - y_pred)
         y_diff = y_diff[np.argsort(y_true)]
         for i in range(1, 10):
           percent = float(i) / 10.0
           n = int(percent * num_evals)
-          mae = np.mean(y_diff[:n])
+          mae = y_diff[:n].mean()
           tf.logging.info(" * %2d%% MAE: % 8.3f" % (percent * 100.0, mae))
       else:
         indices = np.random.choice(range(FLAGS.num_evals), size=10)
@@ -120,7 +124,8 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
 
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
-        np.savez("eval.npz", y_true=y_true, y_pred=y_pred)
+        np.savez("{}_at_{}.npz".format(FLAGS.dataset, global_step),
+                 y_true=y_true, y_pred=y_pred)
 
       else:
         summary = tf.Summary()
@@ -144,60 +149,25 @@ def evaluate():
     logfile=join(FLAGS.eval_dir, FLAGS.logfile)
   )
 
-  with tf.Graph().as_default() as g:
+  with tf.Graph().as_default() as graph:
 
-    # Read dataset configurations
-    settings = kbody.inputs_settings(train=False)
-    split_dims = settings["split_dims"]
-    nat = settings["nat"]
-    kbody_terms = [x.replace(",", "") for x in settings["kbody_terms"]]
-
-    # Get features and energies for evaluation.
-    batches = kbody.inputs(train=False, shuffle=False)
-
-    # Build a Graph that computes the logits predictions from the
-    # inference model.
-    batch_split_dims = tf.placeholder(
-      tf.int64, [len(split_dims), ], name="split_dims"
-    )
-    is_training = tf.placeholder(tf.bool, name="is_training")
-
-    # Parse the convolution layer sizes
-    conv_sizes = [int(x) for x in FLAGS.conv_sizes.split(",")]
-    if len(conv_sizes) < 2:
-      raise ValueError("At least three convolution layers are required!")
-
-    y_pred, _ = kbody.inference(
-      batches[0],
-      batches[2],
-      batches[3],
-      nat=nat,
-      is_training=is_training,
-      split_dims=batch_split_dims,
-      kbody_terms=kbody_terms,
-      verbose=True,
-      conv_sizes=conv_sizes
-    )
-    y_true = tf.cast(batches[1], tf.float32)
-    y_pred.set_shape(y_true.get_shape().as_list())
+    # Inference the model of `sum-kbody-cnn` for evaluation
+    y_nn, y_true, _ = inference(FLAGS.dataset, for_training=False)
+    y_true = tf.cast(y_true, tf.float32)
+    y_nn.set_shape(y_true.get_shape().as_list())
 
     # Restore the moving average version of the learned variables for eval.
-    # variable_averages = tf.train.ExponentialMovingAverage(
-    #     kbody.MOVING_AVERAGE_DECAY)
-    # variables_to_restore = variable_averages.variables_to_restore()
-    # saver = tf.train.Saver(variables_to_restore)
-    # FIXME: there is something wrong with the moving average.
-    saver = tf.train.Saver()
+    variable_averages = tf.train.ExponentialMovingAverage(
+        MOVING_AVERAGE_DECAY)
+    variables_to_restore = variable_averages.variables_to_restore()
+    saver = tf.train.Saver(variables_to_restore)
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
-
-    # Build the feed dict
-    feed_dict = {batch_split_dims: split_dims, is_training: False}
+    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_pred, summary_op, feed_dict)
+      eval_once(saver, summary_writer, y_true, y_nn, summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

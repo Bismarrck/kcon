@@ -25,7 +25,7 @@ __email__ = 'Bismarrck@me.com'
 
 tf.app.flags.DEFINE_string("binary_dir", "./binary",
                            """The directory for storing binary datasets.""")
-tf.app.flags.DEFINE_string('dataset', 'TaB20opted',
+tf.app.flags.DEFINE_string('dataset', 'C9H7N.PBE',
                            """Define the dataset to use. This is also the name
                            of the xyz file to load.""")
 tf.app.flags.DEFINE_string('format', 'xyz',
@@ -44,8 +44,6 @@ tf.app.flags.DEFINE_float('test_size', 0.2,
 tf.app.flags.DEFINE_integer("order", 1,
                             """The exponential order for normalizing 
                             distances.""")
-tf.app.flags.DEFINE_boolean('use_fp64', False,
-                            """Use double precision floats if True.""")
 tf.app.flags.DEFINE_boolean('run_input_test', False,
                             """Run the input unit test if True.""")
 tf.app.flags.DEFINE_float('unit', None,
@@ -77,16 +75,6 @@ def exp_loss_weight_fn(x, x0=0.0, beta=1.0):
   I.e. \\(y = \e^{-\beta \cdot (x - x_0)}\\).
   """
   return np.float32(np.exp(-(x - x0) * beta))
-
-
-def get_float_type(convert=False):
-  """
-  Return the data type of floats in this mini-project.
-  """
-  if convert:
-    return tf.float32
-  else:
-    return np.float32
 
 
 def _get_regex_patt_and_unit(xyz_format):
@@ -158,7 +146,7 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
 
   """
 
-  dtype = get_float_type(convert=False)
+  dtype = np.float32
   energies = np.zeros((num_examples,), dtype=np.float64)
   coords = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
   lattices = np.zeros((num_examples, 9))
@@ -367,7 +355,6 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
     weights: a 1D array of shape [cnk,] as the weights of the k-body contribs.
 
   """
-  dtype = get_float_type(convert=True)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
 
@@ -382,7 +369,7 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
       'loss_weight': tf.FixedLenFeature([], tf.float32)
     })
 
-  features = tf.decode_raw(example['features'], dtype)
+  features = tf.decode_raw(example['features'], tf.float32)
   features.set_shape([cnk * ck2])
   features = tf.reshape(features, [1, cnk, ck2])
 
@@ -403,7 +390,7 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
   return features, energy, occurs, weights, loss_weight
 
 
-def inputs(train, batch_size=25, shuffle=True, dataset=None):
+def inputs(train, batch_size=50, shuffle=True, dataset=None):
   """
   Reads mixed input data.
 
@@ -430,10 +417,10 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
   filename, _ = get_filenames(train=train, dataset=dataset)
   filenames = [filename]
 
-  settings = inputs_settings(train=train, dataset=dataset)
-  cnk = settings["total_dim"]
-  nat = settings["nat"]
-  ck2 = comb(FLAGS.many_body_k, 2, exact=True)
+  configs = inputs_configs(train=train, dataset=dataset)
+  cnk = configs["total_dim"]
+  ck2 = comb(configs["many_body_k"], 2, exact=True)
+  num_atom_types = configs["num_atom_types"]
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -442,8 +429,8 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
 
     # Even when reading in multiple threads, share the filename
     # queue.
-    features, energies, occurs, weights, loss_weight = read_and_decode(
-      filename_queue, cnk, ck2, nat
+    features, y_true, occurs, weights, y_weight = read_and_decode(
+      filename_queue, cnk, ck2, num_atom_types
     )
 
     # Shuffle the examples and collect them into batch_size batches.
@@ -451,13 +438,13 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
       batches = tf.train.batch(
-        [features, energies, occurs, weights, loss_weight],
+        [features, y_true, occurs, weights, y_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
       batches = tf.train.shuffle_batch(
-        [features, energies, occurs, weights, loss_weight],
+        [features, y_true, occurs, weights, y_weight],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
@@ -466,9 +453,9 @@ def inputs(train, batch_size=25, shuffle=True, dataset=None):
     return batches
 
 
-def inputs_settings(train=True, dataset=None):
+def inputs_configs(train=True, dataset=None):
   """
-  Return the global settings for inputs.
+  Return the configs for inputs.
 
   Args:
     train: boolean indicating if one should return settings for training or
@@ -476,7 +463,7 @@ def inputs_settings(train=True, dataset=None):
     dataset: a `str` as the name of the dataset.
 
   Returns:
-    settings: a dict of settings.
+    configs: a `dict` of configs.
 
   """
   _, cfgfile = get_filenames(train=train, dataset=dataset)
@@ -486,14 +473,10 @@ def inputs_settings(train=True, dataset=None):
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  if FLAGS.run_input_test:
-    test_extract_mixed_xyz()
-    test_build_dataset()
+  if FLAGS.periodic and (FLAGS.format != 'grendel'):
+    tf.logging.error(
+      "The xyz format must be `grendel` if `periodic` is True!")
   else:
-    if FLAGS.periodic and (FLAGS.format != 'grendel'):
-      tf.logging.error(
-        "The xyz format must be `grendel` if `periodic` is True!")
-      exit(1)
     may_build_dataset(verbose=True)
 
 
