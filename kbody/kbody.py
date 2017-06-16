@@ -188,14 +188,13 @@ def extract_configs(configs, for_training=True):
   num_atom_types = configs["num_atom_types"]
   kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
   weights = np.array(configs["initial_one_body_weights"])
-  num_terms = len(split_dims)
   num_kernels = [int(units) for units in FLAGS.conv_sizes.split(",")]
 
   # Create the parameter dict and the feed dict
   params = dict(split_dims=split_dims, kbody_terms=kbody_terms,
                 is_training=for_training, one_body_weights=weights,
                 num_atom_types=num_atom_types, num_kernels=num_kernels)
-  return params, feed_dict
+  return params
 
 
 def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
