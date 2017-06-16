@@ -12,6 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from kbody import sum_kbody_cnn_from_dataset as inference
+from kbody import MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join
@@ -80,6 +81,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
       y_true = np.zeros((num_evals, ), dtype=np.float32)
       y_pred = np.zeros((num_evals, ), dtype=np.float32)
       step = 0
+      tic = time.time()
       while step < num_iter and not coord.should_stop():
         y_true_, y_pred_ = sess.run([y_true_op, y_pred_op])
         istart = step * FLAGS.batch_size
@@ -87,6 +89,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
         y_true[istart: istop] = -y_true_
         y_pred[istart: istop] = -y_pred_
         step += 1
+      elpased = time.time() - tic
 
       # Compute the common evaluation metrics.
       precision = mean_absolute_error(y_true, y_pred)
@@ -98,6 +101,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
 
       dtime = datetime.now()
       tf.logging.info("%s: step      = %d" % (dtime, global_step))
+      tf.logging.info("%s: time      = %.2f" % (dtime, elpased))
       tf.logging.info("%s: precision = %10.6f" % (dtime, precision))
       tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
       tf.logging.info("%s: minimum   = %10.6f" % (dtime, emin))
@@ -154,7 +158,7 @@ def evaluate():
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
-        kbody.MOVING_AVERAGE_DECAY)
+        MOVING_AVERAGE_DECAY)
     variables_to_restore = variable_averages.variables_to_restore()
     saver = tf.train.Saver(variables_to_restore)
 
