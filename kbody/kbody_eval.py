@@ -129,7 +129,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
 
       else:
         summary = tf.Summary()
-        summary.ParseFromString(sess.run(summary_op, feed_dict=feed_dict))
+        summary.ParseFromString(sess.run(summary_op))
         summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
         summary.value.add(tag='R2 Score @ 1', simple_value=score)
         summary_writer.add_summary(summary, global_step)
