@@ -31,8 +31,6 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('batch_norm', False,
-                            """Use batch normalization if True.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 
