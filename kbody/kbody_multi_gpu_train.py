@@ -9,6 +9,7 @@ import numpy as np
 import json
 import re
 import time
+import kbody
 from kbody import BatchIndex
 from kbody import extract_configs, get_batch, get_batch_configs
 from kbody import sum_kbody_cnn as inference
@@ -180,7 +181,7 @@ def train_with_multiple_gpus():
     batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
       batch, capacity=2 * FLAGS.num_gpus)
     configs = get_batch_configs(train=True)
-    params, feed_dict = extract_configs(configs, for_training=True)
+    params = extract_configs(configs, for_training=True)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
@@ -272,7 +273,7 @@ def train_with_multiple_gpus():
 
     for step in range(start_step, FLAGS.max_steps):
       start_time = time.time()
-      _, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
+      _, loss_value = sess.run([train_op, loss])
       duration = time.time() - start_time
 
       assert not np.isnan(loss_value), 'Model diverged with loss = NaN'

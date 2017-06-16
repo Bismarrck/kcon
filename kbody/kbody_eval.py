@@ -36,8 +36,7 @@ tf.app.flags.DEFINE_boolean('output_acc_error', False,
                             """Output the accumulative error.""")
 
 
-def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
-              feed_dict):
+def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op):
   """
   Run Eval once.
 
@@ -47,8 +46,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
     y_true_op: The Tensor used for fetching true predictions.
     y_pred_op: The Tensor used for fetching neural network predictions.
     summary_op: Summary op.
-    feed_dict: The dict used for `sess.run`.
-  
+
   """
   with tf.Session() as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
@@ -83,7 +81,7 @@ def eval_once(saver, summary_writer, y_true_op, y_pred_op, summary_op,
       y_pred = np.zeros((num_evals, ), dtype=np.float32)
       step = 0
       while step < num_iter and not coord.should_stop():
-        y_true_, y_pred_ = sess.run([y_true_op, y_pred_op], feed_dict=feed_dict)
+        y_true_, y_pred_ = sess.run([y_true_op, y_pred_op])
         istart = step * FLAGS.batch_size
         istop = min(istart + FLAGS.batch_size, num_evals)
         y_true[istart: istop] = -y_true_
@@ -150,7 +148,7 @@ def evaluate():
   with tf.Graph().as_default() as graph:
 
     # Inference the model of `sum-kbody-cnn` for evaluation
-    y_nn, y_true, _, feed_dict = inference(FLAGS.dataset, for_training=False)
+    y_nn, y_true, _ = inference(FLAGS.dataset, for_training=False)
     y_true = tf.cast(y_true, tf.float32)
     y_nn.set_shape(y_true.get_shape().as_list())
 
@@ -165,7 +163,7 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_nn, summary_op, feed_dict)
+      eval_once(saver, summary_writer, y_true, y_nn, summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

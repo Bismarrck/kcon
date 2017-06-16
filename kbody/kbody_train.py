@@ -77,7 +77,7 @@ def train_model():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Inference the sum-kbody-cnn model
-    y_nn, y_true, y_weight, feed_dict = inference(
+    y_nn, y_true, y_weight = inference(
       FLAGS.dataset, for_training=True
     )
 
@@ -222,12 +222,11 @@ def train_model():
         if FLAGS.timeline:
           mon_sess.run(
             train_op,
-            feed_dict=feed_dict,
             options=run_options,
             run_metadata=run_meta
           )
         else:
-          mon_sess.run(train_op, feed_dict=feed_dict)
+          mon_sess.run(train_op)
 
   # Do not forget to export the final model
   save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
