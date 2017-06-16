@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import kbody_input
+
 from kbody_inference import inference
 from utils import lrelu
 
@@ -187,8 +188,14 @@ def extract_configs(configs, for_training=True):
   split_dims = np.asarray(configs["split_dims"], dtype=np.int64)
   num_atom_types = configs["num_atom_types"]
   kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
-  weights = np.array(configs["initial_one_body_weights"])
   num_kernels = [int(units) for units in FLAGS.conv_sizes.split(",")]
+
+  # The last weight corresponds to the average contribs from k_max-body terms.
+  weights = np.array(configs["initial_one_body_weights"], dtype=np.float32)
+  if len(weights) == 0:
+    weights = np.ones((num_atom_types, ), dtype=np.float32)
+  else:
+    weights = weights[:-1]
 
   # Create the parameter dict and the feed dict
   params = dict(split_dims=split_dims, kbody_terms=kbody_terms,

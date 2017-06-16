@@ -25,7 +25,7 @@ __email__ = 'Bismarrck@me.com'
 
 tf.app.flags.DEFINE_string("binary_dir", "./binary",
                            """The directory for storing binary datasets.""")
-tf.app.flags.DEFINE_string('dataset', 'TaB20opted',
+tf.app.flags.DEFINE_string('dataset', 'C9H7N.PBE',
                            """Define the dataset to use. This is also the name
                            of the xyz file to load.""")
 tf.app.flags.DEFINE_string('format', 'xyz',
@@ -44,8 +44,6 @@ tf.app.flags.DEFINE_float('test_size', 0.2,
 tf.app.flags.DEFINE_integer("order", 1,
                             """The exponential order for normalizing 
                             distances.""")
-tf.app.flags.DEFINE_boolean('use_fp64', False,
-                            """Use double precision floats if True.""")
 tf.app.flags.DEFINE_boolean('run_input_test', False,
                             """Run the input unit test if True.""")
 tf.app.flags.DEFINE_float('unit', None,
@@ -77,16 +75,6 @@ def exp_loss_weight_fn(x, x0=0.0, beta=1.0):
   I.e. \\(y = \e^{-\beta \cdot (x - x_0)}\\).
   """
   return np.float32(np.exp(-(x - x0) * beta))
-
-
-def get_float_type(convert=False):
-  """
-  Return the data type of floats in this mini-project.
-  """
-  if convert:
-    return tf.float32
-  else:
-    return np.float32
 
 
 def _get_regex_patt_and_unit(xyz_format):
@@ -158,7 +146,7 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
 
   """
 
-  dtype = get_float_type(convert=False)
+  dtype = np.float32
   energies = np.zeros((num_examples,), dtype=np.float64)
   coords = np.zeros((num_examples, num_atoms, 3), dtype=dtype)
   lattices = np.zeros((num_examples, 9))
@@ -367,7 +355,6 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
     weights: a 1D array of shape [cnk,] as the weights of the k-body contribs.
 
   """
-  dtype = get_float_type(convert=True)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
 
@@ -382,7 +369,7 @@ def read_and_decode(filename_queue, cnk, ck2, nat):
       'loss_weight': tf.FixedLenFeature([], tf.float32)
     })
 
-  features = tf.decode_raw(example['features'], dtype)
+  features = tf.decode_raw(example['features'], tf.float32)
   features.set_shape([cnk * ck2])
   features = tf.reshape(features, [1, cnk, ck2])
 
@@ -486,14 +473,10 @@ def inputs_configs(train=True, dataset=None):
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  if FLAGS.run_input_test:
-    test_extract_mixed_xyz()
-    test_build_dataset()
+  if FLAGS.periodic and (FLAGS.format != 'grendel'):
+    tf.logging.error(
+      "The xyz format must be `grendel` if `periodic` is True!")
   else:
-    if FLAGS.periodic and (FLAGS.format != 'grendel'):
-      tf.logging.error(
-        "The xyz format must be `grendel` if `periodic` is True!")
-      exit(1)
     may_build_dataset(verbose=True)
 
 

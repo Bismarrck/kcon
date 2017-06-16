@@ -298,7 +298,8 @@ def train_with_multiple_gpus():
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
 
-      if step % FLAGS.freeze_frequency == 0 or (step + 1) == FLAGS.max_steps:
+      if step > 0 and (step % FLAGS.freeze_frequency == 0
+                       or (step + 1) == FLAGS.max_steps):
         save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
