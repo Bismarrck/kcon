@@ -36,12 +36,13 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
     xyz_format=xyz_format,
     verbose=False
   )
+  y_true = y_true.astype(np.float32)
 
   _, indices = train_test_split(
     range(num_examples), test_size=0.2, random_state=SEED
   )
 
-  y_nn = np.zeros((len(indices),))
+  y_nn = np.zeros((len(indices), ), dtype=np.float32)
   for k, i in enumerate(indices):
     species = array_of_species[i]
     natom = len(species)
@@ -50,10 +51,13 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
       array_of_species[i], coords, lattices=lattices[i], pbcs=pbcs[i])
 
   y_true = y_true[indices]
+  y_diff = np.abs(y_true - y_nn)
   score = r2_score(y_true, y_nn)
   stddev = np.std(y_true - y_nn)
   mae = mean_absolute_error(y_true, y_nn)
   rmse = np.sqrt(mean_squared_error(y_true, y_nn))
+  emin = y_diff.min()
+  emax = y_diff.max()
 
   print("{}".format(splitext(basename(xyzfile))[0]))
   print("  * Model       : {}".format("v5"))
@@ -61,7 +65,8 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
   print("  * MAE    (eV) : {: 8.3f}".format(mae))
   print("  * RMSE   (eV) : {: 8.3f}".format(rmse))
   print("  * Stddev (eV) : {: 8.3f}".format(stddev))
-  print("  * Min    (eV)")
+  print("  * Min    (eV) : {: 8.3f}".format(emin))
+  print("  * Max    (eV) : {: 8.3f}".format(emax))
   print("End")
 
 
