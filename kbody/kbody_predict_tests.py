@@ -40,6 +40,8 @@ def test_quinoline_dft():
   graph_model_path = join(
     dirname(__file__), "models", "C9H7N.PBE.v5", "C9H7N.PBE-1000000.pb")
   calculator = CNNPredictor(graph_model_path)
+  print(str(calculator))
+  print("")
 
   print("------------")
   print("Tests: C9H7N")
