@@ -10,7 +10,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
-from kbody_transform import MultiTransformer
+from kbody_transform import MultiTransformer, GHOST
 from save_model import get_tensors_to_restore
 
 __author__ = 'Xin Chen'
@@ -91,6 +91,34 @@ class CNNPredictor:
     """
     return self._graph
 
+  @property
+  def supported_stoichiometries(self):
+    """
+    Return the supported stoichiometries.
+    """
+    supported = {}
+    max_occurs = self._transformer.max_occurs
+    for atom, max_occur in max_occurs.items():
+      if atom != GHOST:
+        supported[atom] = [0, max_occur]
+    return supported
+
+  def __str__(self):
+    """
+    Return the string representation of this predictor.
+    """
+    species = list(self._transformer.ordered_species)
+    if GHOST in species:
+      species.remove(GHOST)
+    if not self.is_periodic:
+      outputs = ["CNNPredictor of {}".format("".join(species))]
+    else:
+      outputs = ["Periodic CNNPredictor of {}".format("".join(species))]
+    for atom, (nmin, nmax) in self.supported_stoichiometries.items():
+      outputs.append("  {:2s} : [{}, {}]".format(atom, nmin, nmax))
+    outputs.append("End")
+    return "\n".join(outputs)
+
   def _initialize_tensors(self):
     """
     Initialize the tensors.
@@ -129,6 +157,69 @@ class CNNPredictor:
     weights = self._sess.run(self._t_1body)
     return dict(zip(species, weights.flatten().tolist()))
 
+  def _check_inputs(self, species, coords, lattices, pbcs):
+    """
+    Check the inputs before making predictions.
+    """
+    if len(coords.shape) == 2:
+      assert coords.shape[0] == len(species)
+      num_mols, num_atoms = 1, len(coords)
+      coords = coords.reshape((1, num_atoms, 3))
+      if lattices is not None:
+        if len(lattices.shape) == 1:
+          lattices = lattices.reshape((1, -1))
+        if len(pbcs.shape) == 1:
+          pbcs = pbcs.reshape((1, -1))
+    else:
+      num_mols, num_atoms = coords.shape[0:2]
+      assert num_atoms == len(species)
+
+    if self.is_periodic:
+      assert (lattices is not None) and (pbcs is not None)
+
+    return num_mols, coords, lattices, pbcs
+
+  def predict_total(self, species, coords, lattices=None, pbcs=None):
+    """
+    Only make predictions of total energies.
+
+    Args:
+      species: a `List[str]` as the ordered atomic species.
+      coords: a 3D array of shape `[num_examples, num_atoms, 3]` as the atomic
+        coordinates.
+      lattices: a 2D array of shape `[num_examples, 9]` as the periodic lattice
+        matrix for each structure. Required if `self.is_periodic == True.`
+      pbcs: a 2D boolean array of shape `[num_examples, 3]` as the periodic
+        conditions along XYZ. Required if `self.is_periodic == True.`
+
+    Returns:
+      y_total: a 1D array of shape `[num_examples, ]` as the total energies.
+
+    """
+    num_mols, coords, lattices, pbcs = self._check_inputs(
+      species, coords, lattices, pbcs)
+
+    # Transform the coordinates to input features. The `split_dims` will also be
+    # returned.
+    features, split_dims, _, weights, occurs = self._transformer.transform(
+      species, coords, lattices=lattices, pbcs=pbcs
+    )
+
+    # Build the feed dict for running the session.
+    features = features.reshape((num_mols, 1, -1, self._transformer.ck2))
+    weights = weights.reshape((num_mols, 1, -1, 1))
+    occurs = occurs.reshape((num_mols, 1, 1, -1))
+
+    feed_dict = {
+      self._pl_inputs: features,
+      self._pl_occurs: occurs,
+      self._pl_weights: weights,
+      self._pl_is_training: False,
+      self._pl_split_dims: split_dims
+    }
+    y_total = self._sess.run(self._op_y_nn, feed_dict=feed_dict)
+    return np.negative(y_total)
+
   def predict(self, species, coords, lattices=None, pbcs=None):
     """
     Make the prediction for the given molecule.
@@ -151,19 +242,8 @@ class CNNPredictor:
         kbody contribs.
 
     """
-
-    # Check the shape of the `coords`.
-    if len(coords.shape) == 2:
-      assert coords.shape[0] == len(species)
-      num_mols, num_atoms = 1, len(coords)
-      coords = coords.reshape((1, num_atoms, 3))
-    else:
-      num_mols, num_atoms = coords.shape[0:2]
-      assert num_atoms == len(species)
-
-    # Check the lattices and pbcs for periodic structures.
-    if self.is_periodic:
-      assert (lattices is not None) and (pbcs is not None)
+    num_mols, coords, lattices, pbcs = self._check_inputs(
+      species, coords, lattices, pbcs)
 
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.

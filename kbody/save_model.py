@@ -9,8 +9,8 @@ import tensorflow as tf
 import json
 from os.path import join
 from kbody import sum_kbody_cnn, get_batch_configs
+from kbody import MOVING_AVERAGE_DECAY
 from kbody_transform import GHOST
-from kbody_inference import MODEL_VARIABLES
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
 
@@ -132,17 +132,19 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
   with tf.Session(graph=graph) as sess:
 
-    # Restore the model variables from the latest checkpoint
+    # Restore the `moving averaged` model variables from the latest checkpoint.
     tf.global_variables_initializer().run()
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
-      variables_to_restore = tf.get_collection(MODEL_VARIABLES)
+      variable_averages = tf.train.ExponentialMovingAverage(
+        MOVING_AVERAGE_DECAY)
+      variables_to_restore = variable_averages.variables_to_restore()
       saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
       saver.restore(sess, ckpt.model_checkpoint_path)
       global_step = int(
         ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
       if verbose:
-        tf.logging.info("Restore the latest checkpoint: {}".format(
+        print("Restore the latest checkpoint: {}".format(
           ckpt.model_checkpoint_path))
     else:
       raise IOError("Failed to restore the latest checkpoint!")
@@ -179,7 +181,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
                               clear_devices, "")
 
     if verbose:
-      tf.logging.info("Export the model to {}".format(graph_path))
+      print("Export the model to {}".format(graph_path))
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring

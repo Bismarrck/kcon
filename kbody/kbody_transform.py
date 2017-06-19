@@ -528,7 +528,7 @@ class MultiTransformer:
     return self._nat
 
   @property
-  def standalone_two_body(self):
+  def two_body(self):
     """
     Return True if a standalone two-body term is included.
     """
@@ -540,6 +540,13 @@ class MultiTransformer:
     Return True if this is a periodic transformer.
     """
     return self._periodic
+
+  @property
+  def max_occurs(self):
+    """
+    Return the maximum occurances of each type of atom.
+    """
+    return self._max_occurs
 
   def accept_species(self, species):
     """

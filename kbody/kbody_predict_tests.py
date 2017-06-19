@@ -4,57 +4,122 @@ The unit tests of `CNNPredictor`.
 """
 import numpy as np
 import unittest
-from os.path import join, dirname
-from kbody_input import extract_xyz
+from os.path import join, basename, splitext
+from kbody_input import extract_xyz, SEED
 from kbody_predict import CNNPredictor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 
-def _print_predictions(y_total, y_true, y_atomic, species):
+__author__ = "Xin Chen"
+__email__ = "Bismarrck@me.com"
+
+
+def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
+                        num_examples):
   """
-  A helper function for printing predicted results of the unittests.
+  Measure the performance of an exported model.
 
   Args:
-    y_total: a 1D array of shape [N, ] as the predicted energies.
-    y_true: a 1D array of shape [N, ] as the real energies.
-    y_atomic: a 2D array of shape [N, M] as the atomic energies.
-    species: a `List[str]` as the atomic species.
+    graph_model_path: a `str` as the path of the model.
+    xyzfile: a `str` as the xyz file to parse.
+    xyz_format: a `str` as the format of the xyz file.
+    num_atoms: a `int` as the maximum number of atoms.
+    num_examples: a `int` as the number of examples to parse.
 
   """
-  num_examples, num_atoms = y_atomic.shape
-  size = min(num_examples, 20)
-  y_total = np.atleast_1d(y_total)
-  y_true = np.atleast_1d(y_true)
-  for i in np.random.choice(range(num_examples), size=size):
-    print("Index            : % 2d" % i)
-    print("Energy Predicted : % .4f eV" % y_total[i])
-    print("Energy Real      : % .4f eV" % y_true[i])
-    for j in range(num_atoms):
-      print("Atom %2d, %2s,     % 10.4f eV" % (j, species[j], y_atomic[i, j]))
-    print("")
+  clf = CNNPredictor(graph_model_path)
+  array_of_species, y_true, coordinates, _, lattices, pbcs = extract_xyz(
+    xyzfile,
+    num_atoms=num_atoms,
+    num_examples=num_examples,
+    xyz_format=xyz_format,
+    verbose=False
+  )
+  y_true = y_true.astype(np.float32)
+
+  _, indices = train_test_split(
+    range(num_examples), test_size=0.2, random_state=SEED
+  )
+
+  y_nn = np.zeros((len(indices), ), dtype=np.float32)
+  for k, i in enumerate(indices):
+    species = array_of_species[i]
+    natom = len(species)
+    coords = coordinates[i][:natom]
+    y_nn[k] = clf.predict_total(
+      array_of_species[i], coords, lattices=lattices[i], pbcs=pbcs[i])
+
+  y_true = y_true[indices]
+  y_diff = np.abs(y_true - y_nn)
+  score = r2_score(y_true, y_nn)
+  stddev = np.std(y_true - y_nn)
+  mae = mean_absolute_error(y_true, y_nn)
+  rmse = np.sqrt(mean_squared_error(y_true, y_nn))
+  emin = y_diff.min()
+  emax = y_diff.max()
+
+  print("{}".format(splitext(basename(xyzfile))[0]))
+  print("  * Model       : {}".format("v5"))
+  print("  * R2 Score    : {: 8.6f}".format(score))
+  print("  * MAE    (eV) : {: 8.3f}".format(mae))
+  print("  * RMSE   (eV) : {: 8.3f}".format(rmse))
+  print("  * Stddev (eV) : {: 8.3f}".format(stddev))
+  print("  * Min    (eV) : {: 8.3f}".format(emin))
+  print("  * Max    (eV) : {: 8.3f}".format(emax))
+  print("End")
+
+
+def test_tio2_dftb():
+  """
+  Measure the performance of the trained model of `TiO2.DFTB`.
+  """
+  num_atoms = 27
+  num_examples = 5000
+  graph_model_path = join("models", "TiO2.DFTB.v5.pb")
+  xyzfile = join("..", "datasets", "TiO2.xyz")
+  xyz_format = "grendel"
+  measure_performance(
+    graph_model_path, xyzfile, xyz_format, num_atoms, num_examples)
 
 
 def test_quinoline_dft():
   """
-  Test the trained model of C9H7N.
+  Measure the performance of the trained model of `C9H7N.PBE`.
   """
-  graph_model_path = join(
-    dirname(__file__), "models", "C9H7N.PBE.v5", "C9H7N.PBE-1000000.pb")
-  calculator = CNNPredictor(graph_model_path)
+  num_atoms = 17
+  num_examples = 5000
+  graph_model_path = join("models", "C9H7N.PBE.v5.pb")
+  xyzfile = join("..", "datasets", "C9H7N.PBE.xyz")
+  xyz_format = "grendel"
+  measure_performance(
+    graph_model_path, xyzfile, xyz_format, num_atoms, num_examples)
 
-  print("------------")
-  print("Tests: C9H7N")
-  print("------------")
 
-  xyzfile = join(dirname(__file__), "..", "datasets", "C9H7N.PBE.xyz")
-  samples = extract_xyz(
-    xyzfile, num_examples=5000, num_atoms=17, xyz_format='grendel')
+def test_quinoline_dftb():
+  """
+  Measure the performance of the trained model of `C9H7Nv1`.
+  """
+  num_atoms = 17
+  num_examples = 5000
+  graph_model_path = join("models", "C9H7Nv1.DFTB.v5.pb")
+  xyzfile = join("..", "datasets", "C9H7Nv1.xyz")
+  xyz_format = "grendel"
+  measure_performance(
+    graph_model_path, xyzfile, xyz_format, num_atoms, num_examples)
 
-  species = samples[0][0]
-  y_true = float(samples[1][0])
-  coords = samples[2][0]
 
-  y_total, _, y_atomic, _ = calculator.predict(species, coords)
-  _print_predictions(y_total, [y_true], y_atomic, species)
+def test_qm7_dft():
+  """
+  Measure the performance of the trained model of `qm7`.
+  """
+  num_atoms = 23
+  num_examples = 7165
+  graph_model_path = join("models", "qm7.v5.pb")
+  xyzfile = join("..", "datasets", "qm7.xyz")
+  xyz_format = "xyz"
+  measure_performance(
+    graph_model_path, xyzfile, xyz_format, num_atoms, num_examples)
 
 
 if __name__ == '__main__':

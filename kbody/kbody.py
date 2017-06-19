@@ -220,7 +220,7 @@ def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
     feed_dict: a `dict` as the feed dict for tensorflow sessions.
 
   """
-  batch = get_batch(train=for_training, dataset=dataset)
+  batch = get_batch(train=for_training, dataset=dataset, shuffle=for_training)
   configs = get_batch_configs(train=for_training, dataset=dataset)
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():

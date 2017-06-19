@@ -2,8 +2,8 @@ from __future__ import print_function
 
 import numpy as np
 import re
-import time
 import sys
+from scipy.misc import comb
 from os.path import join
 from os import listdir
 
@@ -62,29 +62,41 @@ with open("gdb9.xyz", "w+") as f:
   coordinates = []
   energies = []
   workdir = "./dsgdb9nsd"
+  ntotal = 133885
+  coef = np.zeros((ntotal, 7))
+  ordered = ["C", "H", "N", "O", "F"]
 
-  tic = time.time()
-
-  for i, xyzfile in enumerate(listdir("dsgdb9nsd")):
-
+  for i in range(ntotal):
+    xyzfile = "dsgdb9nsd_{:06d}.xyz".format(i + 1)
     species, energy, coords = extract_xyz(join(workdir, xyzfile), verbose=False)
     array_of_species.append(species)
     energies.append(energy)
     coordinates.append(coords)
+    natom = len(species)
+    for j, atom in enumerate(ordered):
+      coef[i, j] = species.count(atom)
+    coef[i, 5] = comb(natom, 2, exact=True)
+    coef[i, 6] = comb(natom, 3, exact=True)
 
     if i > 0 and i % 1000 == 0:
       sys.stdout.write("\rProgress: %7d / %7d" % (i, 133885))
   sys.stdout.write("\n")
 
-  print("Number of atoms range: %d - %d" % (
-    min(map(len, array_of_species)), 
-    max(map(len, array_of_species))
-  ))
+  b = np.array(energies)
+  x = np.linalg.pinv(coef) @ b
+  residual = np.abs(coef @ x - b)
 
-  lines = []
+  print("Linear Fit Residual Avg: {:.6f}".format(residual.mean()))
+  print("Linear Fit Residual Min: {:.6f}".format(residual.min()))
+  print("Linear Fit Residual Max: {:.6f}".format(residual.max()))
+
+  outliers = list(np.where(residual > 10 * residual.mean())[0])
+  print("Number of outliers: {:d}".format(len(outliers)))
+
+  outputs = []
   ntotal = len(array_of_species)
   for i in range(ntotal):
-    lines.extend(to_xyz_strings(array_of_species[i], energies[i], coordinates[i]))
-  f.write("\n".join(lines))
-  f.flush()
-
+    if i in outliers:
+      continue
+    outputs.extend(to_xyz_strings(array_of_species[i], energies[i], coordinates[i]))
+  f.write("\n".join(outputs))
