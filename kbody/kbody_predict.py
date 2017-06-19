@@ -165,6 +165,11 @@ class CNNPredictor:
       assert coords.shape[0] == len(species)
       num_mols, num_atoms = 1, len(coords)
       coords = coords.reshape((1, num_atoms, 3))
+      if lattices is not None:
+        if len(lattices.shape) == 1:
+          lattices = lattices.reshape((1, -1))
+        if len(pbcs.shape) == 1:
+          pbcs = pbcs.reshape((1, -1))
     else:
       num_mols, num_atoms = coords.shape[0:2]
       assert num_atoms == len(species)
@@ -172,7 +177,7 @@ class CNNPredictor:
     if self.is_periodic:
       assert (lattices is not None) and (pbcs is not None)
 
-    return num_mols, coords
+    return num_mols, coords, lattices, pbcs
 
   def predict_total(self, species, coords, lattices=None, pbcs=None):
     """
@@ -191,7 +196,8 @@ class CNNPredictor:
       y_total: a 1D array of shape `[num_examples, ]` as the total energies.
 
     """
-    num_mols, coords = self._check_inputs(species, coords, lattices, pbcs)
+    num_mols, coords, lattices, pbcs = self._check_inputs(
+      species, coords, lattices, pbcs)
 
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.
@@ -236,7 +242,8 @@ class CNNPredictor:
         kbody contribs.
 
     """
-    num_mols, coords = self._check_inputs(species, coords, lattices, pbcs)
+    num_mols, coords, lattices, pbcs = self._check_inputs(
+      species, coords, lattices, pbcs)
 
     # Transform the coordinates to input features. The `split_dims` will also be
     # returned.
