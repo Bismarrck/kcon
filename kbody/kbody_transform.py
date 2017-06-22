@@ -566,17 +566,21 @@ class MultiTransformer:
       self._transformers[formula] = clf
     return clf
 
-  def transform(self, species, coords, energies=None, lattices=None, pbcs=None):
+  def transform(self, species, array_of_coords, energies=None,
+                array_of_lattice=None, array_of_pbc=None):
     """
-    Transform the atomic coordinates to input features.
+    Transform the atomic coordinates to input features. All input structures
+    must have the same atomic species.
 
     Args:
       species: a `List[str]` as the ordered atomic species for all `coords`.
-      coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
-        it should represents the N-by-3 coordinates of a single molecule.
-      energies: a 1D array as the total energies. 
-      lattices: a 2D array as the periodic lattices.
-      pbcs: a 2D array as the peridic conditions.
+      array_of_coords: a `float32` array of shape `[-1, num_atoms, 3]` as the
+        atomic coordinates.
+      energies: a `float64` array of shape `[-1, ]` as the true energies.
+      array_of_lattice: a `float32` array of shape `[-1, 9]` as the periodic
+        cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[-1, 3]` as the periodic conditions
+        along XYZ directions.
 
     Returns:
       features: a 4D array as the input features.
@@ -594,20 +598,24 @@ class MultiTransformer:
       raise ValueError(
         "This transformer does not support {}!".format(get_formula(species)))
 
-    coords = np.asarray(coords)
-    if len(coords.shape) == 2:
-      if coords.shape[0] != len(species):
+    array_of_coords = np.asarray(array_of_coords)
+    if len(array_of_coords.shape) == 2:
+      if array_of_coords.shape[0] != len(species):
         raise ValueError("The shapes of coords and species are not matched!")
-      coords = coords.reshape((1, len(species), 3))
-    elif coords.shape[1] != len(species):
+      array_of_coords = array_of_coords.reshape((1, len(species), 3))
+    elif array_of_coords.shape[1] != len(species):
       raise ValueError("The shapes of coords and species are not matched!")
 
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
     features, targets = clf.transform(
-      coords, energies, array_of_lattice=lattices, array_of_pbc=pbcs)
+      array_of_coords,
+      energies,
+      array_of_lattice=array_of_lattice,
+      array_of_pbc=array_of_pbc
+    )
 
-    ntotal = coords.shape[0]
+    ntotal = array_of_coords.shape[0]
     occurs = np.zeros((ntotal, len(self._ordered_species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._ordered_species.index(specie)
@@ -789,8 +797,8 @@ class FixedLenMultiTransformer(MultiTransformer):
         features, split_dims, _, multipliers, occurs = self.transform(
           species,
           array_of_coords[i, :natoms],
-          lattices=cell,
-          pbcs=pbc,
+          array_of_lattice=cell,
+          array_of_pbc=pbc,
         )
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-1.0 * y_true[i]).tostring())
