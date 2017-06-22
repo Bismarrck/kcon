@@ -12,7 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from kbody import sum_kbody_cnn_from_dataset as inference
-from kbody import MOVING_AVERAGE_DECAY
+from constants import MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join

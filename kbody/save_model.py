@@ -9,8 +9,7 @@ import tensorflow as tf
 import json
 from os.path import join
 from kbody import sum_kbody_cnn, get_batch_configs
-from kbody import MOVING_AVERAGE_DECAY
-from kbody_transform import GHOST
+from constants import GHOST, MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
 

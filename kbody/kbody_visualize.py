@@ -7,7 +7,7 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import seaborn as sns
-from kbody_transform import pyykko
+from constants import pyykko
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from os.path import isfile

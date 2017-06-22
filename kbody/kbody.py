@@ -4,13 +4,13 @@ This script is used to infer the neural network.
 """
 from __future__ import print_function, absolute_import
 
-import tensorflow as tf
 import numpy as np
-import kbody_input
+import tensorflow as tf
 
+import kbody_input
+from constants import MOVING_AVERAGE_DECAY
 from kbody_inference import inference
 from utils import lrelu
-
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -33,15 +33,6 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
-
-
-# Constants describing the training process.
-MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
-
-# If a model is trained with multiple GPUs, prefix all Op names with tower_name
-# to differentiate the operations. Note that this prefix is removed from the
-# names of the summaries when visualizing a model.
-TOWER_NAME = 'tower'
 
 
 def get_activation_fn(name='lrelu'):
@@ -338,7 +329,7 @@ def get_train_op(total_loss, global_step):
 
   # Track the moving averages of all trainable variables.
   variable_averages = tf.train.ExponentialMovingAverage(
-      MOVING_AVERAGE_DECAY, global_step)
+    MOVING_AVERAGE_DECAY, global_step)
   variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
   with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
