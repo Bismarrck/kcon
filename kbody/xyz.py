@@ -176,6 +176,20 @@ class XyzFile:
     """
     return tuple(x[i] for x in self._data)
 
+  def species_and_coords(self):
+    """
+    A generator for iterating all structures and returning their species and
+    atomic coordinates.
+
+    Yields:
+      species: a `List[str]` as the species of a structure.
+      coords: a `float32` array of shape `(num_atoms, 3)` as the coordinates of
+        a structure.
+
+    """
+    for i in range(self._num_examples):
+      yield self._array_of_species[i], self._array_of_coords[i]
+
   def get_max_occurs(self):
     """
     Return the maximum occurances for each type of atom.
