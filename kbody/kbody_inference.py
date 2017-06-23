@@ -101,7 +101,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
     return inputs
 
 
-def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
+def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
+                        trainable=True):
   """
   Inference the one-body part.
 
@@ -111,6 +112,8 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
     num_atom_types: a `int` as the number of atom types.
     initial_one_body_weights: an array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
+    trainable: a `bool` indicating whether the one-body parameters are trainable
+      or not.
 
   Returns:
     one_body: a 4D Tensor of shape `[-1, 1, 1, 1]` as the one-body contribs.
@@ -136,6 +139,7 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
     biases_initializer=None,
     scope='one-body',
     variables_collections=[MODEL_VARIABLES],
+    trainable=trainable,
   )
 
 
@@ -151,7 +155,8 @@ def _split_inputs(inputs, split_dims):
 
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, verbose=True, num_kernels=None,
-              activation_fn=lrelu, one_body_weights=None):
+              activation_fn=lrelu, one_body_weights=None,
+              trainable_one_body=True):
   """
   The general inference function.
 
@@ -174,6 +179,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     activation_fn: a `Callable` as the activation function.
     one_body_weights: a 1D array of shape `[nat, ]` as the initial
       weights of the one-body kernel.
+    trainable_one_body: a `bool` indicating whether the one body parameters are
+      trainable or not.
 
   Returns:
     y_total: a `float32` Tensor of shape `[-1, ]` as the total energies.
@@ -214,7 +221,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   # Inference the one-body expression.
   one_body = _inference_1body_nn(occurs,
                                  num_atom_types,
-                                 initial_one_body_weights=one_body_weights)
+                                 initial_one_body_weights=one_body_weights,
+                                 trainable=trainable_one_body)
   tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)

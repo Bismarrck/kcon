@@ -155,7 +155,8 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
                          num_atom_types=num_atom_types, kbody_terms=kbody_terms,
                          is_training=is_training, max_k=FLAGS.many_body_k,
                          num_kernels=num_kernels, activation_fn=activation_fn,
-                         one_body_weights=one_body_weights, verbose=verbose)
+                         one_body_weights=one_body_weights, verbose=verbose,
+                         trainable_one_body=(not FLAGS.fixed_one_body))
   return y_total
 
 
