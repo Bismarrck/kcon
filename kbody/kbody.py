@@ -33,6 +33,8 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
+tf.app.flags.DEFINE_float('alpha', 0.2,
+                          """Set the parameter `alpha` for `lrelu`.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -143,6 +145,8 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
 
   num_kernels = num_kernels or (40, 50, 60, 40)
   activation_fn = get_activation_fn(FLAGS.activation_fn)
+  alpha = FLAGS.alpha
+  trainable = not FLAGS.fixed_one_body
 
   if FLAGS.initial_one_body_weights is not None:
     one_body_weights = FLAGS.initial_one_body_weights
@@ -155,8 +159,8 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
                          num_atom_types=num_atom_types, kbody_terms=kbody_terms,
                          is_training=is_training, max_k=FLAGS.many_body_k,
                          num_kernels=num_kernels, activation_fn=activation_fn,
-                         one_body_weights=one_body_weights, verbose=verbose,
-                         trainable_one_body=(not FLAGS.fixed_one_body))
+                         alpha=alpha, one_body_weights=one_body_weights,
+                         verbose=verbose, trainable_one_body=trainable)
   return y_total
 
 
