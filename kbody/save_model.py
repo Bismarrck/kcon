@@ -155,6 +155,9 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
     # Save the current session to a checkpoint so that values of variables can
     # be restored later.
+    # FIXME: find a universal solution for freezing graphs.
+    if tf.__version__ >= "1.1":
+      saver = tf.train.Saver(var_list=tf.trainable_variables())
     checkpoint_path = saver.save(
       sess,
       join(freeze_dir, "{}.ckpt".format(dataset)),
