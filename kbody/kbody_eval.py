@@ -12,7 +12,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from kbody import sum_kbody_cnn_from_dataset as inference
-from constants import MOVING_AVERAGE_DECAY
+from constants import VARIABLE_MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from os.path import join
@@ -158,7 +158,7 @@ def evaluate():
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
-        MOVING_AVERAGE_DECAY)
+        VARIABLE_MOVING_AVERAGE_DECAY)
     variables_to_restore = variable_averages.variables_to_restore()
     saver = tf.train.Saver(variables_to_restore)
 

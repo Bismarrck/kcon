@@ -9,7 +9,7 @@ import tensorflow as tf
 import json
 from os.path import join
 from kbody import sum_kbody_cnn, get_batch_configs
-from constants import GHOST, MOVING_AVERAGE_DECAY
+from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
 
@@ -45,7 +45,7 @@ def _get_transformer_repr(configs):
 
 def _get_output_node_names():
   """
-  Return the names of the tensors that should be
+  Return the names of the tensors that should be accessed.
   """
   return ",".join(["Sum/1_and_k", "y_contribs", "one-body/weights",
                    "one-body/convolution", "transformer/json",
@@ -136,7 +136,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       variable_averages = tf.train.ExponentialMovingAverage(
-        MOVING_AVERAGE_DECAY)
+        VARIABLE_MOVING_AVERAGE_DECAY)
       variables_to_restore = variable_averages.variables_to_restore()
       saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
       saver.restore(sess, ckpt.model_checkpoint_path)

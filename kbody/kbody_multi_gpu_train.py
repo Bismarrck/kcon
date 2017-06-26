@@ -16,6 +16,7 @@ from kbody import BatchIndex
 from kbody import extract_configs, get_batch, get_batch_configs
 from kbody import sum_kbody_cnn as inference
 from save_model import save_model
+from constants import LOSS_MOVING_AVERAGE_DECAY
 from datetime import datetime
 from os.path import join
 from utils import get_xargs, set_logging_configs
@@ -104,7 +105,8 @@ def tower_loss(batch, params, scope, reuse_variables=False):
   total_loss = tf.add_n(losses, name='total_loss')
 
   # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages = tf.train.ExponentialMovingAverage(LOSS_MOVING_AVERAGE_DECAY,
+                                                    name='avg')
   loss_averages_op = loss_averages.apply(losses + [total_loss])
 
   # Attach a scalar summary to all individual losses and the total loss; do the
@@ -233,7 +235,7 @@ def train_with_multiple_gpus():
 
     # Track the moving averages of all trainable variables.
     variable_averages = tf.train.ExponentialMovingAverage(
-      constants.MOVING_AVERAGE_DECAY, global_step)
+      constants.VARIABLE_MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.

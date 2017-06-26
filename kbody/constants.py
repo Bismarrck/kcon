@@ -46,7 +46,12 @@ pyykko = {
 GHOST = 'X'
 
 # Constants describing the training process.
-MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
+
+# The decay to use for the moving average of variable weights.
+VARIABLE_MOVING_AVERAGE_DECAY = 0.9999
+
+# The decay to use for the moving average of losses.
+LOSS_MOVING_AVERAGE_DECAY = 0.9
 
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the

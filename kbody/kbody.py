@@ -8,7 +8,7 @@ import numpy as np
 import tensorflow as tf
 
 import kbody_input
-from constants import MOVING_AVERAGE_DECAY
+from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from kbody_inference import inference
 from utils import lrelu
 
@@ -270,7 +270,8 @@ def _add_loss_summaries(total_loss):
   """
 
   # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages = tf.train.ExponentialMovingAverage(LOSS_MOVING_AVERAGE_DECAY,
+                                                    name='avg')
   losses = tf.get_collection('losses')
   loss_averages_op = loss_averages.apply(losses + [total_loss])
 
@@ -334,7 +335,7 @@ def get_train_op(total_loss, global_step):
 
   # Track the moving averages of all trainable variables.
   variable_averages = tf.train.ExponentialMovingAverage(
-    MOVING_AVERAGE_DECAY, global_step)
+    VARIABLE_MOVING_AVERAGE_DECAY, global_step)
   variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
   with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
