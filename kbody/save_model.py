@@ -21,6 +21,9 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string("checkpoint_dir", "./events",
                            """The directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string("aux_nodes", None,
+                           """Comma separated string as the names of the 
+                           auxiliary nodes to expose.""")
 
 
 def _get_transformer_repr(configs):
@@ -111,7 +114,8 @@ def _inference(dataset, conv_sizes):
   return graph
 
 
-def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
+def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
+               auxiliary_outputs=None):
   """
   take a GraphDef proto, a SaverDef proto, and a set of variable values stored
   in a checkpoint file, and output a GraphDef with all of the variable ops
@@ -122,6 +126,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
     dataset: a `str` as the name of dataset to use.
     conv_sizes: a `str` of comma-separated integers as the numbers of kernels.
     verbose: a `bool` indicating whether or not should log the progress.
+    auxiliary_outputs: a `List[str]` as the of additional tensors to expose.
 
   See Also:
     https://www.tensorflow.org/extend/tool_developers
@@ -171,6 +176,10 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
     # Setup the configs and freeze the current graph
     output_node_names = _get_output_node_names()
+    auxiliary_outputs = auxiliary_outputs or []
+    if len(auxiliary_outputs) > 0:
+      auxiliary_node_names = ",".join(auxiliary_outputs)
+      output_node_names = ",".join([output_node_names, auxiliary_node_names])
     input_saver_def_path = ""
     restore_op_name = "save/restore_all"
     filename_tensor_name = "save/Const:0"
@@ -188,7 +197,12 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  save_model(FLAGS.checkpoint_dir, FLAGS.dataset, FLAGS.conv_sizes)
+  if FLAGS.aux_nodes is not None:
+    aux_nodes = [name.strip() for name in FLAGS.aux_nodes.split(",")]
+  else:
+    aux_nodes = None
+  save_model(FLAGS.checkpoint_dir, FLAGS.dataset, FLAGS.conv_sizes,
+             auxiliary_outputs=aux_nodes)
 
 
 if __name__ == "__main__":
