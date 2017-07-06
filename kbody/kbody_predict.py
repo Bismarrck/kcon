@@ -105,6 +105,13 @@ class CNNPredictor:
         supported[atom] = [0, max_occur]
     return supported
 
+  @property
+  def kbody_terms(self):
+    """
+    Return the associated kbody terms.
+    """
+    return self._transformer.kbody_terms
+
   def __str__(self):
     """
     Return the string representation of this predictor.
@@ -130,19 +137,19 @@ class CNNPredictor:
       tensors[name] = self._graph.get_tensor_by_name(tensor_name)
 
     # operations
-    self._op_y_nn = tensors["Sum/1_and_k"]
-    self._op_y_kbody = tensors["y_contribs"]
-    self._op_y_1body = tensors["one-body/convolution"]
+    self._operator_y_nn = tensors["Sum/1_and_k"]
+    self._operator_y_kbody = tensors["y_contribs"]
+    self._operator_y_1body = tensors["one-body/convolution"]
 
     # tensor
-    self._t_1body = tensors["one-body/weights"]
+    self._tensor_1body = tensors["one-body/weights"]
 
     # placeholders
-    self._pl_inputs = tensors["placeholders/inputs"]
-    self._pl_occurs = tensors["placeholders/occurs"]
-    self._pl_weights = tensors["placeholders/weights"]
-    self._pl_split_dims = tensors["placeholders/split_dims"]
-    self._pl_is_training = tensors["placeholders/is_training"]
+    self._placeholder_inputs = tensors["placeholders/inputs"]
+    self._placeholder_occurs = tensors["placeholders/occurs"]
+    self._placeholder_weights = tensors["placeholders/weights"]
+    self._placeholder_split_dims = tensors["placeholders/split_dims"]
+    self._placeholder_is_training = tensors["placeholders/is_training"]
 
   def _get_y_atomic_1body(self, species):
     """
@@ -156,7 +163,7 @@ class CNNPredictor:
         each kind of atom.
     
     """
-    weights = self._sess.run(self._t_1body)
+    weights = self._sess.run(self._tensor_1body)
     return dict(zip(species, weights.flatten().tolist()))
 
   def _check_inputs(self, species, array_of_coords, array_of_lattice,
@@ -185,6 +192,45 @@ class CNNPredictor:
                       "array_of_lattice": array_of_lattice,
                       "array_of_pbc": array_of_pbc}
 
+  def get_feed_dict(self, species, array_of_coords, array_of_lattice=None,
+                    array_of_pbc=None):
+    """
+    Return the feed dict for the inputs.
+
+    Args:
+      species: a `List[str]` as the ordered atomic species.
+      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
+        as the atomic coordinates.
+      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
+        periodic cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
+        conditions along XYZ directions.
+
+    Returns:
+      feed_dict: a `dict` that should be feeded to the session.
+
+    """
+    ntotal, inputs = self._check_inputs(
+      species, array_of_coords, array_of_lattice, array_of_pbc
+    )
+
+    # Transform the coordinates to input features. The `split_dims` will also be
+    # returned.
+    features, split_dims, _, weights, occurs = self._transformer.transform(
+      species, **inputs
+    )
+
+    # Build the feed dict for running the session.
+    features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
+    weights = weights.reshape((ntotal, 1, -1, 1))
+    occurs = occurs.reshape((ntotal, 1, 1, -1))
+
+    return {self._placeholder_inputs: features,
+            self._placeholder_occurs: occurs,
+            self._placeholder_weights: weights,
+            self._placeholder_is_training: False,
+            self._placeholder_split_dims: split_dims}
+
   def predict_total(self, species, array_of_coords, array_of_lattice=None,
                     array_of_pbc=None):
     """
@@ -204,29 +250,9 @@ class CNNPredictor:
       y_total: a 1D array of shape `[num_examples, ]` as the total energies.
 
     """
-    ntotal, inputs = self._check_inputs(
-      species, array_of_coords, array_of_lattice, array_of_pbc
-    )
-
-    # Transform the coordinates to input features. The `split_dims` will also be
-    # returned.
-    features, split_dims, _, weights, occurs = self._transformer.transform(
-      species, **inputs
-    )
-
-    # Build the feed dict for running the session.
-    features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
-    weights = weights.reshape((ntotal, 1, -1, 1))
-    occurs = occurs.reshape((ntotal, 1, 1, -1))
-
-    feed_dict = {
-      self._pl_inputs: features,
-      self._pl_occurs: occurs,
-      self._pl_weights: weights,
-      self._pl_is_training: False,
-      self._pl_split_dims: split_dims
-    }
-    y_total = self._sess.run(self._op_y_nn, feed_dict=feed_dict)
+    feed_dict = self.get_feed_dict(species, array_of_coords,
+                                   array_of_lattice, array_of_pbc)
+    y_total = self._sess.run(self._operator_y_nn, feed_dict=feed_dict)
     return np.negative(y_total)
 
   def predict(self, species, array_of_coords, array_of_lattice=None,
@@ -255,32 +281,13 @@ class CNNPredictor:
         contribs. `D` is the total dimension.
 
     """
-    ntotal, inputs = self._check_inputs(
-      species, array_of_coords, array_of_lattice, array_of_pbc
-    )
-
-    # Transform the coordinates to input features. The `split_dims` will also be
-    # returned.
-    features, split_dims, _, weights, occurs = self._transformer.transform(
-      species, **inputs,
-    )
-
-    # Build the feed dict for running the session.
-    features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
-    weights = weights.reshape((ntotal, 1, -1, 1))
-    occurs = occurs.reshape((ntotal, 1, 1, -1))
-
-    feed_dict = {
-      self._pl_inputs: features,
-      self._pl_occurs: occurs,
-      self._pl_weights: weights,
-      self._pl_is_training: False,
-      self._pl_split_dims: split_dims
-    }
+    feed_dict = self.get_feed_dict(species, array_of_coords,
+                                   array_of_lattice, array_of_pbc)
 
     # Run the operations to get the predicted energies.
     y_total, y_kbody, y_1body = self._sess.run(
-      [self._op_y_nn, self._op_y_kbody, self._op_y_1body], feed_dict=feed_dict
+      [self._operator_y_nn, self._operator_y_kbody, self._operator_y_1body],
+      feed_dict=feed_dict
     )
     y_1body = np.squeeze(y_1body)
 
@@ -293,3 +300,23 @@ class CNNPredictor:
             np.negative(np.atleast_1d(y_1body)),
             np.negative(y_atomic),
             np.negative(y_kbody))
+
+  def eval(self, name, feed_dict):
+    """
+    Evaluate a specific tensor from the graph given the feed dict.
+
+    Args:
+      name: a `str` as the name of the tensor.
+      feed_dict: a `dict` as the feed dict.
+
+    Returns:
+      results: a `object` as the evaluation result.
+
+    """
+    try:
+      tensor = self._graph.get_tensor_by_name(name)
+    except Exception:
+      raise KeyError(
+        "The tensor {} can not be found in the graph!".format(name))
+    else:
+      return self.sess.run(tensor, feed_dict=feed_dict)
