@@ -301,7 +301,7 @@ class CNNPredictor:
             np.negative(y_atomic),
             np.negative(y_kbody))
 
-  def eval(self, name, feed_dict):
+  def eval(self, name, feed_dict=None):
     """
     Evaluate a specific tensor from the graph given the feed dict.
 
