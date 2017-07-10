@@ -9,8 +9,7 @@ import tensorflow as tf
 import json
 from os.path import join
 from kbody import sum_kbody_cnn, get_batch_configs
-from kbody import MOVING_AVERAGE_DECAY
-from kbody_transform import GHOST
+from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
 
@@ -22,6 +21,9 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string("checkpoint_dir", "./events",
                            """The directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string("aux_nodes", None,
+                           """Comma separated string as the names of the 
+                           auxiliary nodes to expose.""")
 
 
 def _get_transformer_repr(configs):
@@ -46,7 +48,7 @@ def _get_transformer_repr(configs):
 
 def _get_output_node_names():
   """
-  Return the names of the tensors that should be
+  Return the names of the tensors that should be accessed.
   """
   return ",".join(["Sum/1_and_k", "y_contribs", "one-body/weights",
                    "one-body/convolution", "transformer/json",
@@ -112,7 +114,8 @@ def _inference(dataset, conv_sizes):
   return graph
 
 
-def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
+def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
+               auxiliary_outputs=None):
   """
   take a GraphDef proto, a SaverDef proto, and a set of variable values stored
   in a checkpoint file, and output a GraphDef with all of the variable ops
@@ -123,6 +126,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
     dataset: a `str` as the name of dataset to use.
     conv_sizes: a `str` of comma-separated integers as the numbers of kernels.
     verbose: a `bool` indicating whether or not should log the progress.
+    auxiliary_outputs: a `List[str]` as the of additional tensors to expose.
 
   See Also:
     https://www.tensorflow.org/extend/tool_developers
@@ -137,7 +141,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       variable_averages = tf.train.ExponentialMovingAverage(
-        MOVING_AVERAGE_DECAY)
+        VARIABLE_MOVING_AVERAGE_DECAY)
       variables_to_restore = variable_averages.variables_to_restore()
       saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
       saver.restore(sess, ckpt.model_checkpoint_path)
@@ -156,6 +160,9 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
     # Save the current session to a checkpoint so that values of variables can
     # be restored later.
+    # FIXME: find a universal solution for freezing graphs.
+    if tf.__version__ >= "1.1":
+      saver = tf.train.Saver(var_list=tf.trainable_variables())
     checkpoint_path = saver.save(
       sess,
       join(freeze_dir, "{}.ckpt".format(dataset)),
@@ -169,6 +176,10 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
     # Setup the configs and freeze the current graph
     output_node_names = _get_output_node_names()
+    auxiliary_outputs = auxiliary_outputs or []
+    if len(auxiliary_outputs) > 0:
+      auxiliary_node_names = ",".join(auxiliary_outputs)
+      output_node_names = ",".join([output_node_names, auxiliary_node_names])
     input_saver_def_path = ""
     restore_op_name = "save/restore_all"
     filename_tensor_name = "save/Const:0"
@@ -186,7 +197,12 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True):
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  save_model(FLAGS.checkpoint_dir, FLAGS.dataset, FLAGS.conv_sizes)
+  if FLAGS.aux_nodes is not None:
+    aux_nodes = [name.strip() for name in FLAGS.aux_nodes.split(",")]
+  else:
+    aux_nodes = None
+  save_model(FLAGS.checkpoint_dir, FLAGS.dataset, FLAGS.conv_sizes,
+             auxiliary_outputs=aux_nodes)
 
 
 if __name__ == "__main__":

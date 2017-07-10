@@ -10,7 +10,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
-from kbody_transform import MultiTransformer, GHOST
+from kbody_transform import MultiTransformer
+from constants import GHOST
 from save_model import get_tensors_to_restore
 
 __author__ = 'Xin Chen'
@@ -61,7 +62,8 @@ class CNNPredictor:
     self._initialize_tensors()
     self._transformer = restore_transformer(self._graph, self._sess)
     self._y_atomic_1body = self._get_y_atomic_1body(
-      self._transformer.ordered_species)
+      self._transformer.ordered_species
+    )
 
   @property
   def many_body_k(self):
@@ -103,6 +105,13 @@ class CNNPredictor:
         supported[atom] = [0, max_occur]
     return supported
 
+  @property
+  def kbody_terms(self):
+    """
+    Return the associated kbody terms.
+    """
+    return self._transformer.kbody_terms
+
   def __str__(self):
     """
     Return the string representation of this predictor.
@@ -128,23 +137,23 @@ class CNNPredictor:
       tensors[name] = self._graph.get_tensor_by_name(tensor_name)
 
     # operations
-    self._op_y_nn = tensors["Sum/1_and_k"]
-    self._op_y_kbody = tensors["y_contribs"]
-    self._op_y_1body = tensors["one-body/convolution"]
+    self._operator_y_nn = tensors["Sum/1_and_k"]
+    self._operator_y_kbody = tensors["y_contribs"]
+    self._operator_y_1body = tensors["one-body/convolution"]
 
     # tensor
-    self._t_1body = tensors["one-body/weights"]
+    self._tensor_1body = tensors["one-body/weights"]
 
     # placeholders
-    self._pl_inputs = tensors["placeholders/inputs"]
-    self._pl_occurs = tensors["placeholders/occurs"]
-    self._pl_weights = tensors["placeholders/weights"]
-    self._pl_split_dims = tensors["placeholders/split_dims"]
-    self._pl_is_training = tensors["placeholders/is_training"]
+    self._placeholder_inputs = tensors["placeholders/inputs"]
+    self._placeholder_occurs = tensors["placeholders/occurs"]
+    self._placeholder_weights = tensors["placeholders/weights"]
+    self._placeholder_split_dims = tensors["placeholders/split_dims"]
+    self._placeholder_is_training = tensors["placeholders/is_training"]
 
   def _get_y_atomic_1body(self, species):
     """
-    Return the 
+    Return the one-body energy for each type of atom.
     
     Args:
       species: a `List[str]` as the ordered species for this model.
@@ -154,119 +163,131 @@ class CNNPredictor:
         each kind of atom.
     
     """
-    weights = self._sess.run(self._t_1body)
+    weights = self._sess.run(self._tensor_1body)
     return dict(zip(species, weights.flatten().tolist()))
 
-  def _check_inputs(self, species, coords, lattices, pbcs):
+  def _check_inputs(self, species, array_of_coords, array_of_lattice,
+                    array_of_pbc):
     """
     Check the inputs before making predictions.
     """
-    if len(coords.shape) == 2:
-      assert coords.shape[0] == len(species)
-      num_mols, num_atoms = 1, len(coords)
-      coords = coords.reshape((1, num_atoms, 3))
-      if lattices is not None:
-        if len(lattices.shape) == 1:
-          lattices = lattices.reshape((1, -1))
-        if len(pbcs.shape) == 1:
-          pbcs = pbcs.reshape((1, -1))
+
+    if len(array_of_coords.shape) == 2:
+      assert array_of_coords.shape[0] == len(species)
+      num_mols, num_atoms = 1, len(array_of_coords)
+      array_of_coords = array_of_coords.reshape((1, num_atoms, 3))
+      if array_of_lattice is not None:
+        if len(array_of_lattice.shape) == 1:
+          array_of_lattice = array_of_lattice.reshape((1, -1))
+        if len(array_of_pbc.shape) == 1:
+          array_of_pbc = array_of_pbc.reshape((1, -1))
     else:
-      num_mols, num_atoms = coords.shape[0:2]
+      num_mols, num_atoms = array_of_coords.shape[0:2]
       assert num_atoms == len(species)
 
     if self.is_periodic:
-      assert (lattices is not None) and (pbcs is not None)
+      assert (array_of_lattice is not None) and (array_of_pbc is not None)
 
-    return num_mols, coords, lattices, pbcs
+    return num_mols, {"array_of_coords": array_of_coords,
+                      "array_of_lattice": array_of_lattice,
+                      "array_of_pbc": array_of_pbc}
 
-  def predict_total(self, species, coords, lattices=None, pbcs=None):
+  def get_feed_dict(self, species, array_of_coords, array_of_lattice=None,
+                    array_of_pbc=None):
     """
-    Only make predictions of total energies.
+    Return the feed dict for the inputs.
 
     Args:
       species: a `List[str]` as the ordered atomic species.
-      coords: a 3D array of shape `[num_examples, num_atoms, 3]` as the atomic
-        coordinates.
-      lattices: a 2D array of shape `[num_examples, 9]` as the periodic lattice
-        matrix for each structure. Required if `self.is_periodic == True.`
-      pbcs: a 2D boolean array of shape `[num_examples, 3]` as the periodic
-        conditions along XYZ. Required if `self.is_periodic == True.`
+      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
+        as the atomic coordinates.
+      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
+        periodic cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
+        conditions along XYZ directions.
+
+    Returns:
+      feed_dict: a `dict` that should be feeded to the session.
+
+    """
+    ntotal, inputs = self._check_inputs(
+      species, array_of_coords, array_of_lattice, array_of_pbc
+    )
+
+    # Transform the coordinates to input features. The `split_dims` will also be
+    # returned.
+    features, split_dims, _, weights, occurs = self._transformer.transform(
+      species, **inputs
+    )
+
+    # Build the feed dict for running the session.
+    features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
+    weights = weights.reshape((ntotal, 1, -1, 1))
+    occurs = occurs.reshape((ntotal, 1, 1, -1))
+
+    return {self._placeholder_inputs: features,
+            self._placeholder_occurs: occurs,
+            self._placeholder_weights: weights,
+            self._placeholder_is_training: False,
+            self._placeholder_split_dims: split_dims}
+
+  def predict_total(self, species, array_of_coords, array_of_lattice=None,
+                    array_of_pbc=None):
+    """
+    Only make predictions of total energies. All input structures must have the
+    same kind of atomic species.
+
+    Args:
+      species: a `List[str]` as the ordered atomic species.
+      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
+        as the atomic coordinates.
+      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
+        periodic cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
+        conditions along XYZ directions.
 
     Returns:
       y_total: a 1D array of shape `[num_examples, ]` as the total energies.
 
     """
-    num_mols, coords, lattices, pbcs = self._check_inputs(
-      species, coords, lattices, pbcs)
-
-    # Transform the coordinates to input features. The `split_dims` will also be
-    # returned.
-    features, split_dims, _, weights, occurs = self._transformer.transform(
-      species, coords, lattices=lattices, pbcs=pbcs
-    )
-
-    # Build the feed dict for running the session.
-    features = features.reshape((num_mols, 1, -1, self._transformer.ck2))
-    weights = weights.reshape((num_mols, 1, -1, 1))
-    occurs = occurs.reshape((num_mols, 1, 1, -1))
-
-    feed_dict = {
-      self._pl_inputs: features,
-      self._pl_occurs: occurs,
-      self._pl_weights: weights,
-      self._pl_is_training: False,
-      self._pl_split_dims: split_dims
-    }
-    y_total = self._sess.run(self._op_y_nn, feed_dict=feed_dict)
+    feed_dict = self.get_feed_dict(species, array_of_coords,
+                                   array_of_lattice, array_of_pbc)
+    y_total = self._sess.run(self._operator_y_nn, feed_dict=feed_dict)
     return np.negative(y_total)
 
-  def predict(self, species, coords, lattices=None, pbcs=None):
+  def predict(self, species, array_of_coords, array_of_lattice=None,
+              array_of_pbc=None):
     """
-    Make the prediction for the given molecule.
+    Make the prediction for the given structures. All input structures must have
+    the same kind of atomic species.
 
     Args:
       species: a `List[str]` as the ordered atomic species.
-      coords: a 3D array of shape `[num_examples, num_atoms, 3]` as the atomic 
-        coordinates.
-      lattices: a 2D array of shape `[num_examples, 9]` as the periodic lattice
-        matrix for each structure. Required if `self.is_periodic == True.`
-      pbcs: a 2D boolean array of shape `[num_examples, 3]` as the periodic 
-        conditions along XYZ. Required if `self.is_periodic == True.`
+      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
+        as the atomic coordinates.
+      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
+        periodic cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
+        conditions along XYZ directions.
 
     Returns:
-      y_total: a 1D array of shape `[num_examples, ]` as the total energies.
-      y_1body: a 1D array of shape `[num_examples, ]` as the 1-body energies.
-      y_atomics: a 2D array of shape `[num_examples, num_atoms]` as the 
-        estimated atomic energies.
-      y_kbody: a 2D array of shape `[num_examples, C(len(species), k)]` as the 
-        kbody contribs.
+      y_total: a `float32` array of shape `[num_examples, ]` as the predicted
+        total energies.
+      y_1body: a `float32` array of shape `[num_examples, ]` as the predicted
+        one-body energies.
+      y_atomics: a `float32` array of shape `[num_examples, num_atoms]` as the
+        predicted energies for atoms which sum up to total energies.
+      y_kbody: a `float32` array of shape `[num_examples, D]` as the kbody
+        contribs. `D` is the total dimension.
 
     """
-    num_mols, coords, lattices, pbcs = self._check_inputs(
-      species, coords, lattices, pbcs)
-
-    # Transform the coordinates to input features. The `split_dims` will also be
-    # returned.
-    features, split_dims, _, weights, occurs = self._transformer.transform(
-      species, coords, lattices=lattices, pbcs=pbcs
-    )
-
-    # Build the feed dict for running the session.
-    features = features.reshape((num_mols, 1, -1, self._transformer.ck2))
-    weights = weights.reshape((num_mols, 1, -1, 1))
-    occurs = occurs.reshape((num_mols, 1, 1, -1))
-
-    feed_dict = {
-      self._pl_inputs: features,
-      self._pl_occurs: occurs,
-      self._pl_weights: weights,
-      self._pl_is_training: False,
-      self._pl_split_dims: split_dims
-    }
+    feed_dict = self.get_feed_dict(species, array_of_coords,
+                                   array_of_lattice, array_of_pbc)
 
     # Run the operations to get the predicted energies.
     y_total, y_kbody, y_1body = self._sess.run(
-      [self._op_y_nn, self._op_y_kbody, self._op_y_1body], feed_dict=feed_dict
+      [self._operator_y_nn, self._operator_y_kbody, self._operator_y_1body],
+      feed_dict=feed_dict
     )
     y_1body = np.squeeze(y_1body)
 
@@ -279,3 +300,23 @@ class CNNPredictor:
             np.negative(np.atleast_1d(y_1body)),
             np.negative(y_atomic),
             np.negative(y_kbody))
+
+  def eval(self, name, feed_dict=None):
+    """
+    Evaluate a specific tensor from the graph given the feed dict.
+
+    Args:
+      name: a `str` as the name of the tensor.
+      feed_dict: a `dict` as the feed dict.
+
+    Returns:
+      results: a `object` as the evaluation result.
+
+    """
+    try:
+      tensor = self._graph.get_tensor_by_name(name)
+    except Exception:
+      raise KeyError(
+        "The tensor {} can not be found in the graph!".format(name))
+    else:
+      return self.sess.run(tensor, feed_dict=feed_dict)

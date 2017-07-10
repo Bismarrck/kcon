@@ -4,13 +4,13 @@ This script is used to infer the neural network.
 """
 from __future__ import print_function, absolute_import
 
-import tensorflow as tf
 import numpy as np
-import kbody_input
+import tensorflow as tf
 
+import kbody_input
+from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from kbody_inference import inference
 from utils import lrelu
-
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -33,15 +33,8 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
-
-
-# Constants describing the training process.
-MOVING_AVERAGE_DECAY = 0.9999      # The decay to use for the moving average.
-
-# If a model is trained with multiple GPUs, prefix all Op names with tower_name
-# to differentiate the operations. Note that this prefix is removed from the
-# names of the summaries when visualizing a model.
-TOWER_NAME = 'tower'
+tf.app.flags.DEFINE_float('alpha', 0.2,
+                          """Set the parameter `alpha` for `lrelu`.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -152,6 +145,8 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
 
   num_kernels = num_kernels or (40, 50, 60, 40)
   activation_fn = get_activation_fn(FLAGS.activation_fn)
+  alpha = FLAGS.alpha
+  trainable = not FLAGS.fixed_one_body
 
   if FLAGS.initial_one_body_weights is not None:
     one_body_weights = FLAGS.initial_one_body_weights
@@ -164,7 +159,8 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
                          num_atom_types=num_atom_types, kbody_terms=kbody_terms,
                          is_training=is_training, max_k=FLAGS.many_body_k,
                          num_kernels=num_kernels, activation_fn=activation_fn,
-                         one_body_weights=one_body_weights, verbose=verbose)
+                         alpha=alpha, one_body_weights=one_body_weights,
+                         verbose=verbose, trainable_one_body=trainable)
   return y_total
 
 
@@ -274,7 +270,8 @@ def _add_loss_summaries(total_loss):
   """
 
   # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages = tf.train.ExponentialMovingAverage(LOSS_MOVING_AVERAGE_DECAY,
+                                                    name='avg')
   losses = tf.get_collection('losses')
   loss_averages_op = loss_averages.apply(losses + [total_loss])
 
@@ -338,7 +335,7 @@ def get_train_op(total_loss, global_step):
 
   # Track the moving averages of all trainable variables.
   variable_averages = tf.train.ExponentialMovingAverage(
-      MOVING_AVERAGE_DECAY, global_step)
+    VARIABLE_MOVING_AVERAGE_DECAY, global_step)
   variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
   with tf.control_dependencies([apply_gradient_op, variables_averages_op]):

@@ -8,51 +8,23 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import tensorflow as tf
-import sys
 import json
+import sys
 import warnings
+from collections import Counter
+from itertools import combinations, product, repeat, chain
+from os.path import basename, dirname, join, splitext
 from ase.atoms import Atoms
 from scipy.misc import comb
-from itertools import combinations, product, repeat, chain
 from sklearn.metrics import pairwise_distances
-from collections import Counter
-from os.path import basename, dirname, join, splitext, isfile
-from os import remove
 from tensorflow.python.training.training import Features, Example
+from constants import pyykko, GHOST
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-# The pyykko radius of each element.
-pyykko = {
-  'Ac': 1.86, 'Ag': 1.28, 'Al': 1.26, 'Am': 1.66, 'Ar': 0.96, 'As': 1.21,
-  'At': 1.47, 'Au': 1.24, 'B': 0.85, 'Ba': 1.96, 'Be': 1.02, 'Bh': 1.41,
-  'Bi': 1.51, 'Bk': 1.68, 'Br': 1.14, 'C': 0.75, 'Ca': 1.71, 'Cd': 1.36,
-  'Ce': 1.63, 'Cf': 1.68, 'Cl': 0.99, 'Cm': 1.66, 'Co': 1.11, 'Cr': 1.22,
-  'Cs': 2.32, 'Cu': 1.12, 'Db': 1.49, 'Ds': 1.28, 'Dy': 1.67, 'Er': 1.65,
-  'Es': 1.65, 'Eu': 1.68, 'F': 0.64, 'Fe': 1.16, 'Fm': 1.67, 'Fr': 2.23,
-  'Ga': 1.24, 'Gd': 1.69, 'Ge': 1.21, 'H': 0.32, 'He': 0.46, 'Hf': 1.52,
-  'Hg': 1.33, 'Ho': 1.66, 'Hs': 1.34, 'I': 1.33, 'In': 1.42, 'Ir': 1.22,
-  'K': 1.96, 'Kr': 1.17, 'La': 1.8, 'Li': 1.33, 'Lu': 1.62, 'Md': 1.73,
-  'Mg': 1.39, 'Mn': 1.19, 'Mo': 1.38, 'Mt': 1.29, 'N': 0.71, 'Na': 1.55,
-  'Nb': 1.47, 'Nd': 1.74, 'Ne': 0.67, 'Ni': 1.1, 'No': 1.76, 'Np': 1.71,
-  'O': 0.63, 'Os': 1.29, 'P': 1.11, 'Pa': 1.69, 'Pb': 1.44, 'Pd': 1.2,
-  'Pm': 1.73, 'Po': 1.45, 'Pr': 1.76, 'Pt': 1.23, 'Pu': 1.72, 'Ra': 2.01,
-  'Rb': 2.1, 'Re': 1.31, 'Rf': 1.57, 'Rh': 1.25, 'Rn': 1.42, 'Ru': 1.25,
-  'S': 1.03, 'Sb': 1.4, 'Sc': 1.48, 'Se': 1.16, 'Sg': 1.43, 'Si': 1.16,
-  'Sm': 1.72, 'Sn': 1.4, 'Sr': 1.85, 'Ta': 1.46, 'Tb': 1.68, 'Tc': 1.28,
-  'Te': 1.36, 'Th': 1.75, 'Ti': 1.36, 'Tl': 1.44, 'Tm': 1.64, 'U': 1.7,
-  'V': 1.34, 'W': 1.37, 'X': 0.32, 'Xe': 1.31, 'Y': 1.63, 'Yb': 1.7,
-  'Zn': 1.18, 'Zr': 1.54
-}
-
-# the ghost atom
-GHOST = 'X'
-
-flags = tf.app.flags
-
-FLAGS = flags.FLAGS
+FLAGS = tf.app.flags.FLAGS
 
 
 def get_formula(species):
@@ -358,16 +330,20 @@ class _Transformer:
     """
     return self._periodic
 
-  def transform(self, coordinates, energies=None, lattices=None, pbcs=None):
+  def transform(self, array_of_coords, y_true=None, array_of_lattice=None,
+                array_of_pbc=None):
     """
     Transform the given atomic coordinates and energies to input features and
     training targets and return them as numpy arrays.
 
     Args:
-      coordinates: a 3D array as the atomic coordinates of sturctures.
-      energies: a 1D array as the desired energies.
-      lattices: a 2D array as the periodic lattices.
-      pbcs: a 2D array as the peridic conditions.
+      array_of_coords: a `float32` array of shape `[-1, N, 3]` as the atomic
+        coordinates of sturctures.
+      y_true: a `float64` array as the true energies.
+      array_of_lattice: a `float32` array of shape `[-1, 9]` as the 3x3 lattice
+        cells for all structures.
+      array_of_pbc: a `bool` array of shape `[-1, 3]` as the periodic conditions
+        along X,Y,Z directions for all structures.
 
     Returns:
       features: a 4D array as the transformed input features.
@@ -375,7 +351,7 @@ class _Transformer:
         input energies) given `energies` or None.
 
     """
-    num_examples = len(coordinates)
+    num_examples = len(array_of_coords)
     samples = np.zeros((num_examples, self._total_dim, self.ck2),
                        dtype=np.float32)
     kbody_terms = self._kbody_terms
@@ -391,18 +367,18 @@ class _Transformer:
     for i in range(num_examples):
       if not self.is_periodic:
         if num_ghosts > 0:
-          coords = np.vstack((coordinates[i], gvecs))
+          coords = np.vstack((array_of_coords[i], gvecs))
           dists = pairwise_distances(coords)
         else:
-          dists = pairwise_distances(coordinates[i])
+          dists = pairwise_distances(array_of_coords[i])
       # For periodic structures, the minimum image convention is needed.
       else:
         if num_ghosts > 0:
-          coords = np.vstack((coordinates[i], gvecs))
+          coords = np.vstack((array_of_coords[i], gvecs))
         else:
-          coords = coordinates[i]
-        cell = lattices[i].reshape((3, 3))
-        atoms = Atoms(self._species, coords, cell=cell, pbc=pbcs[i])
+          coords = array_of_coords[i]
+        cell = array_of_lattice[i].reshape((3, 3))
+        atoms = Atoms(self._species, coords, cell=cell, pbc=array_of_pbc[i])
         dists = atoms.get_all_distances(mic=True)
 
       # Manually set the distances of real atoms and the ghosts to infinity.
@@ -438,8 +414,8 @@ class _Transformer:
           z.sort(axis=0)
           samples[i, offsets[j]: offsets[j + 1], ix] = z
 
-    if energies is not None:
-      targets = np.negative(energies)
+    if y_true is not None:
+      targets = np.negative(y_true)
     else:
       targets = None
     return samples, targets
@@ -590,17 +566,21 @@ class MultiTransformer:
       self._transformers[formula] = clf
     return clf
 
-  def transform(self, species, coords, energies=None, lattices=None, pbcs=None):
+  def transform(self, species, array_of_coords, energies=None,
+                array_of_lattice=None, array_of_pbc=None):
     """
-    Transform the atomic coordinates to input features.
+    Transform the atomic coordinates to input features. All input structures
+    must have the same atomic species.
 
     Args:
       species: a `List[str]` as the ordered atomic species for all `coords`.
-      coords: a 2D or 3D array as the atomic coordinates. If this is a 2D array, 
-        it should represents the N-by-3 coordinates of a single molecule.
-      energies: a 1D array as the total energies. 
-      lattices: a 2D array as the periodic lattices.
-      pbcs: a 2D array as the peridic conditions.
+      array_of_coords: a `float32` array of shape `[-1, num_atoms, 3]` as the
+        atomic coordinates.
+      energies: a `float64` array of shape `[-1, ]` as the true energies.
+      array_of_lattice: a `float32` array of shape `[-1, 9]` as the periodic
+        cell parameters for each structure.
+      array_of_pbc: a `bool` array of shape `[-1, 3]` as the periodic conditions
+        along XYZ directions.
 
     Returns:
       features: a 4D array as the input features.
@@ -618,20 +598,24 @@ class MultiTransformer:
       raise ValueError(
         "This transformer does not support {}!".format(get_formula(species)))
 
-    coords = np.asarray(coords)
-    if len(coords.shape) == 2:
-      if coords.shape[0] != len(species):
+    array_of_coords = np.asarray(array_of_coords)
+    if len(array_of_coords.shape) == 2:
+      if array_of_coords.shape[0] != len(species):
         raise ValueError("The shapes of coords and species are not matched!")
-      coords = coords.reshape((1, len(species), 3))
-    elif coords.shape[1] != len(species):
+      array_of_coords = array_of_coords.reshape((1, len(species), 3))
+    elif array_of_coords.shape[1] != len(species):
       raise ValueError("The shapes of coords and species are not matched!")
 
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
     features, targets = clf.transform(
-      coords, energies, lattices=lattices, pbcs=pbcs)
+      array_of_coords,
+      energies,
+      array_of_lattice=array_of_lattice,
+      array_of_pbc=array_of_pbc
+    )
 
-    ntotal = coords.shape[0]
+    ntotal = array_of_coords.shape[0]
     occurs = np.zeros((ntotal, len(self._ordered_species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._ordered_species.index(specie)
@@ -770,20 +754,21 @@ class FixedLenMultiTransformer(MultiTransformer):
       self._transformers[formula] = clf
     return clf
 
-  def _transform_and_save(self, array_of_species, energies, coords, filename,
-                          lattices=None, pbcs=None, verbose=True,
-                          one_body_weights=True, loss_weight_fn=None):
+  def _transform_and_save(self, filename, samples, one_body_weights=True,
+                          exp_rmse_fn=None, verbose=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
 
     Args:
-      array_of_species: a `List[List[str]]` as the species of the isomers.
-      energies: a 1D array as the desired energies.
-      coords: a 3D array as the atomic coordinates of sturctures.
       filename: a `str` as the file to save examples.
+      samples: a `tuple` of samples, returned by `XyzFile.get_train_samples` or
+        `XyzFile.get_test_samples`.
       verbose: boolean indicating whether.
-      loss_weight_fn: a `Callable` for computing the loss weight.
+      exp_rmse_fn: a `Callable` for computing the exponential scaled RMSE loss.
+
+    Returns:
+      weights: a `float32` array as the weights for linear fit of the energies.
 
     """
 
@@ -791,6 +776,12 @@ class FixedLenMultiTransformer(MultiTransformer):
 
       if verbose:
         print("Start mixed transforming %s ... " % filename)
+
+      array_of_species = samples[0]
+      y_true = samples[1]
+      array_of_coords = samples[2]
+      array_of_lattice = samples[4]
+      array_of_pbc = samples[5]
 
       num_examples = len(array_of_species)
 
@@ -800,28 +791,24 @@ class FixedLenMultiTransformer(MultiTransformer):
 
       for i in range(len(array_of_species)):
         species = array_of_species[i]
-        n = len(species)
-        if lattices is None:
-          cell = None
-          pbc = None
-        else:
-          cell = np.atleast_2d(lattices[i])
-          pbc = np.atleast_2d(pbcs[i])
-        features, split_dims, targets, multipliers, occurs = self.transform(
+        natoms = len(species)
+        cell = np.atleast_2d(array_of_lattice[i])
+        pbc = np.atleast_2d(array_of_pbc[i])
+        features, split_dims, _, multipliers, occurs = self.transform(
           species,
-          coords[i, :n],
-          lattices=cell,
-          pbcs=pbc,
+          array_of_coords[i, :natoms],
+          array_of_lattice=cell,
+          array_of_pbc=pbc,
         )
         x = _bytes_feature(features.tostring())
-        y = _bytes_feature(np.atleast_2d(-1.0 * energies[i]).tostring())
+        y = _bytes_feature(np.atleast_2d(-1.0 * y_true[i]).tostring())
         z = _bytes_feature(occurs.tostring())
         w = _bytes_feature(multipliers.tostring())
-        if loss_weight_fn is None:
-          loss_weight = 1.0
+        if exp_rmse_fn is None:
+          y_weight = 1.0
         else:
-          loss_weight = loss_weight_fn(energies[i])
-        loss_weight = _float_feature(loss_weight)
+          y_weight = exp_rmse_fn(y_true[i])
+        y_weight = _float_feature(y_weight)
 
         example = Example(
           features=Features(feature={
@@ -829,7 +816,7 @@ class FixedLenMultiTransformer(MultiTransformer):
             'features': x,
             'occurs': z,
             'weights': w,
-            'loss_weight': loss_weight,
+            'loss_weight': y_weight,
           }))
         writer.write(example.SerializeToString())
 
@@ -839,16 +826,16 @@ class FixedLenMultiTransformer(MultiTransformer):
         if one_body_weights:
           for specie, times in Counter(species).items():
             coef[i, self._ordered_species.index(specie)] = float(times)
-          if n not in combs:
-            combs[n] = comb(n, self.many_body_k)
-          coef[i, -1] = combs[n]
+          if natoms not in combs:
+            combs[natoms] = comb(natoms, self.many_body_k)
+          coef[i, -1] = combs[natoms]
 
       if verbose:
         print("")
         print("Transforming %s finished!" % filename)
 
       if one_body_weights:
-        return _compute_one_body_weights(coef, energies, self._num_ghosts > 0)
+        return _compute_one_body_weights(coef, y_true, self._num_ghosts > 0)
       else:
         return None
 
@@ -890,38 +877,38 @@ class FixedLenMultiTransformer(MultiTransformer):
     with open(cfgfile, "w+") as f:
       json.dump(aux_dict, fp=f, indent=2)
 
-  def transform_and_save(self, array_of_species, energies, coords, filename,
-                         indices=None, lattices=None, pbcs=None, verbose=True,
-                         one_body_weights=True, loss_weight_fn=None):
+  def transform_and_save(self, xyz, train_file=None, test_file=None,
+                         verbose=True, exp_rmse_fn=None):
     """
-    Transform the given atomic coordinates to input features and save them to
-    tfrecord files using `tf.TFRecordWriter`.
+    Transform coordinates to input features and save them to tfrecord files
+    using `tf.TFRecordWriter`.
 
     Args:
-      array_of_species: a `List[List[str]]` as the species of the isomers.
-      coords: a 3D array as the atomic coordinates of sturctures.
-      energies: a 1D array as the desired energies.
-      filename: a `str` as the file to save examples.
-      indices: a `List[int]` as the indices of each given example. This is an
-        optional argument.
+      xyz: a `XyzFile` as the parsed results from a xyz file.
+      train_file: a `str` as the file for saving training data or None to skip.
+      test_file: a `str` as the file for saving testing data or None to skip.
       verbose: a `bool` indicating whether logging the transformation progress.
-      one_body_weights: a `bool` indicating whether we should compute and save 
-        the one-body weights or not.
-      lattices: a 2D array as the periodic lattices.
-      pbcs: a 2D array as the peridic conditions.
-      loss_weight_fn: a `Callable` for computing the loss weight.
+      exp_rmse_fn: a `Callable` for computing the exponential scaled RMSE loss.
 
     """
-    try:
-      initial_one_body_weights = self._transform_and_save(
-        array_of_species, energies, coords, filename, verbose=verbose,
-        lattices=lattices, pbcs=pbcs, one_body_weights=one_body_weights,
-        loss_weight_fn=loss_weight_fn
-      )
-    except Exception as excp:
-      if isfile(filename):
-        remove(filename)
-      raise excp
-    else:
+    if test_file:
+      data = xyz.get_testing_samples()
+      params = {
+        "one_body_weights": False,
+        "verbose": verbose,
+        "exp_rmse_fn": exp_rmse_fn
+      }
+      self._transform_and_save(test_file, data, **params)
       self._save_auxiliary_for_file(
-        filename, initial_one_body_weights, indices=indices)
+        test_file, indices=xyz.indices_of_testing)
+
+    if train_file:
+      data = xyz.get_training_samples()
+      params = {
+        "one_body_weights": True,
+        "verbose": verbose,
+        "exp_rmse_fn": exp_rmse_fn
+      }
+      weights = self._transform_and_save(train_file, data, **params)
+      self._save_auxiliary_for_file(
+        train_file, initial_weights=weights, indices=xyz.indices_of_training)

@@ -8,6 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
+from tensorflow.contrib.framework import add_arg_scope
 
 import logging
 from logging.config import dictConfig
@@ -21,6 +22,7 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
+@add_arg_scope
 def lrelu(x, alpha=0.2, name=None):
   """
   A simple implementation of leaky relu.

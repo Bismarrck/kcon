@@ -9,11 +9,14 @@ import numpy as np
 import json
 import re
 import time
+
+import constants
 import kbody
 from kbody import BatchIndex
 from kbody import extract_configs, get_batch, get_batch_configs
 from kbody import sum_kbody_cnn as inference
 from save_model import save_model
+from constants import LOSS_MOVING_AVERAGE_DECAY
 from datetime import datetime
 from os.path import join
 from utils import get_xargs, set_logging_configs
@@ -102,7 +105,8 @@ def tower_loss(batch, params, scope, reuse_variables=False):
   total_loss = tf.add_n(losses, name='total_loss')
 
   # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+  loss_averages = tf.train.ExponentialMovingAverage(LOSS_MOVING_AVERAGE_DECAY,
+                                                    name='avg')
   loss_averages_op = loss_averages.apply(losses + [total_loss])
 
   # Attach a scalar summary to all individual losses and the total loss; do the
@@ -110,7 +114,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
   for l in losses + [total_loss]:
     # Remove 'tower[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
-    loss_name = re.sub(r'%s[0-9]*/' % kbody.TOWER_NAME, '', l.op.name)
+    loss_name = re.sub(r'%s[0-9]*/' % constants.TOWER_NAME, '', l.op.name)
     tf.summary.scalar(loss_name, l)
 
   with tf.control_dependencies([loss_averages_op]):
@@ -192,7 +196,7 @@ def train_with_multiple_gpus():
 
     for i in range(FLAGS.num_gpus):
       with tf.device('/gpu:%d' % i):
-        with tf.name_scope('%s%d' % (kbody.TOWER_NAME, i)) as scope:
+        with tf.name_scope('%s%d' % (constants.TOWER_NAME, i)) as scope:
           # Dequeues one batch for the GPU
           gpu_batch = batch_queue.dequeue()
 
@@ -231,7 +235,7 @@ def train_with_multiple_gpus():
 
     # Track the moving averages of all trainable variables.
     variable_averages = tf.train.ExponentialMovingAverage(
-      kbody.MOVING_AVERAGE_DECAY, global_step)
+      constants.VARIABLE_MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.

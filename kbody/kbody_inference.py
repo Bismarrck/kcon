@@ -30,7 +30,7 @@ MODEL_VARIABLES = '_model_variables_'
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
-                         use_batch_norm=False, activation_fn=lrelu,
+                         use_batch_norm=False, activation_fn=lrelu, alpha=0.2,
                          num_kernels=None):
   """
   Infer the k-body term of `sum-kbody-cnn`.
@@ -45,7 +45,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
       normalization or not.
     activation_fn: a `Callable` as the activation function for each conv layer.
     num_kernels: a `List[int]` as the number of kernels.
-    verbose: a bool. If Ture, the shapes of the layers will be printed.
+    verbose: a `bool`. If Ture, the shapes of the layers will be printed.
+    alpha: a `float` as the parameter alpha for Leaky ReLU.
 
   Returns:
     contribs: a Tensor of shape `[-1, 1, N, 1]` as the energy contribs of all
@@ -84,14 +85,15 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                  weights_initializer=weights_initializer,
                  normalizer_params=batch_norm_params,
                  variables_collections=[MODEL_VARIABLES]):
-    for i, num_kernels in enumerate(num_kernels):
-      inputs = conv2d(inputs,
-                      num_outputs=num_kernels,
-                      activation_fn=activation_fn,
-                      scope="Hidden{:d}".format(i + 1),
-                      normalizer_fn=normalizer_fn)
-      if verbose:
-        print_activations(inputs)
+    with arg_scope([lrelu], alpha=alpha):
+      for i, num_kernels in enumerate(num_kernels):
+        inputs = conv2d(inputs,
+                        num_outputs=num_kernels,
+                        activation_fn=activation_fn,
+                        scope="Hidden{:d}".format(i + 1),
+                        normalizer_fn=normalizer_fn)
+        if verbose:
+          print_activations(inputs)
 
     inputs = conv2d(inputs, num_outputs=1, activation_fn=None,
                     biases_initializer=None, scope="k-Body")
@@ -101,7 +103,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
     return inputs
 
 
-def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
+def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
+                        trainable=True):
   """
   Inference the one-body part.
 
@@ -111,6 +114,8 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
     num_atom_types: a `int` as the number of atom types.
     initial_one_body_weights: an array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
+    trainable: a `bool` indicating whether the one-body parameters are trainable
+      or not.
 
   Returns:
     one_body: a 4D Tensor of shape `[-1, 1, 1, 1]` as the one-body contribs.
@@ -136,6 +141,7 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None):
     biases_initializer=None,
     scope='one-body',
     variables_collections=[MODEL_VARIABLES],
+    trainable=trainable,
   )
 
 
@@ -151,7 +157,8 @@ def _split_inputs(inputs, split_dims):
 
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, verbose=True, num_kernels=None,
-              activation_fn=lrelu, one_body_weights=None):
+              activation_fn=lrelu, alpha=0.2, one_body_weights=None,
+              trainable_one_body=True):
   """
   The general inference function.
 
@@ -172,8 +179,11 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     num_kernels: a `Tuple[int]` as the number of kernels of the convolution
       layers. This also determines the number of layers in each atomic network.
     activation_fn: a `Callable` as the activation function.
-    one_body_weights: a 1D array of shape `[nat, ]` as the initial
-      weights of the one-body kernel.
+    alpha: a `float` as the parameter alpha for Leaky ReLU.
+    one_body_weights: a `float32` array of shape `[num_atom_types, ]` as the
+      initial weights of the one-body kernel.
+    trainable_one_body: a `bool` indicating whether the one body parameters are
+      trainable or not.
 
   Returns:
     y_total: a `float32` Tensor of shape `[-1, ]` as the total energies.
@@ -194,6 +204,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     with tf.variable_scope(kbody_terms[i]):
       y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
                                              activation_fn=activation_fn,
+                                             alpha=alpha,
                                              is_training=is_training,
                                              num_kernels=num_kernels,
                                              verbose=verbose))
@@ -214,7 +225,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   # Inference the one-body expression.
   one_body = _inference_1body_nn(occurs,
                                  num_atom_types,
-                                 initial_one_body_weights=one_body_weights)
+                                 initial_one_body_weights=one_body_weights,
+                                 trainable=trainable_one_body)
   tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)
