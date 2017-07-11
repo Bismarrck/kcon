@@ -8,17 +8,20 @@ import re
 import sys
 import time
 import numpy as np
+from ase.atoms import Atom, Atoms
+from ase.db import connect
+from ase.calculators.calculator import Calculator
+from os.path import splitext
 from constants import hartree_to_ev, SEED
-from collections import namedtuple, Counter
+from collections import namedtuple
 from sklearn.model_selection import train_test_split
-
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
-
-XyzFormat = namedtuple("XyzFormat", (
-  "name", "energy_patt", "string_patt", "default_unit", "parse_forces")
+XyzFormat = namedtuple(
+  "XyzFormat",
+  ("name", "energy_patt", "string_patt", "default_unit", "parse_forces")
 )
 
 _grendel = XyzFormat(
@@ -81,252 +84,117 @@ def _get_regex_patt_and_unit(xyz_format):
   return formatter
 
 
-class XyzFile:
+class ProvidedCalculator(Calculator):
   """
-  This class is used to managed the parsed data from a xyz file.
+  A simple calculator which just returns the provided energy and forces.
   """
 
-  def __init__(self, array_of_species, energies, array_of_coords,
-               array_of_forces, array_of_lattice, array_of_pbc):
+  implemented_properties = ["energy", "forces"]
+
+  def __init__(self, atoms=None):
     """
     Initialization method.
 
     Args:
-      array_of_species: a `List[List[str]]` as the species of structures.
-      energies: a `float64` array of shape `[-1]` as the total energies of the
-        structures.
-      array_of_coords: a `float32` array of shape `[-1, N, 3]` as the atomic
-        coordinates of the structures.
-      array_of_forces: a `float32` array of shape `[-1, N, 3]` as the atomic
-        forces of the structures.
-      array_of_lattice: a `float32` array of shape `[-1, 9]` as the lattice
-        parameters for structures.
-      array_of_pbc: a `bool` array of shape `[-1, 3]` as the periodic conditions
-        along X,Y,Z directions for structures.
+      atoms: an optional `ase.Atoms` object to which the calculator will be
+        attached.
 
     """
-    self._array_of_species = array_of_species
-    self._energies = energies
-    self._array_of_coords = array_of_coords
-    self._array_of_forces = array_of_forces
-    self._array_of_lattice = array_of_lattice
-    self._array_of_pbc = array_of_pbc
-    self._num_examples = len(array_of_species)
-    self._num_atoms = max(map(len, array_of_species))
-    self._splitted = False
-    self._trains = None
-    self._tests = None
-    self._random_state = SEED
-    self._data = (array_of_species, energies, array_of_coords, array_of_forces,
-                  array_of_lattice, array_of_pbc)
+    Calculator.__init__(self, label="provided", atoms=atoms)
 
-  @property
-  def num_examples(self):
+  def set_atoms(self, atoms):
     """
-    Return the total number of examples in this dataset.
+    Set the attached `ase.Atoms` object.
     """
-    return self._num_examples
+    self.atoms = atoms
 
-  @property
-  def num_atoms(self):
+  def calculate(self, atoms=None, properties=None, system_changes=None):
     """
-    Return the maximum number of atoms of structures in this dataset.
+    Set the calculation results.
     """
-    return self._num_atoms
-
-  @property
-  def random_state(self):
-    """
-    Return the random state used to split this dataset.
-    """
-    return self._random_state
-
-  @property
-  def energy_range(self):
-    """
-    Return a tuple of two floats as the minimum and maximum energy in this
-    dataset.
-    """
-    return min(self._energies), max(self._energies)
-
-  @property
-  def indices_of_training(self):
-    """
-    Return the indices of the training samples.
-    """
-    return self._trains
-
-  @property
-  def indices_of_testing(self):
-    """
-    Return the indices of the testing samples.
-    """
-    return self._tests
-
-  def __getitem__(self, i):
-    """
-    x.__getitem__(i) <=> x[i]
-
-    Args:
-      i: a `int` or `List[int]` as the indices of the samples to get.
-
-    Returns:
-      y: a `tuple` of samples.
-
-    """
-    return tuple(x[i] for x in self._data)
-
-  def species_and_coords(self):
-    """
-    A generator for iterating all structures and returning their species and
-    atomic coordinates.
-
-    Yields:
-      species: a `List[str]` as the species of a structure.
-      coords: a `float32` array of shape `(num_atoms, 3)` as the coordinates of
-        a structure.
-
-    """
-    for i in range(self._num_examples):
-      yield self._array_of_species[i], self._array_of_coords[i]
-
-  def get_max_occurs(self):
-    """
-    Return the maximum occurances for each type of atom.
-
-    Returns:
-      max_occurs: a `dict` as the maximum occurances for each type of atom.
-
-    """
-    max_occurs = {}
-    for species in self._array_of_species:
-      c = Counter(species)
-      for specie, times in c.items():
-        max_occurs[specie] = max(max_occurs.get(specie, 0), times)
-    return max_occurs
-
-  def split(self, test_size=0.2, random_state=None):
-    """
-    Split this dataset into training set and testing set.
-
-    Args:
-      test_size: a `float` or `int`. If float, should be between 0.0 and 1.0 and
-        represent the proportion of the dataset to include in the test split. If
-        int, represents the absolute number of test samples.
-      random_state: a `int` as the pseudo-random number generator state used for
-        random sampling.
-
-    """
-    random_state = random_state or self._random_state
-    indices = range(self._num_examples)
-    trains, tests = train_test_split(
-      indices, test_size=test_size, random_state=random_state)
-    self._random_state = random_state
-    self._splitted = True
-    self._trains = trains
-    self._tests = tests
-
-  def get_testing_samples(self):
-    """
-    Return the testing samples.
-    """
-    if not self._splitted:
-      self.split()
-    return self[self._tests]
-
-  def get_training_samples(self):
-    """
-    Return the training samples.
-    """
-    if not self._splitted:
-      self.split()
-    return self[self._trains]
+    super(ProvidedCalculator, self).calculate(atoms, properties=properties,
+                                              system_changes=system_changes)
+    self.results = {
+      'energy': self.atoms.info.get('provided_energy', 0.0),
+      'forces': self.atoms.info.get('provided_forces',
+                                    np.zeros((len(self.atoms), 3)))
+    }
 
 
-def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
-                verbose=True, energy_to_ev=None):
+def xyz_to_db(xyzfile, num_examples, xyz_format='xyz', verbose=True,
+              unit_to_ev=None):
   """
-  Extract atomic species, energies, coordiantes, and perhaps forces, from the
-  file.
+  Convert the xyz file to an `ase.db.core.Database`.
 
   Args:
-    filename: a `str` as the file to parse.
+    xyzfile: a `str` as the file to parse.
     num_examples: a `int` as the maximum number of examples to parse.
-    num_atoms: a `int` as the number of atoms. If `mixed` is True, this should
-      be the maximum number of atoms in one configuration.
     xyz_format: a `str` representing the format of the given xyz file.
     verbose: a `bool` indicating whether we should log the parsing progress.
-    energy_to_ev: a `float` as the unit for converting energies to eV. Defaults
+    unit_to_ev: a `float` as the unit for converting energies to eV. Defaults
       to None so that default units will be used.
 
-  Returns
-    xyz: a `XyzFile` as the parsed results.
+  Returns:
+    db: an `ase.db.core.Database`.
 
   """
-
-  energies = np.zeros((num_examples,), dtype=np.float64)
-  array_of_coords = np.zeros((num_examples, num_atoms, 3), dtype=np.float32)
-  array_of_forces = np.zeros((num_examples, num_atoms, 3), dtype=np.float32)
-  array_of_lattice = np.zeros((num_examples, 9))
-  array_of_pbc = np.zeros((num_examples, 3), dtype=bool)
-  array_of_species = []
-  species = []
-  stage = 0
-  count = 0
-  ai = 0
-  natoms = None
   formatter = _get_regex_patt_and_unit(xyz_format)
   assert isinstance(formatter, XyzFormat)
-  unit = energy_to_ev or formatter.default_unit
 
+  name = splitext(xyzfile)[0] + ".db"
+  unit = unit_to_ev or formatter.default_unit
+  parse_forces = formatter.parse_forces
+  count = 0
+  ai = 0
+  natoms = 0
+  stage = 0
+  atoms = None
+
+  db = connect(name=name)
   tic = time.time()
   if verbose:
     sys.stdout.write("Extract cartesian coordinates ...\n")
-  with open(filename) as f:
+  with open(xyzfile) as f:
     for line in f:
       if count == num_examples:
         break
       l = line.strip()
       if l == "":
         continue
-      # The first stage: parsing the number of atoms of next structure. The
-      # parsed `natoms` should be not larger than `num_atoms` because we already
-      # allocated memeory spaces.
       if stage == 0:
         if l.isdigit():
           natoms = int(l)
-          if natoms > num_atoms:
-            raise ValueError("The number of atoms %d from the file is larger "
-                             "than the given maximum %d!" % (natoms, num_atoms))
+          atoms = Atoms(calculator=ProvidedCalculator())
+          if parse_forces:
+            atoms.info['provided_forces'] = np.zeros((natoms, 3))
           stage += 1
-      # The second stage is to parse the total energy and other properties which
-      # depends on the file format. All energies are converted to eV.
       elif stage == 1:
         m = formatter.energy_patt.search(l)
         if m:
           if xyz_format.lower() == 'extxyz':
-            energies[count] = float(m.group(3)) * unit
+            energy = float(m.group(3)) * unit
           elif xyz_format.lower() == 'grendel':
-            energies[count] = float(m.group(2)) * unit
-            array_of_lattice[count] = [float(x) for x in m.group(1).split()]
-            array_of_pbc[count] = [True if x == "T" else False
-                                   for x in m.group(3).split()]
+            energy = float(m.group(2)) * unit
+            atoms.set_cell(
+              np.reshape([float(x) for x in m.group(1).split()], (3, 3)))
+            atoms.set_pbc(
+              [True if x == "T" else False for x in m.group(3).split()])
           else:
-            energies[count] = float(m.group(1)) * unit
+            energy = float(m.group(1)) * unit
+          atoms.info['provided_energy'] = energy
           stage += 1
-      # The third stage is to parse atomic symbols and coordinates. If the file
-      # format is `grendel` the forces are also parsed.
       elif stage == 2:
         m = formatter.string_patt.search(l)
         if m:
-          array_of_coords[count, ai, :] = [float(v) for v in m.groups()[1:4]]
-          if formatter.parse_forces:
-            array_of_forces[count, ai, :] = [float(v) for v in m.groups()[4:7]]
-          species.append(m.group(1))
+          atoms.append(Atom(symbol=m.group(1),
+                            position=[float(v) for v in m.groups()[1:4]]))
+          if parse_forces:
+            atoms.info['provided_forces'][ai, :] = [float(v)
+                                                    for v in m.groups()[4:7]]
           ai += 1
           if ai == natoms:
-            array_of_species.append(species)
-            species = []
+            atoms.calc.calculate()
+            db.write(atoms)
             ai = 0
             stage = 0
             count += 1
@@ -337,14 +205,179 @@ def extract_xyz(filename, num_examples, num_atoms, xyz_format='xyz',
       print("")
       print("Total time: %.3f s\n" % (time.time() - tic))
 
-  # Resize all arrays if `count` is smaller than `num_examples`.
-  array_of_species = np.asarray(array_of_species)
-  if count < num_examples:
-    energies = np.resize(energies, (count, ))
-    array_of_coords = np.resize(array_of_coords, (count, num_atoms, 3))
-    array_of_forces = np.resize(array_of_forces, (count, num_atoms, 3))
-    array_of_lattice = np.resize(array_of_lattice, (count, 9))
-    array_of_pbc = np.resize(array_of_pbc, (count, 3))
+    return db
 
-  return XyzFile(array_of_species, energies, array_of_coords, array_of_forces,
-                 array_of_lattice, array_of_pbc)
+
+class Database:
+  """
+  A manager class for manipulating the `ase.db.core.Database`.
+  """
+
+  def __init__(self, db):
+    """
+    Initialization method.
+
+    Args:
+      db: a `ase.db.core.Database`
+
+    """
+    self._db = db
+    self._random_state = SEED
+    self._energy_range = None
+    self._splitted = False
+
+  def __len__(self):
+    """
+    Return the total number of examples stored in this database.
+    """
+    return len(self._db)
+
+  def __getitem__(self, ind):
+    """
+    Get one or more structures.
+
+    Args:
+      ind: an `int` or a list of `int` as the zero-based id(s) to select.
+
+    Returns:
+      sel: an `ase.Atoms` or a list of `ase.Atoms`.
+
+    """
+    if isinstance(ind, int):
+      sel = self._db.get_atoms('id={}'.format(ind + 1))
+    elif isinstance(ind, (list, tuple, np.ndarray)):
+      self._db.update(list(ind), selected=True)
+      sel = [self._get_atoms(row) for row in self._db.select(selected=True)]
+      self._db.update(list(ind), selected=False)
+    else:
+      raise ValueError('')
+    return sel
+
+  @staticmethod
+  def _get_atoms(row):
+    """
+    Convert the database row to `ase.Atoms` while keeping the info dict.
+
+    Args:
+      row: an `ase.db.row.AtomsRow`.
+
+    Returns:
+      atoms: an `ase.Atoms` object representing a structure.
+
+    """
+    atoms = row.toatoms()
+    atoms.info.update(row.key_value_pairs)
+    return atoms
+
+  @property
+  def num_examples(self):
+    """
+    Return the total number of examples stored in this database.
+    """
+    return len(self._db)
+
+  @property
+  def energy_range(self):
+    """
+    Return the energy range of this database.
+    """
+    if self._energy_range is None:
+      self._get_energy_range()
+    return self._energy_range
+
+  def _get_energy_range(self):
+    """
+    Determine the energy range.
+    """
+    y_min = np.inf
+    y_max = -np.inf
+    for row in self._db.select(list(range(len(self)))):
+      y_min = min(row.energy, y_min)
+      y_max = max(row.energy, y_max)
+    self._energy_range = (y_min, y_max)
+
+  def split(self, test_size=0.2, random_state=None):
+    """
+    Split this database into training set and testing set.
+
+    Args:
+      test_size: a `float` or `int`. If float, should be between 0.0 and 1.0 and
+        represent the proportion of the dataset to include in the test split. If
+        int, represents the absolute number of test samples.
+      random_state: a `int` as the pseudo-random number generator state used for
+        random sampling.
+
+    """
+    random_state = random_state or self._random_state
+    indices = range(len(self))
+    trains, tests = train_test_split(
+      indices, test_size=test_size, random_state=random_state)
+    self._db.update(trains, for_training=True)
+    self._db.update(tests, for_training=False)
+    self._random_state = random_state
+    self._splitted = True
+
+  def training_samples(self):
+    """
+    Iterate through all training samples.
+
+    Yields:
+      atoms: an `ase.Atoms` which represents a training sample.
+
+    """
+    if not self._splitted:
+      self.split()
+    for row in self._db.select(for_training=True):
+      yield self._get_atoms(row)
+
+  def testing_samples(self):
+    """
+    Iterate through all testing samples.
+
+    Yields:
+      atoms: an `ase.Atoms` which represents a testing sample.
+
+    """
+    if not self._splitted:
+      self.split()
+    for row in self._db.select(for_training=False):
+      yield self._get_atoms(row)
+
+  @classmethod
+  def from_xyz(cls, xyzfile, num_examples, xyz_format='xyz', verbose=True,
+               unit_to_ev=None):
+    """
+    Initialize a `Database` from a xyz file.
+
+    Args:
+      xyzfile: a `str` as the file to parse.
+      num_examples: a `int` as the maximum number of examples to parse.
+      xyz_format: a `str` representing the format of the given xyz file.
+      verbose: a `bool` indicating whether we should log the parsing progress.
+      unit_to_ev: a `float` as the unit for converting energies to eV. Defaults
+        to None so that default units will be used.
+
+    Returns:
+      db: a `Database`.
+
+    """
+    return cls(xyz_to_db(xyzfile,
+                         num_examples=num_examples,
+                         xyz_format=xyz_format,
+                         verbose=verbose,
+                         unit_to_ev=unit_to_ev))
+
+  @classmethod
+  def from_file(cls, filename):
+    """
+    Initialize a `Database` from a db.
+
+    Args:
+      filename: a `str` as the file to load.
+
+    Returns:
+      db: a `Database`.
+
+    """
+    with connect(filename) as db:
+      return cls(db)
