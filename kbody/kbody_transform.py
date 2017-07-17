@@ -10,7 +10,6 @@ import numpy as np
 import tensorflow as tf
 import json
 import sys
-import warnings
 from collections import Counter
 from itertools import combinations, product, repeat, chain
 from os.path import basename, dirname, join, splitext
@@ -19,6 +18,7 @@ from scipy.misc import comb
 from sklearn.metrics import pairwise_distances
 from tensorflow.python.training.training import Features, Example
 from constants import pyykko, GHOST
+from utils import get_atoms_from_kbody_term
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -34,23 +34,18 @@ def get_formula(species):
   return "".join(species)
 
 
-def _compute_one_body_weights(coef, y, ghost=False):
+def _compute_lr_weights(coef, y):
   """
-  Solve the linear equations of Ax + Bz = y to get the initial one_body weights.
+  Solve the linear equation system of Ax = b.
   
   Args:
-    coef: a 2D array of shape `[num_examples, Nat + 1]` as the `[A, B]`.
-    y: a 1D array of shape `[num_examples, ]` as the `y`.
-    ghost: a `bool` indicating whether the ghost is included or not.
+    coef: a `float` array of shape `[num_examples, num_atom_types]`.
+    y: a `float` array of shape `[num_examples, ]`.
 
   Returns:
-    x: 1 1D array of shape `[Nat + 1]` as the solution.
+    x: a `float` array of shape `[num_atom_types, ]` as the solution.
 
   """
-  rank = np.linalg.matrix_rank(np.dot(coef.T, coef))
-  if rank + int(ghost) + 1 < coef.shape[1]:
-    warnings.warn("The coefficients matrix is not full rank!")
-
   return np.negative(np.dot(np.linalg.pinv(coef), y))
 
 
@@ -59,9 +54,9 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
   Return the pyykko-bonds matrix given a list of atomic symbols.
 
   Args:
-    species: List[str], a list of atomic symbols.
-    factor: a float, the scaling factor.
-    flatten: a bool. The bonds matrix will be flatten to a 1D array if True.
+    species: a `List[str]` as the atomic symbols.
+    factor: a `float` as the normalization factor.
+    flatten: a `bool` indicating whether the bonds matrix is flatten or not.
 
   Returns:
     bonds: the bonds matrix (or vector if `flatten` is True).
@@ -75,88 +70,114 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
     return lmat
 
 
-def _gen_dist2inputs_mapping(species, kbody_terms):
+def _get_mapping(species, kbody_terms):
   """
-  Build the mapping from interatomic distances matrix to the [C(N,k), C(k,2)]
-  feature matrix.
+  Build the mapping from interatomic distance matrix of shape `[N, N]` to the
+  input feature matrix of shape `[C(N, k), C(k, 2)]`.
 
   Args:
-    species: a list of str as the ordered atomic symbols.
-    kbody_terms: a list of comma-separated elements string as the ordered k-body
-      atomic symbol combinations.
+    species: a `list` of `str` as the ordered atomic symbols.
+    kbody_terms: a `list` of `str` as the ordered k-body terms.
 
   Returns:
-    mapping: a `Dict[str, np.ndarray]` as the mapping from the N-by-N distance 
-      matrix to the feature matrix for each k-body term.
-    selection: a `Dict[str, List[List[int]]]` as the corresponding atom indices 
-      for each k-body term.
+    mapping: a `Dict[str, Array]` as the mapping from the N-by-N interatomic
+      distance matrix to the input feature matrix for each k-body term.
+    selection: a `Dict[str, List[List[int]]]` as the indices of the k-atoms
+      selections for each k-body term.
 
   """
   natoms = len(species)
-  uniques = set(species)
-  element_indices = {}
-  for element in uniques:
-    for i in range(natoms):
-      if species[i] == element:
-        element_indices[element] = element_indices.get(element, []) + [i]
   mapping = {}
   selections = {}
-  for term in kbody_terms:
-    elements = term.split(",")
-    counter = Counter(elements)
-    # If the occurances of an element in the k-body term is bigger than that in
-    # the species, we shall discard this kbody term.
-    if any([counter[e] > len(element_indices.get(e, [])) for e in elements]):
+
+  # Determine the indices of each type of atom and store them in a dict.
+  atom_index = {}
+  for i in range(len(species)):
+    atom = species[i]
+    atom_index[atom] = atom_index.get(atom, []) + [i]
+
+  for kbody_term in kbody_terms:
+    # Extract atoms from this k-body term
+    atoms = get_atoms_from_kbody_term(kbody_term)
+    # Count the occurances of the atoms.
+    counter = Counter(atoms)
+    # If an atom appears more in the k-body term, we should discard this k-body
+    # term, eg, there should be no CCC or CCH for `CH4`.
+    if any([counter[e] > len(atom_index.get(e, [])) for e in atoms]):
       continue
-    ck2 = comb(len(elements), 2, exact=True)
-    keys = sorted(counter.keys())
-    kbodies = [[list(o) for o in combinations(element_indices[e], counter[e])]
-               for e in keys]
-    # All k-body combinations
-    kbodies = [list(chain(*o)) for o in product(*kbodies)]
-    selections[term] = kbodies
-    cnk = len(kbodies)
-    mapping[term] = np.zeros((ck2, cnk), dtype=int)
+    # ck2 is the number of bond types in this k-body term.
+    ck2 = int(comb(len(atoms), 2, exact=True))
+    # Sort the atoms
+    sorted_atoms = sorted(counter.keys())
+    # Construct the k-atoms selection candidates. For each type of atom we draw
+    # N times where N is equal to `counter[atom]`. Thus, the candidate list can
+    # be constructed:
+    # [[[1, 2], [1, 3], [1, 4], ...], [[8], [9], [10], ...]]
+    # The length of the candidates is equal to the number of atom types.
+    k_atoms_candidates = [
+      [list(o) for o in combinations(atom_index[e], counter[e])]
+      for e in sorted_atoms
+    ]
+    # Construct the k-atoms selections. First, we get the `product` (See Python
+    # official document for more info), eg [[1, 2], [8]]. Then `chain` it to get
+    # flatten lists, eg [1, 2, 8].
+    k_atoms_selections = [list(chain(*o)) for o in product(*k_atoms_candidates)]
+    selections[kbody_term] = k_atoms_selections
+    # cnk is the number of k-atoms selections.
+    cnk = len(k_atoms_selections)
+    # Construct the mapping from the interatomic distance matrix to the input
+    # matrix. This procedure can greatly increase the transformation speed.
+    # The basic idea is to fill the input feature matrix with broadcasting. The
+    # N-by-N interatomic distance matrix is flatten to 1D vector. Then we can
+    # fill the matrix like this:
+    #   feature_matrix[:, col] = flatten_dist[[1,2,8,10,9,2,1,1]]
+    mapping[kbody_term] = np.zeros((ck2, cnk), dtype=int)
     for i in range(cnk):
-      for j, (vi, vj) in enumerate(combinations(kbodies[i], 2)):
-        mapping[term][j, i] = vi * natoms + vj
+      for j, (vi, vj) in enumerate(combinations(k_atoms_selections[i], 2)):
+        mapping[kbody_term][j, i] = vi * natoms + vj
   return mapping, selections
 
 
-def _gen_sorting_indices(kbody_terms):
+def _get_conditional_sorting_indices(kbody_terms):
   """
-  Generate the soring indices.
+  Generate the indices of the columns for the conditional sorting scheme.
 
   Args:
     kbody_terms: a `List[str]` as the ordered k-body terms.
 
   Returns:
-    indices: a dict of indices for sorting along the last axis of the input
+    indices: a `dict` of indices for sorting along the last axis of the input
       features.
 
   """
   indices = {}
-  for term in kbody_terms:
-    elements = list(sorted(term.split(",")))
-    atom_pairs = list(combinations(elements, r=2))
-    n = len(atom_pairs)
-    counter = Counter(atom_pairs)
+  for kbody_term in kbody_terms:
+    # Extract atoms from this k-body term
+    atoms = get_atoms_from_kbody_term(kbody_term)
+    # All possible bonds from the given atom types
+    bonds = list(combinations(atoms, r=2))
+    n = len(bonds)
+    counter = Counter(bonds)
+    # If the bonds are unique, there is no need to sort because columns of the
+    # formed feature matrix will not be interchangable.
     if max(counter.values()) == 1:
       continue
-    indices[term] = []
-    for pair, times in counter.items():
+    # Determine the indices of duplicated bonds.
+    indices[kbody_term] = []
+    for bond, times in counter.items():
       if times > 1:
-        indices[term].append([i for i in range(n) if atom_pairs[i] == pair])
+        indices[kbody_term].append([i for i in range(n) if bonds[i] == bond])
   return indices
 
 
-def exponential(inputs, factor, order=1):
+def exponential(x, l, order=1):
   """
-  Exponentially scale the `inputs`.
+  Normalize the `inputs` with the exponential function:
+    f(r) = exp(-r/L)
 
   Args:
-    inputs: Union[float, np.ndarray] as the inputs to scale.
-    factor: a float or an array with the same shape of `inputs` as the scaling 
+    x: Union[float, np.ndarray] as the inputs to scale.
+    l: a `float` or an array with the same shape of `inputs` as the scaling
       factor(s).
     order: a `int` as the exponential order. If `order` is 0, the inputs will 
       not be scaled by `factor`.
@@ -166,16 +187,22 @@ def exponential(inputs, factor, order=1):
 
   """
   if order == 0:
-    return np.exp(-inputs)
+    return np.exp(-x)
   else:
-    return np.exp(np.negative((inputs / factor)**order))
+    return np.exp(-(x / l) ** order)
 
 
 def _bytes_feature(value):
+  """
+  Convert the `value` to Protobuf bytes.
+  """
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
 def _float_feature(value):
+  """
+  Convert the `value` to Protobuf float32.
+  """
   return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
 
 
@@ -215,7 +242,7 @@ class _Transformer:
     # Generate the mapping from the N-by-N interatomic distances matrix to the
     # [C(N,k), C(k,2)] input feature matrix and the indices selections for each
     # C(N,k) terms.
-    mapping, selections = _gen_dist2inputs_mapping(species, kbody_terms)
+    mapping, selections = _get_mapping(species, kbody_terms)
 
     if split_dims is None:
       offsets, dim, kbody_sizes = [0], 0, []
@@ -245,7 +272,7 @@ class _Transformer:
     self._split_dims = split_dims
     self._cnk = int(comb(len(species), many_body_k, exact=True))
     self._ck2 = int(comb(many_body_k, 2, exact=True))
-    self._sorting_indices = _gen_sorting_indices(kbody_terms)
+    self._sorting_indices = _get_conditional_sorting_indices(kbody_terms)
     self._lmat = _get_pyykko_bonds_matrix(species)
     self._kbody_sizes = kbody_sizes
     self._multipliers = multipliers
@@ -631,13 +658,14 @@ class MultiTransformer:
     Compute the atomic energies given predicted kbody contributions.
     
     Args:
-      species: a `List[str]` as the ordered atomic species for molecules.
-      y_kbody: a 2D array as the k-body contribs.
+      species: a `List[str]` as the ordered atomic species.
+      y_kbody: a `float32` array of shape `[num_examples, N]` as the k-body
+        contribs.
       y_atomic_1body: a `Dict[str, float]` as the one-body energy of each kind 
         of atom.
 
     Returns:
-      y_atomics: a 2D array as the atomic energies of each molecule.
+      y_atomic: a `float32` array of shape `[num_examples, num_atoms]`.
 
     """
 
@@ -645,32 +673,32 @@ class MultiTransformer:
     clf = self._get_transformer(species)
 
     # Allocate arrays
-    num_mols = y_kbody.shape[0]
+    num_examples = y_kbody.shape[0]
     num_atoms = len(species)
     split_dims = clf.split_dims
-    y_atomics = np.zeros((num_mols, num_atoms))
+    y_atomic = np.zeros((num_examples, num_atoms))
 
     # Setup the 1-body atomic energies.
     for i in range(num_atoms):
-      y_atomics[:, i] = y_atomic_1body[species[i]]
+      y_atomic[:, i] = y_atomic_1body[species[i]]
 
-    # Add the higher order (2, 3, ...) corrections to the atomic energies.
-    ick2 = 1.0 / float(clf.ck2)
-    for step in range(num_mols):
-      for i, term in enumerate(clf.kbody_terms):
-        if term not in clf.kbody_selections:
+    # Compute and add the higher order (k = 2, 3, ...) corrections.
+    for step in range(num_examples):
+      for i, kbody_term in enumerate(clf.kbody_terms):
+        if kbody_term not in clf.kbody_selections:
           continue
-        if GHOST in term:
-          n = 2
-          scale = 0.5
-        else:
-          n = int(clf.ck2)
-          scale = ick2
+        # Compute the real `k` for this k-body term by excluding ghost atoms.
+        k = len(kbody_term) - kbody_term.count(GHOST)
+        # For each k-atoms selection, its energy should contrib equally to the
+        # selected atoms.
+        coef = 1.0 / k
+        # Locate the starting index
         istart = 0 if i == 0 else int(sum(split_dims[:i]))
-        for ki, indices in enumerate(clf.kbody_selections[term]):
-          for ai in indices[:n]:
-            y_atomics[step, ai] += y_kbody[step, istart + ki] * scale
-    return y_atomics
+        # Loop through all k-atoms selections
+        for ki, indices in enumerate(clf.kbody_selections[kbody_term]):
+          for ai in indices[:k]:
+            y_atomic[step, ai] += y_kbody[step, istart + ki] * coef
+    return y_atomic
 
 
 class FixedLenMultiTransformer(MultiTransformer):
@@ -754,90 +782,72 @@ class FixedLenMultiTransformer(MultiTransformer):
       self._transformers[formula] = clf
     return clf
 
-  def _transform_and_save(self, filename, samples, one_body_weights=True,
-                          exp_rmse_fn=None, verbose=True):
+  def _transform_and_save(self, filename, examples, num_examples, loss_fn=None,
+                          verbose=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
 
     Args:
       filename: a `str` as the file to save examples.
-      samples: a `tuple` of samples, returned by `XyzFile.get_train_samples` or
-        `XyzFile.get_test_samples`.
+      examples: a iterator which shall iterate through all samples.
       verbose: boolean indicating whether.
-      exp_rmse_fn: a `Callable` for computing the exponential scaled RMSE loss.
+      loss_fn: a `Callable` for transforming the calculated raw loss.
 
     Returns:
       weights: a `float32` array as the weights for linear fit of the energies.
 
     """
 
-    with tf.python_io.TFRecordWriter(filename) as writer:
+    def _identity(v):
+      """
+      An identity function which returns the input directly.
+      """
+      return v
 
+    # Setup the loss function.
+    loss_fn = loss_fn or _identity
+
+    with tf.python_io.TFRecordWriter(filename) as writer:
       if verbose:
         print("Start mixed transforming %s ... " % filename)
 
-      array_of_species = samples[0]
-      y_true = samples[1]
-      array_of_coords = samples[2]
-      array_of_lattice = samples[4]
-      array_of_pbc = samples[5]
+      coef = np.zeros((num_examples, self.number_of_atom_types))
+      b = np.zeros((num_examples, ))
 
-      num_examples = len(array_of_species)
+      for i, atoms in enumerate(examples):
 
-      if one_body_weights:
-        combs = {}
-        coef = np.zeros((num_examples, self.number_of_atom_types + 1))
-
-      for i in range(len(array_of_species)):
-        species = array_of_species[i]
-        natoms = len(species)
-        cell = np.atleast_2d(array_of_lattice[i])
-        pbc = np.atleast_2d(array_of_pbc[i])
+        species = atoms.get_chemical_symbols()
+        cell = atoms.get_cell()
+        pbc = atoms.get_pbc()
+        y_true = atoms.get_total_energy()
         features, split_dims, _, multipliers, occurs = self.transform(
-          species,
-          array_of_coords[i, :natoms],
-          array_of_lattice=cell,
-          array_of_pbc=pbc,
+          species, atoms.get_positions(), cell, pbc,
         )
+
         x = _bytes_feature(features.tostring())
-        y = _bytes_feature(np.atleast_2d(-1.0 * y_true[i]).tostring())
+        y = _bytes_feature(np.atleast_2d(-y_true).tostring())
         z = _bytes_feature(occurs.tostring())
         w = _bytes_feature(multipliers.tostring())
-        if exp_rmse_fn is None:
-          y_weight = 1.0
-        else:
-          y_weight = exp_rmse_fn(y_true[i])
-        y_weight = _float_feature(y_weight)
-
+        y_weight = _float_feature(loss_fn(y_true))
         example = Example(
-          features=Features(feature={
-            'energy': y,
-            'features': x,
-            'occurs': z,
-            'weights': w,
-            'loss_weight': y_weight,
-          }))
+          features=Features(feature={'energy': y, 'features': x, 'occurs': z,
+                                     'weights': w, 'loss_weight': y_weight}))
         writer.write(example.SerializeToString())
+
+        counter = Counter(species)
+        for loc, atom in enumerate(self._ordered_species):
+          coef[i, loc] = counter[atom]
+        b[i] = y_true
 
         if verbose and i % 100 == 0:
           sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
-
-        if one_body_weights:
-          for specie, times in Counter(species).items():
-            coef[i, self._ordered_species.index(specie)] = float(times)
-          if natoms not in combs:
-            combs[natoms] = comb(natoms, self.many_body_k)
-          coef[i, -1] = combs[natoms]
 
       if verbose:
         print("")
         print("Transforming %s finished!" % filename)
 
-      if one_body_weights:
-        return _compute_one_body_weights(coef, y_true, self._num_ghosts > 0)
-      else:
-        return None
+      return _compute_lr_weights(coef, b)
 
   def _save_auxiliary_for_file(self, filename, initial_weights=None,
                                indices=None):
@@ -877,38 +887,33 @@ class FixedLenMultiTransformer(MultiTransformer):
     with open(cfgfile, "w+") as f:
       json.dump(aux_dict, fp=f, indent=2)
 
-  def transform_and_save(self, xyz, train_file=None, test_file=None,
-                         verbose=True, exp_rmse_fn=None):
+  def transform_and_save(self, db, train_file=None, test_file=None,
+                         verbose=True, loss_fn=None):
     """
     Transform coordinates to input features and save them to tfrecord files
     using `tf.TFRecordWriter`.
 
     Args:
-      xyz: a `XyzFile` as the parsed results from a xyz file.
+      db: a `Database` as the parsed results from a xyz file.
       train_file: a `str` as the file for saving training data or None to skip.
       test_file: a `str` as the file for saving testing data or None to skip.
       verbose: a `bool` indicating whether logging the transformation progress.
-      exp_rmse_fn: a `Callable` for computing the exponential scaled RMSE loss.
+      loss_fn: a `Callable` for computing the exponential scaled RMSE loss.
 
     """
     if test_file:
-      data = xyz.get_testing_samples()
-      params = {
-        "one_body_weights": False,
-        "verbose": verbose,
-        "exp_rmse_fn": exp_rmse_fn
-      }
-      self._transform_and_save(test_file, data, **params)
-      self._save_auxiliary_for_file(
-        test_file, indices=xyz.indices_of_testing)
+      examples = db.examples(for_training=False)
+      ids = db.ids_of_testing_examples
+      num_examples = len(ids)
+      self._transform_and_save(
+        test_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
+      self._save_auxiliary_for_file(test_file, indices=ids)
 
     if train_file:
-      data = xyz.get_training_samples()
-      params = {
-        "one_body_weights": True,
-        "verbose": verbose,
-        "exp_rmse_fn": exp_rmse_fn
-      }
-      weights = self._transform_and_save(train_file, data, **params)
+      examples = db.examples(for_training=True)
+      ids = db.ids_of_training_examples
+      num_examples = len(ids)
+      weights = self._transform_and_save(
+        train_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
       self._save_auxiliary_for_file(
-        train_file, initial_weights=weights, indices=xyz.indices_of_training)
+        train_file, initial_weights=weights, indices=ids)
