@@ -13,7 +13,7 @@ import numpy as np
 import tensorflow as tf
 from scipy.misc import comb
 import kbody_transform
-from xyz import extract_xyz
+from database import Database
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -112,9 +112,11 @@ def may_build_dataset(dataset=None, verbose=True):
 
   # Extract the xyz file and split it into two sets: a training set and a
   # testing set.
-  xyz = extract_xyz(xyzfile, num_examples=FLAGS.num_examples, verbose=verbose,
-                    num_atoms=FLAGS.num_atoms, xyz_format=FLAGS.format)
-  xyz.split(test_size=FLAGS.test_size)
+  db = Database.from_xyz(xyzfile,
+                         num_examples=FLAGS.num_examples,
+                         verbose=verbose,
+                         xyz_format=FLAGS.format)
+  db.split(test_size=FLAGS.test_size)
 
   # The maximum supported `k` is 5.
   many_body_k = min(5, FLAGS.many_body_k)
@@ -137,8 +139,8 @@ def may_build_dataset(dataset=None, verbose=True):
     order=FLAGS.order, two_body=FLAGS.two_body,
   )
   clf.transform_and_save(
-    xyz, train_file=train_file, test_file=test_file, verbose=True,
-    exp_rmse_fn=exp_rmse_fn
+    db, train_file=train_file, test_file=test_file, verbose=True,
+    loss_fn=exp_rmse_fn
   )
 
 

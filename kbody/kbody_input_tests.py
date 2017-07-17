@@ -115,7 +115,7 @@ def test_compute_loss_weight():
   clf.transform_and_save(
     xyz,
     train_file=train_file,
-    exp_rmse_fn=exp_loss_fn
+    loss_fn=exp_loss_fn
   )
   y_true = xyz.get_training_samples()[1]
 

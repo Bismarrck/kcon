@@ -225,6 +225,8 @@ class Database:
     self._random_state = SEED
     self._energy_range = None
     self._splitted = False
+    self._training_ids = None
+    self._testing_ids = None
 
   def __len__(self):
     """
@@ -277,6 +279,20 @@ class Database:
     return len(self._db)
 
   @property
+  def ids_of_training_examples(self):
+    """
+    Return the ids for all training examples.
+    """
+    return self._training_ids
+
+  @property
+  def ids_of_testing_examples(self):
+    """
+    Return the ids for all testing examples.
+    """
+    return self._testing_ids
+
+  @property
   def energy_range(self):
     """
     Return the energy range of this database.
@@ -310,37 +326,30 @@ class Database:
     """
     random_state = random_state or self._random_state
     indices = range(len(self))
-    trains, tests = train_test_split(
+    training_ids, testing_ids = train_test_split(
       indices, test_size=test_size, random_state=random_state)
-    self._db.update(trains, for_training=True)
-    self._db.update(tests, for_training=False)
+    self._db.update(training_ids, for_training=True)
+    self._db.update(testing_ids, for_training=False)
     self._random_state = random_state
     self._splitted = True
+    self._training_ids = training_ids
+    self._testing_ids = testing_ids
 
-  def training_samples(self):
+  def examples(self, for_training=True):
     """
-    Iterate through all training samples.
+    A set-like object providing a view on `ase.Atoms` of this database.
+
+    Args:
+      for_training: a `bool` indicating whether should we view on training
+        examples or not.
 
     Yields:
-      atoms: an `ase.Atoms` which represents a training sample.
+      atoms: an `ase.Atoms` object.
 
     """
     if not self._splitted:
       self.split()
-    for row in self._db.select(for_training=True):
-      yield self._get_atoms(row)
-
-  def testing_samples(self):
-    """
-    Iterate through all testing samples.
-
-    Yields:
-      atoms: an `ase.Atoms` which represents a testing sample.
-
-    """
-    if not self._splitted:
-      self.split()
-    for row in self._db.select(for_training=False):
+    for row in self._db.select(for_training=for_training):
       yield self._get_atoms(row)
 
   @classmethod
