@@ -42,7 +42,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertEqual(clf.cnk, comb(len(species), many_body_k, exact=True))
     self.assertListEqual(clf.split_dims, [4845, 1140])
     self.assertListEqual(clf.kbody_sizes, clf.split_dims)
-    self.assertAlmostEqual(clf.multipliers.sum(), float(clf.cnk), delta=0.0001)
+    self.assertAlmostEqual(clf.binary_weights.sum(), float(clf.cnk), delta=0.0001)
 
     features, _ = clf.transform(coords, [0.0])
     self.assertTupleEqual(features.shape, (1, 5985, 6))
@@ -133,7 +133,7 @@ class TransformerTest(tf.test.TestCase):
     )
 
     self.assertListEqual(clf.kbody_sizes, [0, 4, 0, 12, 0, 0, 4, 0, 0, 0])
-    self.assertAlmostEqual(clf.multipliers.sum(), 20.0, delta=0.0001)
+    self.assertAlmostEqual(clf.binary_weights.sum(), 20.0, delta=0.0001)
 
     coords = get_example(6)
     features, _ = clf.transform(coords)
