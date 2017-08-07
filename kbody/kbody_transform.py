@@ -70,6 +70,22 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
     return lmat
 
 
+def _get_kbody_terms(species, many_body_k):
+  """
+  Return the k-body terms given the chemical symbols and `many_body_k`.
+
+  Args:
+    species: a `list` of `str` as the chemical symbols.
+    many_body_k: a `int` as the maximum k-body terms that we should consider.
+
+  Returns:
+    kbody_terms: a `list` of `str` as the k-body terms.
+
+  """
+  return sorted(list(set(
+      ["".join(sorted(c)) for c in combinations(species, many_body_k)])))
+
+
 def exponential(x, l, order=1):
   """
   Normalize the `inputs` with the exponential function:
@@ -111,18 +127,19 @@ class _Transformer:
   This class is used to transform atomic coordinates to input feature matrix.
   """
 
-  def __init__(self, species, many_body_k=3, kbody_terms=None, split_dims=None,
-               order=1, periodic=False):
+  def __init__(self, species, k_max=3, kbody_terms=None, split_dims=None,
+               norm_order=1, periodic=False):
     """
     Initialization method.
 
     Args:
       species: a `List[str]` as the ordered atomic symboles.
-      many_body_k: a `int` as the maximum order for the many-body expansion.
+      k_max: a `int` as the maximum k for the many body expansion scheme.
       kbody_terms: a `List[str]` as the k-body terms.
       split_dims: a `List[int]` as the dimensions for splitting inputs. If this
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
+      norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
 
@@ -130,8 +147,8 @@ class _Transformer:
     if split_dims is not None:
       assert len(split_dims) == len(kbody_terms)
 
-    kbody_terms = kbody_terms or self._get_kbody_terms(species, many_body_k)
-    num_ghosts = self._get_num_ghosts(species, many_body_k)
+    kbody_terms = kbody_terms or _get_kbody_terms(species, k_max)
+    num_ghosts = self._get_num_ghosts(species, k_max)
     mapping, selections = self._get_mapping(species, kbody_terms)
 
     # Internal initialization.
@@ -162,7 +179,7 @@ class _Transformer:
         kbody_sizes.append(size)
 
     # Initialize internal variables.
-    self._many_body_k = many_body_k
+    self._k_max = k_max
     self._kbody_terms = kbody_terms
     self._kbody_offsets = offsets
     self._kbody_sizes = kbody_sizes
@@ -170,10 +187,10 @@ class _Transformer:
     self._mapping = mapping
     self._selections = selections
     self._split_dims = split_dims
-    self._ck2 = int(comb(many_body_k, 2, exact=True))
+    self._ck2 = int(comb(k_max, 2, exact=True))
     self._cond_sort = _get_conditional_sorting_indices(kbody_terms)
     self._normalizers = _get_pyykko_bonds_matrix(species)
-    self._order = order
+    self._norm_order = norm_order
     self._num_ghosts = num_ghosts
     self._periodic = periodic
     self._binary_weights = self._get_binary_weights()
@@ -194,11 +211,11 @@ class _Transformer:
     return self._ck2
 
   @property
-  def many_body_k(self):
+  def k_max(self):
     """
     Return the maximum order for the many-body expansion.
     """
-    return self._many_body_k
+    return self._k_max
 
   @property
   def split_dims(self):
@@ -268,22 +285,6 @@ class _Transformer:
     if num_ghosts != 0 and (num_ghosts > 2 or many_body_k - num_ghosts != 2):
       raise ValueError("The number of ghosts is wrong!")
     return num_ghosts
-
-  @staticmethod
-  def _get_kbody_terms(species, many_body_k):
-    """
-    Return the k-body terms given the chemical symbols and `many_body_k`.
-
-    Args:
-      species: a `list` of `str` as the chemical symbols.
-      many_body_k: a `int` as the maximum k-body terms that we should consider.
-
-    Returns:
-      kbody_terms: a `list` of `str` as the k-body terms.
-
-    """
-    return sorted(list(set(
-        ["".join(sorted(c)) for c in combinations(species, many_body_k)])))
 
   @staticmethod
   def _get_mapping(species, kbody_terms):
@@ -439,7 +440,7 @@ class _Transformer:
     # Normalize the interatomic distances with the exponential function so that
     # shorter bonds have larger normalized weights.
     dists = dists.flatten()
-    norm_dists = exponential(dists, self._normalizers, order=self._order)
+    norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
 
     # Assign the normalized distances to the input feature matrix.
     for i, kbody_term in enumerate(self._kbody_terms):
@@ -477,61 +478,80 @@ class MultiTransformer:
   A flexible transformer targeting on AxByCz ... molecular compositions.
   """
 
-  def __init__(self, atom_types, many_body_k=3, max_occurs=None, order=1,
-               two_body=False, periodic=False):
+  def __init__(self, atom_types, k_max=3, max_occurs=None, norm_order=1,
+               include_all_k=True, periodic=False):
     """
     Initialization method.
 
     Args:
-      atom_types: a `List[str]` as the target atomic species.  
-      many_body_k: a `int` as the many body expansion factor.
+      atom_types: a `List[str]` as the atomic species.
+      k_max: a `int` as the maximum k for the many body expansion scheme.
       max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
         If an atom is explicitly specied, it can appear infinity times.
-      two_body: a `bool` indicating whether we shall use a standalone two-body
-        term or not..
+      include_all_k: a `bool` indicating whether we shall include all k-body
+        terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
+        considered.
       periodic: a `bool` indicating whether we shall use periodic boundary 
         conditions.
 
     """
-    if two_body and many_body_k >= 3:
-      num_ghosts = many_body_k - 2
+
+    # Determine the number of ghost atoms (k_max - 2) to add.
+    if include_all_k and k_max >= 3:
+      num_ghosts = k_max - 2
       if GHOST not in atom_types:
         atom_types = list(atom_types) + [GHOST] * num_ghosts
     else:
       num_ghosts = 0
-    self._many_body_k = many_body_k
-    self._atom_types = list(set(atom_types))
+
+    # Determine the species and maximum occurs.
     species = []
     max_occurs = {} if max_occurs is None else dict(max_occurs)
     if num_ghosts > 0:
       max_occurs[GHOST] = num_ghosts
-    for specie in self._atom_types:
-      species.extend(list(repeat(specie, max_occurs.get(specie, many_body_k))))
+    for specie in atom_types:
+      species.extend(list(repeat(specie, max_occurs.get(specie, k_max))))
       if specie not in max_occurs:
         max_occurs[specie] = np.inf
-    self._kbody_terms = sorted(list(
-        set([",".join(sorted(c)) for c in combinations(species, many_body_k)])))
+
+    self._include_all_k = include_all_k
+    self._k_max = k_max
+    self._atom_types = list(set(atom_types))
+    self._kbody_terms = _get_kbody_terms(species, k_max)
     self._transformers = {}
     self._max_occurs = max_occurs
-    self._order = order
-    self._ordered_species = sorted(list(max_occurs.keys()))
-    self._nat = len(self._ordered_species)
+    self._norm_order = norm_order
+    self._species = sorted(list(max_occurs.keys()))
+    self._num_atom_types = len(self._species)
     self._num_ghosts = num_ghosts
     self._periodic = periodic
+    # The global split dims is None so that internal `_Transformer` objects will
+    # construct their own `splid_dims`.
+    self._split_dims = None
 
   @property
-  def many_body_k(self):
+  def k_max(self):
     """
     Return the many-body expansion factor.
     """
-    return self._many_body_k
+    return self._k_max
+
+  @property
+  def included_k(self):
+    """
+    Return the included k.
+    """
+    if self._include_all_k:
+      return list(range(1, self._k_max + 1))
+    else:
+      return [1, self._k_max]
 
   @property
   def ck2(self):
     """
     Return the value of C(k,2).
     """
-    return int(comb(self._many_body_k, 2, exact=True))
+    return comb(self._k_max, 2, exact=True)
 
   @property
   def kbody_terms(self):
@@ -541,25 +561,25 @@ class MultiTransformer:
     return self._kbody_terms
 
   @property
-  def ordered_species(self):
+  def species(self):
     """
     Return the ordered species of this transformer.
     """
-    return self._ordered_species
+    return self._species
 
   @property
   def number_of_atom_types(self):
     """
     Return the number of atom types in this transformer.
     """
-    return self._nat
+    return self._num_atom_types
 
   @property
-  def two_body(self):
+  def include_all_k(self):
     """
     Return True if a standalone two-body term is included.
     """
-    return self._num_ghosts > 0
+    return self._include_all_k
 
   @property
   def is_periodic(self):
@@ -577,13 +597,13 @@ class MultiTransformer:
 
   def accept_species(self, species):
     """
-    Return True if the given species can be transformed by this transformer.
+    Return True if the given species can be handled.
     
     Args:
       species: a `List[str]` as the ordered species of a molecule.
     
     Returns:
-      accepted: True if this transformer can handle this species list.
+      accepted: True if the given species can be handled by this transformer.
     
     """
     counter = Counter(species)
@@ -591,30 +611,26 @@ class MultiTransformer:
 
   def _get_transformer(self, species):
     """
-    Return the `Transformer` for the given molecular species.
+    Return the `Transformer` for the given list of species.
     
     Args:
-      species: a `List[str]` as the ordered atomic species for molecules. 
+      species: a `List[str]` as the atomic species.
 
     Returns:
       clf: a `Transformer`.
 
     """
-
-    if self._num_ghosts > 0:
-      species = list(species) + [GHOST] * self._num_ghosts
-
+    species = list(species) + [GHOST] * self._num_ghosts
     formula = get_formula(species)
-    clf = self._transformers.get(formula)
-    if not isinstance(clf, _Transformer):
-      clf = _Transformer(
-        species,
-        self.many_body_k,
-        kbody_terms=self.kbody_terms,
-        order=self._order,
-        periodic=self._periodic
-      )
-      self._transformers[formula] = clf
+    clf = self._transformers.get(
+      formula, _Transformer(species=species,
+                            k_max=self._k_max,
+                            kbody_terms=self._kbody_terms,
+                            split_dims=self._split_dims,
+                            norm_order=self._norm_order,
+                            periodic=self._periodic)
+    )
+    self._transformers[formula] = clf
     return clf
 
   def transform(self, species, array_of_coords, energies=None,
@@ -667,9 +683,9 @@ class MultiTransformer:
     )
 
     ntotal = array_of_coords.shape[0]
-    occurs = np.zeros((ntotal, len(self._ordered_species)), dtype=np.float32)
+    occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
     for specie, times in Counter(species).items():
-      loc = self._ordered_species.index(specie)
+      loc = self._species.index(specie)
       if loc < 0:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[:, loc] = float(times)
@@ -732,8 +748,8 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, periodic=False, many_body_k=3, order=1,
-               two_body=False):
+  def __init__(self, max_occurs, periodic=False, k_max=3, norm_order=1,
+               include_all_k=False):
     """
     Initialization method. 
     
@@ -742,18 +758,19 @@ class FixedLenMultiTransformer(MultiTransformer):
         atomic specie.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
-      many_body_k: a `int` as the many body expansion factor.
-      order: a `int` as the feature exponential order. 
-      two_body: a `bool` indicating whether we shall use a standalone two-body
-        term or not..
+      k_max: a `int` as the maximum k for the many body expansion scheme.
+      norm_order: a `int` as the normalization order.
+      include_all_k: a `bool` indicating whether we shall include all k-body
+        terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
+        considered.
     
     """
     super(FixedLenMultiTransformer, self).__init__(
       list(max_occurs.keys()),
-      many_body_k=many_body_k,
+      k_max=k_max,
       max_occurs=max_occurs,
-      order=order,
-      two_body=two_body,
+      norm_order=norm_order,
+      include_all_k=include_all_k,
       periodic=periodic,
     )
     self._split_dims = self._get_fixed_split_dims()
@@ -776,35 +793,6 @@ class FixedLenMultiTransformer(MultiTransformer):
       dims = [comb(self._max_occurs[e], k, True) for e, k in counter.items()]
       split_dims.append(np.prod(dims))
     return [int(x) for x in split_dims]
-
-  def _get_transformer(self, species):
-    """
-    Return the `Transformer` for the given molecular species.
-
-    Args:
-      species: a `List[str]` as the ordered atomic species for molecules. 
-
-    Returns:
-      clf: a `Transformer`.
-
-    """
-
-    if self._num_ghosts > 0:
-      species = list(species) + [GHOST] * self._num_ghosts
-
-    formula = get_formula(species)
-    clf = self._transformers.get(formula)
-    if not isinstance(clf, _Transformer):
-      clf = _Transformer(
-        species,
-        self.many_body_k,
-        self.kbody_terms,
-        split_dims=self._split_dims,
-        order=self._order,
-        periodic=self._periodic
-      )
-      self._transformers[formula] = clf
-    return clf
 
   def _transform_and_save(self, filename, examples, num_examples, loss_fn=None,
                           verbose=True):
@@ -860,7 +848,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         writer.write(example.SerializeToString())
 
         counter = Counter(species)
-        for loc, atom in enumerate(self._ordered_species):
+        for loc, atom in enumerate(self._species):
           coef[i, loc] = counter[atom]
         b[i] = y_true
 
@@ -891,20 +879,20 @@ class FixedLenMultiTransformer(MultiTransformer):
     indices = list(indices) if indices is not None else []
     weights = list(initial_weights) if initial_weights is not None else []
     max_occurs = {atom: times for atom, times in self._max_occurs.items()
-                  if times < self._many_body_k}
+                  if times < self._k_max}
 
     aux_dict = {
       "kbody_terms": self._kbody_terms,
       "split_dims": self._split_dims,
       "total_dim": self._total_dim,
       "lookup_indices": list([int(i) for i in indices]),
-      "num_atom_types": len(self._ordered_species),
-      "ordered_species": self._ordered_species,
+      "num_atom_types": len(self._species),
+      "ordered_species": self._species,
       "two_body": self._num_ghosts > 0,
       "periodic": self._periodic,
-      "many_body_k": self._many_body_k,
+      "many_body_k": self._k_max,
       "max_occurs": max_occurs,
-      "order": self._order,
+      "order": self._norm_order,
       "initial_one_body_weights": weights,
     }
 
