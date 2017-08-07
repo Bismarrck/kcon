@@ -122,7 +122,7 @@ def _float_feature(value):
   return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
 
 
-class _Transformer:
+class Transformer:
   """
   This class is used to transform atomic coordinates to input feature matrix.
   """
@@ -181,20 +181,27 @@ class _Transformer:
     # Initialize internal variables.
     self._k_max = k_max
     self._kbody_terms = kbody_terms
-    self._kbody_offsets = offsets
+    self._offsets = offsets
     self._kbody_sizes = kbody_sizes
     self._species = species
     self._mapping = mapping
     self._selections = selections
     self._split_dims = split_dims
     self._ck2 = int(comb(k_max, 2, exact=True))
-    self._cond_sort = _get_conditional_sorting_indices(kbody_terms)
+    self._cond_sort = self._get_conditional_sorting_indices(kbody_terms)
     self._normalizers = _get_pyykko_bonds_matrix(species)
     self._norm_order = norm_order
     self._num_ghosts = num_ghosts
     self._periodic = periodic
-    self._binary_weights = self._get_binary_weights()
     self._real_dim = real_dim
+    self._binary_weights = self._get_binary_weights()
+
+  @property
+  def species(self):
+    """
+    Return the species of this transformer excluding all ghosts.
+    """
+    return [symbol for symbol in self._species if symbol != GHOST]
 
   @property
   def shape(self):
@@ -393,7 +400,7 @@ class _Transformer:
     Return the binary weights.
     """
     weights = np.zeros(self._real_dim, dtype=np.float32)
-    offsets = self._kbody_offsets
+    offsets = self._offsets
     for i in range(len(self._split_dims)):
       weights[offsets[i]: offsets[i] + self._kbody_sizes[i]] = 1.0
     return weights
@@ -473,7 +480,7 @@ class _Transformer:
         # So we should sort along axis 0 here!
         z = out[self._offsets[i]: self._offsets[i + 1], ix]
         z.sort()
-        out[self._offsets[i]: self._offsets[i + 1], ix].sort()
+        out[self._offsets[i]: self._offsets[i + 1], ix] = z
 
     return out
 
@@ -628,12 +635,12 @@ class MultiTransformer:
     species = list(species) + [GHOST] * self._num_ghosts
     formula = get_formula(species)
     clf = self._transformers.get(
-      formula, _Transformer(species=species,
-                            k_max=self._k_max,
-                            kbody_terms=self._kbody_terms,
-                            split_dims=self._split_dims,
-                            norm_order=self._norm_order,
-                            periodic=self._periodic)
+      formula, Transformer(species=species,
+                           k_max=self._k_max,
+                           kbody_terms=self._kbody_terms,
+                           split_dims=self._split_dims,
+                           norm_order=self._norm_order,
+                           periodic=self._periodic)
     )
     self._transformers[formula] = clf
     return clf
@@ -663,6 +670,7 @@ class MultiTransformer:
         "This transformer does not support {}!".format(get_formula(species)))
 
     clf = self._get_transformer(species)
+    split_dims = np.asarray(clf.split_dims)
     nrows, ncols = clf.shape
     features = np.zeros((ntotal, nrows, ncols), dtype=np.float32)
     occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
