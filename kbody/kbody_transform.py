@@ -398,18 +398,23 @@ class _Transformer:
       weights[offsets[i]: offsets[i] + self._kbody_sizes[i]] = 1.0
     return weights
 
-  def transform(self, atoms):
+  def transform(self, atoms, out=None):
     """
     Transform the given `ase.Atoms` object to an input feature matrix.
 
     Args:
       atoms: an `ase.Atoms` object.
+      out: a 2D `float32` array of None as the location into which the result is
+        stored. If not provided, a new array will be allocated.
 
     Returns:
-      features: a 2D `float32` array.
+      out: a `float32` array of shape `self.shape` as the input feature matrix.
 
     """
-    features = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
+    if out is None:
+      out = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
+    elif out.shape != self.shape:
+      raise ValueError("The shape should be {}".format(self.shape))
 
     if self._num_ghosts > 0:
       # Append `num_ghosts` rows of zeros to the positions. We can not directly
@@ -455,7 +460,7 @@ class _Transformer:
       istep = min(self._offsets[i + 1] - istart, index_matrix.shape[1])
       istop = istart + istep
       for k in range(self._ck2):
-        features[istart: istop, k] = norm_dists[index_matrix[k]]
+        out[istart: istop, k] = norm_dists[index_matrix[k]]
 
     # Conditional sorting.
     for i, kbody_term in enumerate(self._kbody_terms):
@@ -466,11 +471,11 @@ class _Transformer:
         # `samples` is a 2D array, the Python advanced slicing will make the
         # returned `z` a copy but not a view. The shape of `z` is transposed.
         # So we should sort along axis 0 here!
-        z = features[self._offsets[i]: self._offsets[i + 1], ix]
+        z = out[self._offsets[i]: self._offsets[i + 1], ix]
         z.sort()
-        features[self._offsets[i]: self._offsets[i + 1], ix].sort()
+        out[self._offsets[i]: self._offsets[i + 1], ix].sort()
 
-    return features
+    return out
 
 
 class MultiTransformer:
@@ -633,26 +638,54 @@ class MultiTransformer:
     self._transformers[formula] = clf
     return clf
 
-  def transform(self, species, array_of_coords, energies=None,
-                array_of_lattice=None, array_of_pbc=None):
+  def transform_trajectory(self, trajectory):
     """
-    Transform the atomic coordinates to input features. All input structures
-    must have the same atomic species.
+    Transform the given trajectory (a list of `ase.Atoms` with the same chemical
+    symbols or an `ase.io.TrajectoryReader`) to input features.
 
     Args:
-      species: a `List[str]` as the ordered atomic species for all `coords`.
-      array_of_coords: a `float32` array of shape `[-1, num_atoms, 3]` as the
-        atomic coordinates.
-      energies: a `float64` array of shape `[-1, ]` as the true energies.
-      array_of_lattice: a `float32` array of shape `[-1, 9]` as the periodic
-        cell parameters for each structure.
-      array_of_pbc: a `bool` array of shape `[-1, 3]` as the periodic conditions
-        along XYZ directions.
+      trajectory: a `list` of `ase.Atoms` or a `ase.io.TrajectoryReader`. All
+        objects should have the same chemical symbols.
 
     Returns:
-      features: a 4D array as the input features.
+      features: a `float32` 4D array as the input feature matrix.
       split_dims: a `List[int]` for splitting the input features along axis 2.
-      targets: a 1D array as the training targets given `energis` or None.
+      weights: a 1D array as the binary weights of each row of the features.
+      occurs: a 2D array as the occurances of the species.
+
+    """
+    ntotal = len(trajectory)
+    assert ntotal > 0
+
+    species = trajectory[0].get_chemical_symbols()
+    if not self.accept_species(species):
+      raise ValueError(
+        "This transformer does not support {}!".format(get_formula(species)))
+
+    clf = self._get_transformer(species)
+    nrows, ncols = clf.shape
+    features = np.zeros((ntotal, nrows, ncols), dtype=np.float32)
+    occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
+    for specie, times in Counter(species).items():
+      loc = self._species.index(specie)
+      if loc < 0:
+        raise ValueError("The loc of %s is -1!" % specie)
+      occurs[:, loc] = float(times)
+    for i, atoms in enumerate(trajectory):
+      clf.transform(atoms, features[i])
+    weights = np.tile(clf.binary_weights, (ntotal, 1))
+    return features, split_dims, weights, occurs
+
+  def transform(self, atoms):
+    """
+    Transform a single `ase.Atoms` object to input features.
+
+    Args:
+      atoms: an `ase.Atoms` object as the target to transform.
+
+    Returns:
+      features: a `float32` 4D array as the input feature matrix.
+      split_dims: a `List[int]` for splitting the input features along axis 2.
       weights: a 1D array as the binary weights of each row of the features. 
       occurs: a 2D array as the occurances of the species.
     
@@ -660,38 +693,22 @@ class MultiTransformer:
       ValueError: if the `species` is not supported by this transformer.
 
     """
-
+    species = atoms.get_chemical_symbols()
     if not self.accept_species(species):
       raise ValueError(
         "This transformer does not support {}!".format(get_formula(species)))
 
-    array_of_coords = np.asarray(array_of_coords)
-    if len(array_of_coords.shape) == 2:
-      if array_of_coords.shape[0] != len(species):
-        raise ValueError("The shapes of coords and species are not matched!")
-      array_of_coords = array_of_coords.reshape((1, len(species), 3))
-    elif array_of_coords.shape[1] != len(species):
-      raise ValueError("The shapes of coords and species are not matched!")
-
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
-    features, targets = clf.transform(
-      array_of_coords,
-      energies,
-      array_of_lattice=array_of_lattice,
-      array_of_pbc=array_of_pbc
-    )
-
-    ntotal = array_of_coords.shape[0]
-    occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
+    features = clf.transform(atoms)
+    occurs = np.zeros((1, len(self._species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._species.index(specie)
       if loc < 0:
         raise ValueError("The loc of %s is -1!" % specie)
-      occurs[:, loc] = float(times)
-
-    weights = np.tile(clf.binary_weights, (ntotal, 1))
-    return features, split_dims, targets, weights, occurs
+      occurs[0, loc] = float(times)
+    weights = np.array(clf.binary_weights)
+    return features, split_dims, weights, occurs
 
   def compute_atomic_energies(self, species, y_kbody, y_atomic_1body):
     """
@@ -766,7 +783,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     
     """
     super(FixedLenMultiTransformer, self).__init__(
-      list(max_occurs.keys()),
+      atom_types=list(max_occurs.keys()),
       k_max=k_max,
       max_occurs=max_occurs,
       norm_order=norm_order,
@@ -777,19 +794,20 @@ class FixedLenMultiTransformer(MultiTransformer):
     self._total_dim = sum(self._split_dims)
 
   @property
-  def total_dim(self):
+  def shape(self):
     """
-    Return the total dimension of the transformed features.
+    Return the shape of input feature matrix of this transformer.
     """
-    return self._total_dim
+    return self._total_dim, comb(self._k_max, 2, exact=True)
 
   def _get_fixed_split_dims(self):
     """
-    The `split_dims` for all `Transformer`s of this is fixed. 
+    The `split_dims` of all `_Transformer` should be the same.
     """
     split_dims = []
-    for term in self._kbody_terms:
-      counter = Counter(term.split(","))
+    for kbody_term in self._kbody_terms:
+      atoms = get_atoms_from_kbody_term(kbody_term)
+      counter = Counter(atoms)
       dims = [comb(self._max_occurs[e], k, True) for e, k in counter.items()]
       split_dims.append(np.prod(dims))
     return [int(x) for x in split_dims]
@@ -830,17 +848,13 @@ class FixedLenMultiTransformer(MultiTransformer):
       for i, atoms in enumerate(examples):
 
         species = atoms.get_chemical_symbols()
-        cell = atoms.get_cell()
-        pbc = atoms.get_pbc()
         y_true = atoms.get_total_energy()
-        features, split_dims, _, multipliers, occurs = self.transform(
-          species, atoms.get_positions(), cell, pbc,
-        )
+        features, split_dims, binary_weights, occurs = self.transform(atoms)
 
         x = _bytes_feature(features.tostring())
         y = _bytes_feature(np.atleast_2d(-y_true).tostring())
         z = _bytes_feature(occurs.tostring())
-        w = _bytes_feature(multipliers.tostring())
+        w = _bytes_feature(binary_weights.tostring())
         y_weight = _float_feature(loss_fn(y_true))
         example = Example(
           features=Features(feature={'energy': y, 'features': x, 'occurs': z,
@@ -861,52 +875,60 @@ class FixedLenMultiTransformer(MultiTransformer):
 
       return _compute_lr_weights(coef, b)
 
-  def _save_auxiliary_for_file(self, filename, initial_weights=None,
-                               indices=None):
+  def _save_auxiliary_for_file(self, filename, initial_1body_weights=None,
+                               lookup_indices=None):
     """
     Save auxiliary data for the given dataset.
 
     Args:
       filename: a `str` as the tfrecords file.
-      initial_weights: a 1D array of shape `[Nat, ]` as the initial weights for
-        the one-body convolution kernel.
-      indices: a `List[int]` as the indices of each given example.
+      initial_1body_weights: a 1D array of shape `[num_atom_types, ]` as the
+        initial weights for the one-body convolution kernels.
+      lookup_indices: a `List[int]` as the indices of each given example.
 
     """
     name = splitext(basename(filename))[0]
-    workdir = dirname(filename)
-    cfgfile = join(workdir, "{}.json".format(name))
-    indices = list(indices) if indices is not None else []
-    weights = list(initial_weights) if initial_weights is not None else []
+    filename = join(dirname(filename), "{}.json".format(name))
+
+    if lookup_indices is not None:
+      lookup_indices = list(lookup_indices)
+    else:
+      lookup_indices = []
+
+    if initial_1body_weights is not None:
+      initial_1body_weights = list(initial_1body_weights)
+    else:
+      initial_1body_weights = []
+
     max_occurs = {atom: times for atom, times in self._max_occurs.items()
                   if times < self._k_max}
 
     aux_dict = {
       "kbody_terms": self._kbody_terms,
       "split_dims": self._split_dims,
-      "total_dim": self._total_dim,
-      "lookup_indices": list([int(i) for i in indices]),
+      "shape": self.shape,
+      "lookup_indices": list([int(i) for i in lookup_indices]),
       "num_atom_types": len(self._species),
-      "ordered_species": self._species,
-      "two_body": self._num_ghosts > 0,
+      "species": self._species,
+      "include_all_k": self._include_all_k,
       "periodic": self._periodic,
-      "many_body_k": self._k_max,
+      "k_max": self._k_max,
       "max_occurs": max_occurs,
-      "order": self._norm_order,
-      "initial_one_body_weights": weights,
+      "norm_order": self._norm_order,
+      "initial_one_body_weights": initial_1body_weights,
     }
 
-    with open(cfgfile, "w+") as f:
+    with open(filename, "w+") as f:
       json.dump(aux_dict, fp=f, indent=2)
 
-  def transform_and_save(self, db, train_file=None, test_file=None,
+  def transform_and_save(self, database, train_file=None, test_file=None,
                          verbose=True, loss_fn=None):
     """
     Transform coordinates to input features and save them to tfrecord files
     using `tf.TFRecordWriter`.
 
     Args:
-      db: a `Database` as the parsed results from a xyz file.
+      database: a `Database` as the parsed results from a xyz file.
       train_file: a `str` as the file for saving training data or None to skip.
       test_file: a `str` as the file for saving testing data or None to skip.
       verbose: a `bool` indicating whether logging the transformation progress.
@@ -914,18 +936,18 @@ class FixedLenMultiTransformer(MultiTransformer):
 
     """
     if test_file:
-      examples = db.examples(for_training=False)
-      ids = db.ids_of_testing_examples
+      examples = database.examples(for_training=False)
+      ids = database.ids_of_testing_examples
       num_examples = len(ids)
       self._transform_and_save(
         test_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
-      self._save_auxiliary_for_file(test_file, indices=ids)
+      self._save_auxiliary_for_file(test_file, lookup_indices=ids)
 
     if train_file:
-      examples = db.examples(for_training=True)
-      ids = db.ids_of_training_examples
+      examples = database.examples(for_training=True)
+      ids = database.ids_of_training_examples
       num_examples = len(ids)
       weights = self._transform_and_save(
         train_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
       self._save_auxiliary_for_file(
-        train_file, initial_weights=weights, indices=ids)
+        train_file, initial_1body_weights=weights, lookup_indices=ids)
