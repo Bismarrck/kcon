@@ -6,13 +6,12 @@ This script is used to building training and validation datasets.
 from __future__ import print_function, absolute_import
 
 import json
+import numpy as np
+import tensorflow as tf
+import transformer
 from functools import partial
 from os import makedirs
 from os.path import join, isfile, isdir
-import numpy as np
-import tensorflow as tf
-from scipy.misc import comb
-import kbody_transform
 from database import Database
 
 __author__ = 'Xin Chen'
@@ -28,16 +27,15 @@ tf.app.flags.DEFINE_string('format', 'xyz',
                            """The format of the xyz file.""")
 tf.app.flags.DEFINE_integer('num_examples', 5000,
                             """The total number of examples to use.""")
-tf.app.flags.DEFINE_integer('num_atoms', 17,
-                            """The number of atoms in each molecule.""")
-tf.app.flags.DEFINE_integer('many_body_k', 3,
-                            """The many-body-expansion order.""")
-tf.app.flags.DEFINE_boolean('two_body', False,
+tf.app.flags.DEFINE_integer('k_max', 3,
+                            """The maximum k under the many-body-expansion 
+                            scheme.""")
+tf.app.flags.DEFINE_boolean('include_all_k', False,
                             """Include a standalone two-body term or not.""")
 tf.app.flags.DEFINE_float('test_size', 0.2,
                           """The proportion of the dataset to include in the 
                           test split""")
-tf.app.flags.DEFINE_integer("order", 1,
+tf.app.flags.DEFINE_integer("norm_order", 1,
                             """The exponential order for normalizing 
                             distances.""")
 tf.app.flags.DEFINE_boolean('run_input_test', False,
@@ -106,23 +104,23 @@ def may_build_dataset(dataset=None, verbose=True):
   test_file, _ = get_filenames(train=False, dataset=dataset)
 
   # Check if the xyz file is accessible.
-  xyzfile = join("..", "datasets", "%s.xyz" % FLAGS.dataset)
+  xyzfile = join("..", "datasets", "{}.xyz".format(FLAGS.dataset))
   if not isfile(xyzfile):
     raise IOError("The dataset file %s can not be accessed!" % xyzfile)
 
   # Extract the xyz file and split it into two sets: a training set and a
   # testing set.
-  db = Database.from_xyz(xyzfile,
-                         num_examples=FLAGS.num_examples,
-                         verbose=verbose,
-                         xyz_format=FLAGS.format)
-  db.split(test_size=FLAGS.test_size)
+  database = Database.from_xyz(xyzfile,
+                               num_examples=FLAGS.num_examples,
+                               verbose=verbose,
+                               xyz_format=FLAGS.format)
+  database.split(test_size=FLAGS.test_size)
 
   # The maximum supported `k` is 5.
-  many_body_k = min(5, FLAGS.many_body_k)
+  k_max = min(5, FLAGS.k_max)
 
   # Determine the maximum occurances of each atom type.
-  max_occurs = xyz.get_max_occurs()
+  max_occurs = database.max_occurs
 
   # Setup the exponential-scaled RMSE.
   if FLAGS.weighted_loss is None:
@@ -134,12 +132,18 @@ def may_build_dataset(dataset=None, verbose=True):
 
   # Use a `FixedLenMultiTransformer` to generate features because it will be
   # much easier if the all input samples are fixed-length.
-  clf = kbody_transform.FixedLenMultiTransformer(
-    max_occurs, many_body_k=many_body_k, periodic=FLAGS.periodic,
-    order=FLAGS.order, two_body=FLAGS.two_body,
+  clf = transformer.FixedLenMultiTransformer(
+    max_occurs=max_occurs,
+    k_max=k_max,
+    periodic=FLAGS.periodic,
+    norm_order=FLAGS.norm_order,
+    include_all_k=FLAGS.include_all_k,
   )
   clf.transform_and_save(
-    db, train_file=train_file, test_file=test_file, verbose=True,
+    database,
+    train_file=train_file,
+    test_file=test_file,
+    verbose=True,
     loss_fn=exp_rmse_fn
   )
 
@@ -226,8 +230,9 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
   filenames = [filename]
 
   configs = inputs_configs(train=train, dataset=dataset)
-  cnk = configs["total_dim"]
-  ck2 = comb(configs["many_body_k"], 2, exact=True)
+  shape = configs["shape"]
+  cnk = shape[0]
+  ck2 = shape[1]
   num_atom_types = configs["num_atom_types"]
 
   with tf.name_scope('input'):

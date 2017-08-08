@@ -11,9 +11,10 @@ import numpy as np
 from ase.atoms import Atom, Atoms
 from ase.db import connect
 from ase.calculators.calculator import Calculator
-from os.path import splitext
+from os.path import splitext, isfile
+from os import remove
 from constants import hartree_to_ev, SEED
-from collections import namedtuple
+from collections import namedtuple, Counter
 from sklearn.model_selection import train_test_split
 
 __author__ = 'Xin Chen'
@@ -122,7 +123,7 @@ class ProvidedCalculator(Calculator):
 
 
 def xyz_to_db(xyzfile, num_examples, xyz_format='xyz', verbose=True,
-              unit_to_ev=None):
+              unit_to_ev=None, append=False):
   """
   Convert the xyz file to an `ase.db.core.Database`.
 
@@ -133,6 +134,8 @@ def xyz_to_db(xyzfile, num_examples, xyz_format='xyz', verbose=True,
     verbose: a `bool` indicating whether we should log the parsing progress.
     unit_to_ev: a `float` as the unit for converting energies to eV. Defaults
       to None so that default units will be used.
+    append: a `bool`. If False, a new database file will be created. Otherwise,
+      the new data will be written to the previous database if existed.
 
   Returns:
     db: an `ase.db.core.Database`.
@@ -141,7 +144,10 @@ def xyz_to_db(xyzfile, num_examples, xyz_format='xyz', verbose=True,
   formatter = _get_regex_patt_and_unit(xyz_format)
   assert isinstance(formatter, XyzFormat)
 
-  name = splitext(xyzfile)[0] + ".db"
+  database = splitext(xyzfile)[0] + ".db"
+  if not append and isfile(database):
+    remove(database)
+
   unit = unit_to_ev or formatter.default_unit
   parse_forces = formatter.parse_forces
   count = 0
@@ -150,7 +156,7 @@ def xyz_to_db(xyzfile, num_examples, xyz_format='xyz', verbose=True,
   stage = 0
   atoms = None
 
-  db = connect(name=name)
+  db = connect(name=database)
   tic = time.time()
   if verbose:
     sys.stdout.write("Extract cartesian coordinates ...\n")
@@ -213,20 +219,22 @@ class Database:
   A manager class for manipulating the `ase.db.core.Database`.
   """
 
-  def __init__(self, db):
+  def __init__(self, db, random_seed=None):
     """
     Initialization method.
 
     Args:
-      db: a `ase.db.core.Database`
+      db: a `ase.db.core.Database` object.
+      random_seed: an `int` as the random seed or None to use the default seed.
 
     """
     self._db = db
-    self._random_state = SEED
+    self._random_state = random_seed or SEED
     self._energy_range = None
     self._splitted = False
-    self._training_ids = None
-    self._testing_ids = None
+    self._ids_of_training_examples = None
+    self._ids_of_testing_examples = None
+    self._max_occurs = None
 
   def __len__(self):
     """
@@ -234,26 +242,28 @@ class Database:
     """
     return len(self._db)
 
-  def __getitem__(self, ind):
+  def __getitem__(self, index):
     """
     Get one or more structures.
 
     Args:
-      ind: an `int` or a list of `int` as the zero-based id(s) to select.
+      index: an `int` or a list of `int` as the zero-based id(s) to select.
 
     Returns:
       sel: an `ase.Atoms` or a list of `ase.Atoms`.
 
     """
-    if isinstance(ind, int):
-      sel = self._db.get_atoms('id={}'.format(ind + 1))
-    elif isinstance(ind, (list, tuple, np.ndarray)):
-      self._db.update(list(ind), selected=True)
-      sel = [self._get_atoms(row) for row in self._db.select(selected=True)]
-      self._db.update(list(ind), selected=False)
+    if isinstance(index, int):
+      if index < 1:
+        raise ValueError("The minimum id is 1 but not 0!")
+      obj = self._db.get_atoms('id={}'.format(index))
+    elif isinstance(index, (list, tuple, np.ndarray)):
+      self._db.update(list(index), selected=True)
+      obj = [self._get_atoms(row) for row in self._db.select(selected=True)]
+      self._db.update(list(index), selected=False)
     else:
-      raise ValueError('')
-    return sel
+      raise ValueError('The index should be an int or a list of ints!')
+    return obj
 
   @staticmethod
   def _get_atoms(row):
@@ -283,33 +293,51 @@ class Database:
     """
     Return the ids for all training examples.
     """
-    return self._training_ids
+    if not self._ids_of_training_examples:
+      self.split()
+    return self._ids_of_training_examples
 
   @property
   def ids_of_testing_examples(self):
     """
     Return the ids for all testing examples.
     """
-    return self._testing_ids
+    if not self._ids_of_training_examples:
+      self.split()
+    return self._ids_of_testing_examples
 
   @property
   def energy_range(self):
     """
     Return the energy range of this database.
     """
-    if self._energy_range is None:
-      self._get_energy_range()
+    if not self._energy_range:
+      self._go_through()
     return self._energy_range
 
-  def _get_energy_range(self):
+  @property
+  def max_occurs(self):
     """
-    Determine the energy range.
+    Return the maximum occur of each type of atom.
+    """
+    if not self._max_occurs:
+      self._go_through()
+    return self._max_occurs
+
+  def _go_through(self):
+    """
+    Go through all database records to determine the energy range and max
+    occurs.
     """
     y_min = np.inf
     y_max = -np.inf
-    for row in self._db.select(list(range(len(self)))):
+    max_occurs = {}
+    for row in self._db.select('id<={}'.format(len(self))):
       y_min = min(row.energy, y_min)
       y_max = max(row.energy, y_max)
+      for atom, n in Counter(row.symbols).items():
+        max_occurs[atom] = max(max_occurs.get(atom, 0), n)
+    self._max_occurs = max_occurs
     self._energy_range = (y_min, y_max)
 
   def split(self, test_size=0.2, random_state=None):
@@ -325,15 +353,18 @@ class Database:
 
     """
     random_state = random_state or self._random_state
-    indices = range(len(self))
-    training_ids, testing_ids = train_test_split(
-      indices, test_size=test_size, random_state=random_state)
-    self._db.update(training_ids, for_training=True)
-    self._db.update(testing_ids, for_training=False)
+    ids_for_training, ids_for_testing = train_test_split(
+      # Note: `id` starts from 1 not 0!
+      list(range(1, len(self) + 1)),
+      test_size=test_size,
+      random_state=random_state
+    )
+    self._db.update(ids_for_training, for_training=True)
+    self._db.update(ids_for_testing, for_training=False)
     self._random_state = random_state
     self._splitted = True
-    self._training_ids = training_ids
-    self._testing_ids = testing_ids
+    self._ids_of_training_examples = ids_for_training
+    self._ids_of_testing_examples = ids_for_testing
 
   def examples(self, for_training=True):
     """
@@ -354,7 +385,7 @@ class Database:
 
   @classmethod
   def from_xyz(cls, xyzfile, num_examples, xyz_format='xyz', verbose=True,
-               unit_to_ev=None):
+               unit_to_ev=None, append=False):
     """
     Initialize a `Database` from a xyz file.
 
@@ -365,6 +396,9 @@ class Database:
       verbose: a `bool` indicating whether we should log the parsing progress.
       unit_to_ev: a `float` as the unit for converting energies to eV. Defaults
         to None so that default units will be used.
+      append: a `bool`. If False, a new database file will be created.
+        Otherwise, the new data will be written to the previous database if
+        existed.
 
     Returns:
       db: a `Database`.
@@ -374,10 +408,11 @@ class Database:
                          num_examples=num_examples,
                          xyz_format=xyz_format,
                          verbose=verbose,
-                         unit_to_ev=unit_to_ev))
+                         unit_to_ev=unit_to_ev,
+                         append=append))
 
   @classmethod
-  def from_file(cls, filename):
+  def from_db(cls, filename):
     """
     Initialize a `Database` from a db.
 
