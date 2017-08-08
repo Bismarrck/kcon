@@ -34,19 +34,38 @@ def get_formula(species):
   return "".join(species)
 
 
-def _compute_lr_weights(coef, y):
+def _compute_lr_weights(coef, y, num_real_atom_types):
   """
   Solve the linear equation system of Ax = b.
   
   Args:
     coef: a `float` array of shape `[num_examples, num_atom_types]`.
     y: a `float` array of shape `[num_examples, ]`.
+    num_real_atom_types: an `int` as the number of types of atoms excluding the
+      ghost atoms.
 
   Returns:
     x: a `float` array of shape `[num_atom_types, ]` as the solution.
 
   """
-  return np.negative(np.dot(np.linalg.pinv(coef), y))
+  rank = np.linalg.matrix_rank(coef)
+  diff = num_real_atom_types - rank
+
+  # The coef matrix is full rank. So the linear equations are fully solvable.
+  if diff == 0:
+    return np.negative(np.dot(np.linalg.pinv(coef), y))
+
+  # The rank is 1 indicating all structures have the same stoichiometry. So all
+  # types of atoms can be treated equally.
+  elif rank == 1:
+    x = np.zeros_like(coef[0])
+    x[:num_real_atom_types] = np.negative(np.mean(y / coef.sum(axis=1)))
+    return x
+
+  else:
+    raise ValueError(
+      "Coefficients matrix rank {} of {} is not supported!".format(
+        rank, num_real_atom_types))
 
 
 def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
@@ -848,7 +867,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 
     with tf.python_io.TFRecordWriter(filename) as writer:
       if verbose:
-        print("Start mixed transforming %s ... " % filename)
+        print("Start transforming {} ... ".format(filename))
 
       coef = np.zeros((num_examples, self.number_of_atom_types))
       b = np.zeros((num_examples, ))
@@ -875,13 +894,14 @@ class FixedLenMultiTransformer(MultiTransformer):
         b[i] = y_true
 
         if verbose and i % 100 == 0:
-          sys.stdout.write("\rProgress: %7d  /  %7d" % (i, num_examples))
+          sys.stdout.write("\rProgress: {:7d} / {:7d}".format(i, num_examples))
 
       if verbose:
         print("")
-        print("Transforming %s finished!" % filename)
+        print("Transforming {} finished!".format(filename))
 
-      return _compute_lr_weights(coef, b)
+      num_real_atom_types = self._num_atom_types - self._num_ghosts
+      return _compute_lr_weights(coef, b, num_real_atom_types)
 
   def _save_auxiliary_for_file(self, filename, initial_1body_weights=None,
                                lookup_indices=None):
