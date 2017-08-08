@@ -81,13 +81,13 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
 
   # Build the convolution neural network for this k-body atomic interaction.
   with arg_scope([conv2d],
-                 kernel_size=kernel_size,
                  weights_initializer=weights_initializer,
                  normalizer_params=batch_norm_params,
                  variables_collections=[MODEL_VARIABLES]):
     with arg_scope([lrelu], alpha=alpha):
       for i, num_kernels in enumerate(num_kernels):
         inputs = conv2d(inputs,
+                        kernel_size=kernel_size,
                         num_outputs=num_kernels,
                         activation_fn=activation_fn,
                         scope="Hidden{:d}".format(i + 1),
@@ -95,7 +95,10 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
         if verbose:
           print_activations(inputs)
 
-    inputs = conv2d(inputs, num_outputs=1, activation_fn=None,
+    inputs = conv2d(inputs,
+                    kernel_size=kernel_size,
+                    num_outputs=1,
+                    activation_fn=None,
                     biases_initializer=None, scope="k-Body")
     if verbose:
       print_activations(inputs)
