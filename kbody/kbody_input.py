@@ -30,8 +30,8 @@ tf.app.flags.DEFINE_integer('num_examples', 5000,
 tf.app.flags.DEFINE_integer('k_max', 3,
                             """The maximum k under the many-body-expansion 
                             scheme.""")
-tf.app.flags.DEFINE_boolean('include_all_k', False,
-                            """Include a standalone two-body term or not.""")
+tf.app.flags.DEFINE_boolean('include_all_k', True,
+                            """Include all k-body terms from k = 1 to k_max.""")
 tf.app.flags.DEFINE_float('test_size', 0.2,
                           """The proportion of the dataset to include in the 
                           test split""")

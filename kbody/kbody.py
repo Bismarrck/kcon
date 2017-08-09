@@ -9,7 +9,7 @@ import tensorflow as tf
 
 import kbody_input
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from kbody_inference import inference
+from inference import inference
 from utils import lrelu
 
 __author__ = 'Xin Chen'
@@ -157,7 +157,7 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
 
   y_total, _ = inference(inputs, occurs, weights, split_dims,
                          num_atom_types=num_atom_types, kbody_terms=kbody_terms,
-                         is_training=is_training, max_k=FLAGS.many_body_k,
+                         is_training=is_training, max_k=FLAGS.k_max,
                          num_kernels=num_kernels, activation_fn=activation_fn,
                          alpha=alpha, one_body_weights=one_body_weights,
                          verbose=verbose, trainable_one_body=trainable)
