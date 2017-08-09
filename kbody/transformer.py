@@ -856,11 +856,11 @@ class FixedLenMultiTransformer(MultiTransformer):
 
     """
 
-    def _identity(v):
+    def _identity(_):
       """
       An identity function which returns the input directly.
       """
-      return v
+      return 1.0
 
     # Setup the loss function.
     loss_fn = loss_fn or _identity
