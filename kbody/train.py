@@ -12,7 +12,6 @@ from kbody import sum_kbody_cnn_from_dataset as inference
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
-from tensorflow.python import debug as tf_debug
 from utils import get_xargs, set_logging_configs
 
 __author__ = 'Xin Chen'
@@ -183,15 +182,6 @@ def train_model():
     scaffold = tf.train.Scaffold(
       saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
 
-    with tf.Session() as sess:
-
-      tf.global_variables_initializer().run()
-
-      # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-      # sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
-
-      sess.run(train_op)
-
     # noinspection PyMissingOrEmptyDocstring
     class _TimelineHook(tf.train.SessionRunHook):
       """ A hook to output tracing results for further performance analysis. """
@@ -217,29 +207,29 @@ def train_model():
           with open(self.get_ctf(), "w+") as f:
             f.write(ctf)
 
-  #   with tf.train.MonitoredTrainingSession(
-  #       checkpoint_dir=FLAGS.train_dir,
-  #       save_summaries_steps=FLAGS.save_frequency,
-  #       hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
-  #              tf.train.NanTensorHook(loss),
-  #              _RunHook(),
-  #              _TimelineHook()],
-  #       scaffold=scaffold,
-  #       config=tf.ConfigProto(
-  #         log_device_placement=FLAGS.log_device_placement)) as mon_sess:
-  #
-  #     while not mon_sess.should_stop():
-  #       if FLAGS.timeline:
-  #         mon_sess.run(
-  #           train_op,
-  #           options=run_options,
-  #           run_metadata=run_meta
-  #         )
-  #       else:
-  #         mon_sess.run(train_op)
-  #
-  # # Do not forget to export the final model
-  # save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
+    with tf.train.MonitoredTrainingSession(
+        checkpoint_dir=FLAGS.train_dir,
+        save_summaries_steps=FLAGS.save_frequency,
+        hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
+               tf.train.NanTensorHook(loss),
+               _RunHook(),
+               _TimelineHook()],
+        scaffold=scaffold,
+        config=tf.ConfigProto(
+          log_device_placement=FLAGS.log_device_placement)) as mon_sess:
+
+      while not mon_sess.should_stop():
+        if FLAGS.timeline:
+          mon_sess.run(
+            train_op,
+            options=run_options,
+            run_metadata=run_meta
+          )
+        else:
+          mon_sess.run(train_op)
+
+  # Do not forget to export the final model
+  save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
