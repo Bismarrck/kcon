@@ -10,7 +10,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
-from kbody_transform import MultiTransformer
+from transformer import MultiTransformer
 from constants import GHOST
 from save_model import get_tensors_to_restore
 
@@ -61,16 +61,25 @@ class CNNPredictor:
     self._sess = tf.Session(graph=graph)
     self._initialize_tensors()
     self._transformer = restore_transformer(self._graph, self._sess)
+    assert isinstance(self._transformer, MultiTransformer)
+
     self._y_atomic_1body = self._get_y_atomic_1body(
-      self._transformer.ordered_species
+      self._transformer.species
     )
 
   @property
-  def many_body_k(self):
+  def k_max(self):
     """
     Return the many-body expansion factor for this model.
     """
-    return self._transformer.many_body_k
+    return self._transformer.k_max
+
+  @property
+  def included_k(self):
+    """
+    Return the included k under the many body expansion scheme.
+    """
+    return self._transformer.included_k
 
   @property
   def is_periodic(self):
@@ -116,7 +125,7 @@ class CNNPredictor:
     """
     Return the string representation of this predictor.
     """
-    species = list(self._transformer.ordered_species)
+    species = list(self._transformer.species)
     if GHOST in species:
       species.remove(GHOST)
     if not self.is_periodic:
