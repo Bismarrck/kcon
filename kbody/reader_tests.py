@@ -14,9 +14,9 @@ from os.path import join, isfile, dirname
 from os import remove
 from functools import partial
 from sklearn.metrics import pairwise_distances
-from kbody_input import inputs, exp_rmse_loss_fn
+from reader import inputs, exp_rmse_loss_fn
+from reader import FLAGS
 from database import Database
-from kbody_input import FLAGS
 from constants import hartree_to_ev, au_to_angstrom
 from transformer import FixedLenMultiTransformer
 

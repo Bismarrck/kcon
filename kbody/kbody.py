@@ -6,8 +6,8 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import tensorflow as tf
+import reader
 
-import kbody_input
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from inference import inference
 from utils import lrelu
@@ -90,7 +90,7 @@ def get_batch(train=True, shuffle=True, dataset=None):
     energies: the dedired energies. 2D tensor of shape [batch_size, 1].
 
   """
-  return kbody_input.inputs(
+  return reader.inputs(
     train=train,
     batch_size=FLAGS.batch_size,
     shuffle=shuffle,
@@ -111,7 +111,7 @@ def get_batch_configs(train=True, dataset=None):
     configs: a `dict` as the configs for the dataset.
 
   """
-  return kbody_input.inputs_configs(train=train, dataset=dataset)
+  return reader.inputs_configs(train=train, dataset=dataset)
 
 
 def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
