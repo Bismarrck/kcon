@@ -5,3 +5,6 @@
 *.7z
 *.rar
 
+# Ignore the generated database files
+*.db
+
