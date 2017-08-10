@@ -92,7 +92,6 @@ def _inference(dataset, conv_sizes):
     split_dims = configs["split_dims"]
     num_atom_types = configs["num_atom_types"]
     kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
-    major_dim = sum(split_dims)
     num_kernels = [int(units) for units in conv_sizes.split(",")]
 
     with tf.name_scope("transformer"):
@@ -100,11 +99,11 @@ def _inference(dataset, conv_sizes):
 
     with tf.name_scope("placeholders"):
       inputs_ = tf.placeholder(
-        tf.float32, shape=(None, 1, major_dim, 3), name="inputs")
+        tf.float32, shape=(None, 1, None, 3), name="inputs")
       occurs_ = tf.placeholder(
         tf.float32, shape=(None, 1, 1, num_atom_types), name="occurs")
       weights_ = tf.placeholder(
-        tf.float32, shape=(None, 1, major_dim, 1), name="weights")
+        tf.float32, shape=(None, 1, None, 1), name="weights")
       split_dims_ = tf.placeholder(
         tf.int64, shape=(len(split_dims, )), name="split_dims")
       is_training_ = tf.placeholder(tf.bool, name="is_training")
