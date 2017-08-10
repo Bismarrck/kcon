@@ -4,15 +4,16 @@ This module is used for making predictions with trained models.
 """
 from __future__ import print_function, absolute_import
 
-import json
-
 import numpy as np
 import tensorflow as tf
+import json
+from ase import Atoms
+from ase.io.trajectory import TrajectoryReader
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
-from transformer import MultiTransformer
 from constants import GHOST
 from save_model import get_tensors_to_restore
+from transformer import MultiTransformer
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -35,7 +36,7 @@ def restore_transformer(graph, session):
   return MultiTransformer(**params)
 
 
-class CNNPredictor:
+class KcnnPredictor:
   """
   An energy predictor based on the deep neural network of 'sum-kbody-cnn'.
   """
@@ -129,9 +130,9 @@ class CNNPredictor:
     if GHOST in species:
       species.remove(GHOST)
     if not self.is_periodic:
-      outputs = ["CNNPredictor of {}".format("".join(species))]
+      outputs = ["KcnnPredictor of {}".format("".join(species))]
     else:
-      outputs = ["Periodic CNNPredictor of {}".format("".join(species))]
+      outputs = ["Periodic KcnnPredictor of {}".format("".join(species))]
     for atom, (nmin, nmax) in self.supported_stoichiometries.items():
       outputs.append("  {:2s} : [{}, {}]".format(atom, nmin, nmax))
     outputs.append("End")
@@ -175,109 +176,72 @@ class CNNPredictor:
     weights = self._sess.run(self._tensor_1body)
     return dict(zip(species, weights.flatten().tolist()))
 
-  def _check_inputs(self, species, array_of_coords, array_of_lattice,
-                    array_of_pbc):
-    """
-    Check the inputs before making predictions.
-    """
-
-    if len(array_of_coords.shape) == 2:
-      assert array_of_coords.shape[0] == len(species)
-      num_mols, num_atoms = 1, len(array_of_coords)
-      array_of_coords = array_of_coords.reshape((1, num_atoms, 3))
-      if array_of_lattice is not None:
-        if len(array_of_lattice.shape) == 1:
-          array_of_lattice = array_of_lattice.reshape((1, -1))
-        if len(array_of_pbc.shape) == 1:
-          array_of_pbc = array_of_pbc.reshape((1, -1))
-    else:
-      num_mols, num_atoms = array_of_coords.shape[0:2]
-      assert num_atoms == len(species)
-
-    if self.is_periodic:
-      assert (array_of_lattice is not None) and (array_of_pbc is not None)
-
-    return num_mols, {"array_of_coords": array_of_coords,
-                      "array_of_lattice": array_of_lattice,
-                      "array_of_pbc": array_of_pbc}
-
-  def get_feed_dict(self, species, array_of_coords, array_of_lattice=None,
-                    array_of_pbc=None):
+  def get_feed_dict(self, atoms_or_trajectory):
     """
     Return the feed dict for the inputs.
 
     Args:
-      species: a `List[str]` as the ordered atomic species.
-      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
-        as the atomic coordinates.
-      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
-        periodic cell parameters for each structure.
-      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
-        conditions along XYZ directions.
+      atoms_or_trajectory: an `ase.Atoms` or an `ase.io.TrajectoryReader` or a
+        list of `ase.Atoms` with the same stoichiometry.
 
     Returns:
-      feed_dict: a `dict` that should be feeded to the session.
+      species: a list of `str` as the stoichiometry.
+      feed_dict: a `dict` as the feed dict to run.
 
     """
-    ntotal, inputs = self._check_inputs(
-      species, array_of_coords, array_of_lattice, array_of_pbc
-    )
+    assert isinstance(self._transformer, MultiTransformer)
 
-    # Transform the coordinates to input features. The `split_dims` will also be
-    # returned.
-    features, split_dims, _, weights, occurs = self._transformer.transform(
-      species, **inputs
-    )
+    if isinstance(atoms_or_trajectory, Atoms):
+      transform_func = self._transformer.transform
+      ntotal = 1
+      species = atoms_or_trajectory.get_chemical_symbols()
+    elif isinstance(atoms_or_trajectory, (list, tuple, TrajectoryReader)):
+      transform_func = self._transformer.transform_trajectory
+      ntotal = len(atoms_or_trajectory)
+      species = atoms_or_trajectory[0].get_chemical_symbols()
+    else:
+      raise ValueError("`atoms_or_trajectory` should be an `ase.Atoms` or an"
+                       "`ase.io.TrajectoryReader` or a list of `ase.Atoms`!")
+
+    features, split_dims, weights, occurs = transform_func(atoms_or_trajectory)
 
     # Build the feed dict for running the session.
     features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
     weights = weights.reshape((ntotal, 1, -1, 1))
     occurs = occurs.reshape((ntotal, 1, 1, -1))
 
-    return {self._placeholder_inputs: features,
-            self._placeholder_occurs: occurs,
-            self._placeholder_weights: weights,
-            self._placeholder_is_training: False,
-            self._placeholder_split_dims: split_dims}
+    feed_dict = {self._placeholder_inputs: features,
+                 self._placeholder_occurs: occurs,
+                 self._placeholder_weights: weights,
+                 self._placeholder_is_training: False,
+                 self._placeholder_split_dims: split_dims}
+    return species, feed_dict
 
-  def predict_total(self, species, array_of_coords, array_of_lattice=None,
-                    array_of_pbc=None):
+  def predict_total_energy(self, atoms_or_trajectory):
     """
     Only make predictions of total energies. All input structures must have the
     same kind of atomic species.
 
     Args:
-      species: a `List[str]` as the ordered atomic species.
-      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
-        as the atomic coordinates.
-      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
-        periodic cell parameters for each structure.
-      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
-        conditions along XYZ directions.
+      atoms_or_trajectory: an `ase.Atoms` or an `ase.io.TrajectoryReader` or a
+        list of `ase.Atoms` with the same stoichiometry.
 
     Returns:
       y_total: a 1D array of shape `[num_examples, ]` as the total energies.
 
     """
-    feed_dict = self.get_feed_dict(species, array_of_coords,
-                                   array_of_lattice, array_of_pbc)
+    _, feed_dict = self.get_feed_dict(atoms_or_trajectory)
     y_total = self._sess.run(self._operator_y_nn, feed_dict=feed_dict)
     return np.negative(y_total)
 
-  def predict(self, species, array_of_coords, array_of_lattice=None,
-              array_of_pbc=None):
+  def predict(self, atoms_or_trajectory):
     """
     Make the prediction for the given structures. All input structures must have
     the same kind of atomic species.
 
     Args:
-      species: a `List[str]` as the ordered atomic species.
-      array_of_coords: a `float32` array of shape `[num_examples, num_atoms, 3]`
-        as the atomic coordinates.
-      array_of_lattice: a `float32` array of shape `[num_examples, 9]` as the
-        periodic cell parameters for each structure.
-      array_of_pbc: a `bool` array of shape `[num_examples, 3]` as the periodic
-        conditions along XYZ directions.
+      atoms_or_trajectory: an `ase.Atoms` or an `ase.io.TrajectoryReader` or a
+        list of `ase.Atoms` with the same stoichiometry.
 
     Returns:
       y_total: a `float32` array of shape `[num_examples, ]` as the predicted
@@ -290,8 +254,7 @@ class CNNPredictor:
         contribs. `D` is the total dimension.
 
     """
-    feed_dict = self.get_feed_dict(species, array_of_coords,
-                                   array_of_lattice, array_of_pbc)
+    species, feed_dict = self.get_feed_dict(atoms_or_trajectory)
 
     # Run the operations to get the predicted energies.
     y_total, y_kbody, y_1body = self._sess.run(
