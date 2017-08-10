@@ -893,8 +893,9 @@ class FixedLenMultiTransformer(MultiTransformer):
           coef[i, loc] = counter[atom]
         b[i] = y_true
 
-        if verbose and i % 100 == 0:
-          sys.stdout.write("\rProgress: {:7d} / {:7d}".format(i, num_examples))
+        if verbose and (i + 1) % 100 == 0:
+          sys.stdout.write("\rProgress: {:7d} / {:7d}".format(
+            i + 1, num_examples))
 
       if verbose:
         print("")
