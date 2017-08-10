@@ -5,8 +5,8 @@ The unit tests of `CNNPredictor`.
 import numpy as np
 import unittest
 from os.path import join, basename, splitext
-from xyz import extract_xyz
-from kbody_predict import CNNPredictor
+from database import Database
+from kbody_predict import KcnnPredictor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 
@@ -29,33 +29,28 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
       or not.
 
   """
-  clf = CNNPredictor(graph_model_path)
-  xyz = extract_xyz(xyzfile, num_atoms=num_atoms, num_examples=num_examples,
-                    xyz_format=xyz_format, verbose=False)
-  xyz.split()
+  clf = KcnnPredictor(graph_model_path)
 
-  samples = xyz.get_testing_samples()
-  y_true = samples[1]
+  database = Database.from_xyz(xyzfile,
+                               num_examples=num_examples,
+                               xyz_format=xyz_format)
+  database.split()
 
   if not mixed:
-    species = samples[0][0]
-    inputs = dict(zip(["array_of_coords", "array_of_lattice", "array_of_pbc"],
-                      [samples[i] for i in (2, 4, 5)]))
-    y_nn = clf.predict_total(species, **inputs)
+    trajectory = [atoms for atoms in database.examples(for_training=False)]
+    y_nn = clf.predict_total_energy(trajectory)
+    y_true = [atoms.get_total_energy() for atoms in trajectory]
 
   else:
-    y_nn = np.zeros_like(y_true)
-    for i in range(len(y_true)):
-      species = samples[0][i]
-      natom = len(species)
-      coords = samples[2][i][:natom]
-      y_nn[i] = clf.predict_total(
-        species,
-        coords,
-        array_of_lattice=samples[4][i],
-        array_of_pbc=samples[5][i]
-      )
+    ids = database.ids_of_testing_examples
+    y_nn = np.zeros(len(ids))
+    y_true = np.zeros_like(y_nn)
+    for i in range(len(ids)):
+      atoms = database[ids[i]]
+      y_nn[i] = clf.predict_total_energy(atoms)
+      y_true[i] = atoms.get_total_energy()
 
+  y_true = np.asarray(y_true)
   y_diff = np.abs(y_true - y_nn)
   score = r2_score(y_true, y_nn)
   stddev = np.std(y_true - y_nn)
@@ -75,6 +70,7 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_atoms,
   print("End")
 
 
+@unittest.skip
 def test_tio2_dftb():
   """
   Measure the performance of the trained model of `TiO2.DFTB`.
@@ -88,6 +84,7 @@ def test_tio2_dftb():
     graph_model_path, xyzfile, xyz_format, num_atoms, num_examples, mixed=False)
 
 
+@unittest.skip
 def test_quinoline_dft():
   """
   Measure the performance of the trained model of `C9H7N.PBE`.
@@ -101,6 +98,7 @@ def test_quinoline_dft():
     graph_model_path, xyzfile, xyz_format, num_atoms, num_examples, mixed=False)
 
 
+@unittest.skip
 def test_quinoline_dftb():
   """
   Measure the performance of the trained model of `C9H7Nv1`.
