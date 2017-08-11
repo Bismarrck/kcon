@@ -6,10 +6,10 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import tensorflow as tf
+import reader
 
-import kbody_input
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from kbody_inference import inference
+from inference import inference
 from utils import lrelu
 
 __author__ = 'Xin Chen'
@@ -90,7 +90,7 @@ def get_batch(train=True, shuffle=True, dataset=None):
     energies: the dedired energies. 2D tensor of shape [batch_size, 1].
 
   """
-  return kbody_input.inputs(
+  return reader.inputs(
     train=train,
     batch_size=FLAGS.batch_size,
     shuffle=shuffle,
@@ -111,7 +111,7 @@ def get_batch_configs(train=True, dataset=None):
     configs: a `dict` as the configs for the dataset.
 
   """
-  return kbody_input.inputs_configs(train=train, dataset=dataset)
+  return reader.inputs_configs(train=train, dataset=dataset)
 
 
 def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
@@ -157,7 +157,7 @@ def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
 
   y_total, _ = inference(inputs, occurs, weights, split_dims,
                          num_atom_types=num_atom_types, kbody_terms=kbody_terms,
-                         is_training=is_training, max_k=FLAGS.many_body_k,
+                         is_training=is_training, max_k=FLAGS.k_max,
                          num_kernels=num_kernels, activation_fn=activation_fn,
                          alpha=alpha, one_body_weights=one_body_weights,
                          verbose=verbose, trainable_one_body=trainable)

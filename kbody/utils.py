@@ -22,6 +22,29 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
+def get_atoms_from_kbody_term(kbody_term):
+  """
+  Return the atoms in the given k-body term.
+
+  Args:
+    kbody_term: a `str` as the k-body term.
+
+  Returns:
+    atoms: a `list` of `str` as the chemical symbols of the atoms.
+
+  """
+  sel = [0]
+  for i in range(len(kbody_term)):
+    if kbody_term[i].isupper():
+      sel.append(i + 1)
+    else:
+      sel[-1] += 1
+  atoms = []
+  for i in range(len(sel) - 1):
+    atoms.append(kbody_term[sel[i]: sel[i + 1]])
+  return atoms
+
+
 @add_arg_scope
 def lrelu(x, alpha=0.2, name=None):
   """

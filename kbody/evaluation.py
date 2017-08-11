@@ -1,16 +1,14 @@
 # coding=-utf8
 """
-Evaluation for k-body CNN.
+The evaluation module for KCNN.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
-from datetime import datetime
 import math
 import time
 import numpy as np
 import tensorflow as tf
+from datetime import datetime
 from kbody import sum_kbody_cnn_from_dataset as inference
 from constants import VARIABLE_MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
