@@ -126,7 +126,7 @@ def may_build_dataset(dataset=None, verbose=True):
   if FLAGS.weighted_loss is None:
     exp_rmse_fn = None
   else:
-    min_ener, _ = xyz.energy_range
+    min_ener, _ = database.energy_range
     beta = 1.0 / FLAGS.weighted_loss
     exp_rmse_fn = partial(exp_rmse_loss_fn, x0=min_ener, beta=beta)
 
