@@ -69,7 +69,6 @@ def measure_performance(graph_model_path, xyzfile, xyz_format, num_examples,
   print("End")
 
 
-@unittest.skip
 def test_tio2_dftb():
   """
   Measure the performance of the trained model of `TiO2.DFTB`.
@@ -87,14 +86,13 @@ def test_quinoline_dft():
   Measure the performance of the trained model of `C9H7N.PBE`.
   """
   num_examples = 5000
-  graph_model_path = join("events", "freeze", "C9H7N.PBE-2002.pb")
+  graph_model_path = join("models", "C9H7N.PBE.v5.pb")
   xyzfile = join("..", "datasets", "C9H7N.PBE.xyz")
   xyz_format = "grendel"
   measure_performance(
     graph_model_path, xyzfile, xyz_format, num_examples, mixed=False)
 
 
-@unittest.skip
 def test_quinoline_dftb():
   """
   Measure the performance of the trained model of `C9H7Nv1`.
@@ -107,7 +105,6 @@ def test_quinoline_dftb():
     graph_model_path, xyzfile, xyz_format, num_examples, mixed=False)
 
 
-@unittest.skip
 def test_qm7_dft():
   """
   Measure the performance of the trained model of `qm7`.
