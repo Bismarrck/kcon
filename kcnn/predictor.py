@@ -38,7 +38,7 @@ def restore_transformer(graph, session):
 
 class KcnnPredictor:
   """
-  An energy predictor based on the deep neural network of 'sum-kbody-cnn'.
+  An energy predictor based on the deep neural network of 'KCNN'.
   """
 
   def __init__(self, graph_model_path):

@@ -9,7 +9,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from datetime import datetime
-from kbody import sum_kbody_cnn_from_dataset as inference
+from kcnn import kcnn_from_dataset as inference
 from constants import VARIABLE_MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
@@ -149,7 +149,7 @@ def evaluate():
 
   with tf.Graph().as_default() as graph:
 
-    # Inference the model of `sum-kbody-cnn` for evaluation
+    # Inference the model of `KCNN` for evaluation
     y_nn, y_true, _ = inference(FLAGS.dataset, for_training=False)
     y_true = tf.cast(y_true, tf.float32)
     y_nn.set_shape(y_true.get_shape().as_list())

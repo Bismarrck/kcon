@@ -1,6 +1,6 @@
 # coding=utf-8
 """
-Train `sum-kbody-cnn` using multiple replicas with synchronous update.
+Train `KCNN` using multiple replicas with synchronous update.
 
 See Also:
   https://github.com/tensorflow/models/blob/master/inception/inception/inception_distributed_train.py

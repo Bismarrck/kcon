@@ -7,7 +7,6 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import reader
-
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from inference import inference
 from utils import lrelu
@@ -114,11 +113,10 @@ def get_batch_configs(train=True, dataset=None):
   return reader.inputs_configs(train=train, dataset=dataset)
 
 
-def sum_kbody_cnn(inputs, occurs, weights, split_dims, num_atom_types,
-                  kbody_terms, is_training, num_kernels=None, verbose=True,
-                  one_body_weights=None):
+def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
+         is_training, num_kernels=None, verbose=True, one_body_weights=None):
   """
-  Inference the model of `sum-kbody-cnn`.
+  Inference the model of `KCNN`.
 
   Args:
     inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
@@ -198,9 +196,9 @@ def extract_configs(configs, for_training=True):
   return params
 
 
-def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
+def kcnn_from_dataset(dataset, for_training=True, **kwargs):
   """
-  Inference the `sum-kbody-cnn` based on the given dataset.
+  Inference the KCNN based on the given dataset.
 
   Args:
     dataset: a `str` as the name of the dataset.
@@ -226,8 +224,8 @@ def sum_kbody_cnn_from_dataset(dataset, for_training=True, **kwargs):
       tf.logging.warning("Unrecognized key={}".format(key))
 
   y_true = batch[BatchIndex.y_true]
-  y_total = sum_kbody_cnn(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
-                          batch[BatchIndex.weights], **params)
+  y_total = kcnn(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
+                 batch[BatchIndex.weights], **params)
   y_weight = batch[BatchIndex.loss_weight]
   return y_total, y_true, y_weight
 
@@ -256,7 +254,7 @@ def loss(y_true, y_nn, weights=None):
 
 
 def _add_loss_summaries(total_loss):
-  """Add summaries for losses in sum-kbody-cnn model.
+  """Add summaries for losses in KCNN model.
 
   Generates moving average for all losses and associated summaries for
   visualizing the performance of the network.

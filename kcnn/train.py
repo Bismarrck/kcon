@@ -7,8 +7,8 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import json
 import time
-import kbody
-from kbody import sum_kbody_cnn_from_dataset as inference
+import kcnn
+from kcnn import kcnn_from_dataset as inference
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
@@ -76,7 +76,7 @@ def train_model():
     # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
-    # Inference the sum-kbody-cnn model
+    # Inference the KCNN model
     y_nn, y_true, y_weight = inference(
       FLAGS.dataset, for_training=True
     )
@@ -87,7 +87,7 @@ def train_model():
     y_nn.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kbody.loss(y_true, y_nn, y_weight)
+    loss = kcnn.loss(y_true, y_nn, y_weight)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
