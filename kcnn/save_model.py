@@ -74,7 +74,7 @@ def get_tensors_to_restore():
 
 def _inference(dataset, conv_sizes):
   """
-  Inference a model of `sum-kbody-cnn` with inputs feeded from placeholders.
+  Inference a model of `KCNN` with inputs feeded from placeholders.
 
   Args:
     dataset: a `str` as the name of the dataset.

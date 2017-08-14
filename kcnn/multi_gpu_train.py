@@ -1,6 +1,6 @@
 # coding=utf-8
 """
-This script is used to train the sum-kbody-cnn network using multiple GPUs.
+This script is used to train the KCNN network using multiple GPUs.
 """
 from __future__ import print_function, absolute_import
 
@@ -12,9 +12,9 @@ import time
 
 import constants
 import kbody
-from kbody import BatchIndex
-from kbody import extract_configs, get_batch, get_batch_configs
-from kbody import sum_kbody_cnn as inference
+from kcnn import BatchIndex
+from kcnn import extract_configs, get_batch, get_batch_configs
+from kcnn import kcnn as inference
 from save_model import save_model
 from constants import LOSS_MOVING_AVERAGE_DECAY
 from datetime import datetime
@@ -70,7 +70,7 @@ def save_training_flags():
 
 
 def tower_loss(batch, params, scope, reuse_variables=False):
-  """Calculate the total loss on a single tower running the sum-kbody-cnn model.
+  """Calculate the total loss on a single tower running the KCNN model.
 
   Args:
     batch: a `tuple` of Tensors as the `inputs`, `y_true`, `occurs`, `weights`
@@ -84,7 +84,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
 
   """
 
-  # Inference the model of `sum-kbody-cnn`
+  # Inference the model of `KCNN`
   with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
     y_nn = inference(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
                      batch[BatchIndex.weights], **params)
@@ -164,7 +164,7 @@ def average_gradients(tower_grads):
 
 def train_with_multiple_gpus():
   """
-  Train the sum-kbody-cnn model with mutiple gpus.
+  Train the KCNN model with mutiple gpus.
   """
   set_logging_configs(
     debug=FLAGS.debug,
@@ -200,7 +200,7 @@ def train_with_multiple_gpus():
           # Dequeues one batch for the GPU
           gpu_batch = batch_queue.dequeue()
 
-          # Calculate the loss for one tower of the sum-kbody-cnn model.
+          # Calculate the loss for one tower of the KCNN model.
           # This function constructs the entire model but shares the variables
           # across all towers.
           loss = tower_loss(gpu_batch, params, scope, reuse_variables)

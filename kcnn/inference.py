@@ -1,6 +1,6 @@
 #!coding=utf-8
 """
-This module is used to inference the model of `sum-kbody-cnn`.
+This module is used to inference the model of `KCNN`.
 """
 from __future__ import print_function, absolute_import
 
@@ -33,7 +33,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                          use_batch_norm=False, activation_fn=lrelu, alpha=0.2,
                          num_kernels=None):
   """
-  Infer the k-body term of `sum-kbody-cnn`.
+  Infer the k-body term of `KCNN`.
 
   Args:
     inputs: a `[-1, 1, -1, C(k, 2)]` Tensor as the inputs for this interaction.
@@ -55,7 +55,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   """
 
   if verbose:
-    tf.logging.info("Infer the %s term of `sum-kbody-cnn` ..." % kbody_term)
+    tf.logging.info("Infer the %s term of `KCNN` ..." % kbody_term)
 
   num_kernels = num_kernels or (40, 50, 60, 40)
   kernel_size = 1
@@ -235,7 +235,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     print_activations(one_body)
 
   # Sum up the k-body contribs and one-body contribs to get the total energy.
-  # This is why we call this network `sum-kbody-cnn`.
+  # This is why we call this network `KCNN`.
   with tf.name_scope("Sum"):
     with tf.name_scope("kbody"):
       y_total_kbody = tf.reduce_sum(contribs, axis=2, name="Total")
