@@ -147,7 +147,7 @@ class Transformer:
   """
 
   def __init__(self, species, k_max=3, kbody_terms=None, split_dims=None,
-               norm_order=1, periodic=False):
+               norm_order=1, periodic=False, atomic_forces=False):
     """
     Initialization method.
 
@@ -161,6 +161,8 @@ class Transformer:
       norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
+      atomic_forces: a `bool` indicating whether the atomic forces derivation is
+        enabled or not.
 
     """
     if split_dims is not None:
@@ -214,6 +216,7 @@ class Transformer:
     self._periodic = periodic
     self._real_dim = real_dim
     self._binary_weights = self._get_binary_weights()
+    self._atomic_forces = atomic_forces
 
   @property
   def species(self):
@@ -293,6 +296,23 @@ class Transformer:
     Return True if this transformer is used for periodic structures.
     """
     return self._periodic
+
+  @property
+  def atomic_forces_enabled(self):
+    """
+    Return True if atomic forces derivation is enabled.
+    """
+    return self._atomic_forces
+
+  def get_bond_types(self):
+    """
+    Return the ordered bond types for each k-body term.
+    """
+    bonds = {}
+    for kbody_term in self._kbody_terms:
+      atoms = get_atoms_from_kbody_term(kbody_term)
+      bonds[kbody_term] = ["-".join(ab) for ab in combinations(atoms, r=2)]
+    return bonds
 
   @staticmethod
   def _get_num_ghosts(species, many_body_k):
@@ -435,12 +455,23 @@ class Transformer:
 
     Returns:
       out: a `float32` array of shape `self.shape` as the input feature matrix.
+      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+        corresponding entries.
+      dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
+        corresponding differences of coordinates.
 
     """
     if out is None:
       out = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
     elif out.shape != self.shape:
       raise ValueError("The shape should be {}".format(self.shape))
+
+    if self._atomic_forces:
+      lmat = np.zeros_like(out)
+      dr = np.zeros((self._real_dim, self._ck2 * 6), dtype=np.float32)
+    else:
+      lmat = None
+      dr = None
 
     if self._num_ghosts > 0:
       # Append `num_ghosts` rows of zeros to the positions. We can not directly
@@ -487,6 +518,8 @@ class Transformer:
       istop = istart + istep
       for k in range(self._ck2):
         out[istart: istop, k] = norm_dists[index_matrix[k]]
+        if self._atomic_forces:
+          lmat[istart: istop, k] = self._normalizers[index_matrix[k]]
 
     # Conditional sorting.
     for i, kbody_term in enumerate(self._kbody_terms):
@@ -498,10 +531,25 @@ class Transformer:
         # returned `z` a copy but not a view. The shape of `z` is transposed.
         # So we should sort along axis 0 here!
         z = out[self._offsets[i]: self._offsets[i + 1], ix]
-        z.sort()
-        out[self._offsets[i]: self._offsets[i + 1], ix] = z
+        shape = z.shape
 
-    return out
+        if not self._atomic_forces:
+          z.sort()
+          out[self._offsets[i]: self._offsets[i + 1], ix] = z
+
+        else:
+          orders = np.argsort(z)
+          step = shape[1]
+          orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
+
+          z = z.flatten()[orders].reshape(shape)
+          out[self._offsets[i]: self._offsets[i + 1], ix] = z
+
+          l = lmat[self._offsets[i]: self._offsets[i + 1], ix]
+          l = l.flatten()[orders].reshape(shape)
+          lmat[self._offsets[i]: self._offsets[i + 1], ix] = l
+
+    return out, lmat, dr
 
 
 class MultiTransformer:
@@ -981,3 +1029,33 @@ class FixedLenMultiTransformer(MultiTransformer):
         train_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
       self._save_auxiliary_for_file(
         train_file, initial_1body_weights=weights, lookup_indices=ids)
+
+
+if __name__ == "__main__":
+
+  def debug():
+    """
+    A simple debugging function.
+    """
+    from ase.db import connect
+
+    db = connect("../datasets/qm7.db")
+    atoms = db.get_atoms('id=10')
+    clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
+
+    bond_types = clf.get_bond_types()
+    out, lmat, dr = clf.transform(atoms)
+    dists = -np.log(out) * lmat
+    offsets = [0] + np.cumsum(clf.split_dims).tolist()
+
+    for i, kbody_term in enumerate(clf.kbody_terms):
+      istart = offsets[i]
+      istop = offsets[i + 1]
+
+      print(kbody_term)
+      print("Bond types: {}".format(bond_types[kbody_term]))
+
+      for j, index in enumerate(range(istart, istop)):
+        print(out[index], dists[index], lmat[index])
+
+  debug()
