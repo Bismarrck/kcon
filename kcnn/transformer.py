@@ -51,12 +51,12 @@ def _compute_lr_weights(coef, y, num_real_atom_types):
   rank = np.linalg.matrix_rank(coef)
   diff = num_real_atom_types - rank
 
-  # The coef matrix is full rank. So the linear equations are fully solvable.
+  # The coef matrix is full rank. So the linear equations can be solved.
   if diff == 0:
     return np.negative(np.dot(np.linalg.pinv(coef), y))
 
-  # The rank is 1 indicating all structures have the same stoichiometry. So all
-  # types of atoms can be treated equally.
+  # The rank is 1, so all structures have the same stoichiometry. Then all types
+  # of atoms can be treated equally.
   elif rank == 1:
     x = np.zeros_like(coef[0])
     x[:num_real_atom_types] = np.negative(np.mean(y / coef.sum(axis=1)))
@@ -364,7 +364,7 @@ class Transformer:
       ]
       # Build up the k-atoms selections. First, we get the `product` (See Python
       # official document for more info), eg [[1, 2], [8]]. Then `chain` it to
-      # get flatten lists, eg [1, 2, 8].
+      # get flatten lists, eg [[1, 2, 8]].
       k_atoms_selections = [list(chain(*o)) for o in
                             product(*k_atoms_candidates)]
       selections[kbody_term] = k_atoms_selections
@@ -774,7 +774,8 @@ class MultiTransformer:
         # Compute the real `k` for this k-body term by excluding ghost atoms.
         k = len(kbody_term) - kbody_term.count(GHOST)
         # For each k-atoms selection, its energy should contrib equally to the
-        # selected atoms.
+        # selected atoms. In my paper the coef should be `1 / factorial(k)` but
+        # since our k-atom selections are all unique so coef here is `1 / k`.
         coef = 1.0 / k
         # Locate the starting index
         istart = 0 if i == 0 else int(sum(split_dims[:i]))

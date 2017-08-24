@@ -8,7 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import json
 from os.path import join
-from kbody import sum_kbody_cnn, get_batch_configs
+from kcnn import kcnn, get_batch_configs
 from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
@@ -108,10 +108,10 @@ def _inference(dataset, conv_sizes):
         tf.int64, shape=(len(split_dims, )), name="split_dims")
       is_training_ = tf.placeholder(tf.bool, name="is_training")
 
-    sum_kbody_cnn(inputs_, occurs_, weights_, is_training=is_training_,
-                  split_dims=split_dims_, num_atom_types=num_atom_types,
-                  kbody_terms=kbody_terms, num_kernels=num_kernels,
-                  verbose=False)
+    kcnn(inputs_, occurs_, weights_, is_training=is_training_,
+         split_dims=split_dims_, num_atom_types=num_atom_types,
+         kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False)
+
   return graph
 
 
