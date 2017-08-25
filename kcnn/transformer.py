@@ -444,13 +444,80 @@ class Transformer:
       weights[offsets[i]: offsets[i] + self._kbody_sizes[i]] = 1.0
     return weights
 
-  def transform(self, atoms, out=None):
+  def _get_coords(self, atoms):
     """
-    Transform the given `ase.Atoms` object to an input feature matrix.
+    Return the N-by-3 coordinates matrix for the given `ase.Atoms`.
+
+    Notes:
+      Auxiliary vectors may be appended if `num_ghosts` is non-zero.
+
+    """
+    if self._num_ghosts > 0:
+      # Append `num_ghosts` rows of zeros to the positions. We can not directly
+      # use `inf` because `pairwise_distances` and `get_all_distances` do not
+      # support `inf`.
+      aux_vecs = np.zeros((self._num_ghosts, 3))
+      coords = np.vstack((atoms.get_positions(), aux_vecs))
+    else:
+      coords = atoms.get_positions()
+    return coords
+
+  def _get_interatomic_distances(self, coords, cell, pbc):
+    """
+    Return the interatomic distances matrix and its associated coordinates
+    differences matrices.
+
+    Returns:
+      dists: a `float32` array of shape `[N, N]` where N is the number of atoms
+        as the interatomic distances matrix.
+      delta: a `float32` array of shape `[N, N, 3]`. The last axis represents
+        the X, Y, Z directions. `delta[:, :, 0]` is the pairwise distances of
+        all X coordinates.
+
+    """
+    delta = None
+
+    if not self.is_periodic:
+      dists = pairwise_distances(coords)
+      if self._atomic_forces:
+        ndim = len(dists)
+        delta = np.zeros((ndim, ndim, 3))
+        delta[:, :, 0] = pairwise_distances(coords[:, 0].reshape(-1, 1))
+        delta[:, :, 1] = pairwise_distances(coords[:, 1].reshape(-1, 1))
+        delta[:, :, 2] = pairwise_distances(coords[:, 2].reshape(-1, 1))
+    else:
+      atoms = Atoms(
+        symbols=self._species,
+        positions=coords,
+        cell=cell,
+        pbc=pbc
+      )
+      dists = atoms.get_all_distances(mic=True)
+      if self._atomic_forces:
+        raise ValueError("Atomic forces for periodic structures are not "
+                         "supported yet!")
+      del atoms
+
+    # Manually set the distances between ghost atoms and real atoms to inf.
+    if self._num_ghosts > 0:
+      dists[:, -self._num_ghosts:] = np.inf
+      dists[-self._num_ghosts:, :] = np.inf
+      if self._atomic_forces and self.is_periodic:
+        delta[:, -self._num_ghosts:, :] = np.inf
+        delta[-self._num_ghosts:, :, :] = np.inf
+
+    return dists, delta
+
+  def _assign(self, dists, delta, out=None):
+    """
+    Assign the normalized distances to the input feature matrix and build the
+    auxiliary matrices.
 
     Args:
-      atoms: an `ase.Atoms` object.
-      out: a 2D `float32` array of None as the location into which the result is
+      dists: a `float32` array of shape `[N**2, ]` as the scaled flatten
+        interatomic distances matrix.
+      delta: a `float32` array of shape `[N**2, 3]`.
+      out: a 2D `float32` array or None as the location into which the result is
         stored. If not provided, a new array will be allocated.
 
     Returns:
@@ -473,38 +540,6 @@ class Transformer:
       lmat = None
       dr = None
 
-    if self._num_ghosts > 0:
-      # Append `num_ghosts` rows of zeros to the positions. We can not directly
-      # use `inf` because `pairwise_distances` and `get_all_distances` do not
-      # support `inf`.
-      aux_vecs = np.zeros((self._num_ghosts, 3))
-      coords = np.vstack((atoms.get_positions(), aux_vecs))
-    else:
-      coords = atoms.get_positions()
-
-    # Compute the interatomic distances. For non-periodic molecules we use the
-    # faster method `pairwise_distances`.
-    if not self.is_periodic:
-      dists = pairwise_distances(coords)
-    else:
-      _atoms = Atoms(symbols=self._species,
-                     positions=coords,
-                     cell=atoms.get_cell(),
-                     pbc=atoms.get_pbc())
-      dists = _atoms.get_all_distances(mic=True)
-      del _atoms
-
-    # Manually set the distances between ghost atoms and real atoms to inf.
-    if self._num_ghosts > 0:
-      dists[:, -self._num_ghosts:] = np.inf
-      dists[-self._num_ghosts:, :] = np.inf
-
-    # Normalize the interatomic distances with the exponential function so that
-    # shorter bonds have larger normalized weights.
-    dists = dists.flatten()
-    norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
-
-    # Assign the normalized distances to the input feature matrix.
     for i, kbody_term in enumerate(self._kbody_terms):
       if kbody_term not in self._mapping:
         continue
@@ -517,30 +552,54 @@ class Transformer:
       istep = min(self._offsets[i + 1] - istart, index_matrix.shape[1])
       istop = istart + istep
       for k in range(self._ck2):
-        out[istart: istop, k] = norm_dists[index_matrix[k]]
+        out[istart: istop, k] = dists[index_matrix[k]]
         if self._atomic_forces:
           lmat[istart: istop, k] = self._normalizers[index_matrix[k]]
+          for j in range(3):
+            dr[istart: istop, 6 * k + j] = delta[index_matrix[k], j]
+            dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
+    return out, lmat, dr
 
-    # Conditional sorting.
+  def _conditionally_sort(self, out, lmat, dr):
+    """
+    Apply the conditional sorting algorithm.
+
+    Args:
+      out: a `float32` array of shape `self.shape` as the input feature matrix.
+      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+        corresponding entries.
+      dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
+        corresponding differences of coordinates.
+
+    """
     for i, kbody_term in enumerate(self._kbody_terms):
       if kbody_term not in self._mapping:
         continue
       for ix in self._cond_sort.get(kbody_term, []):
-        # Note:
-        # `samples` is a 2D array, the Python advanced slicing will make the
-        # returned `z` a copy but not a view. The shape of `z` is transposed.
-        # So we should sort along axis 0 here!
         z = out[self._offsets[i]: self._offsets[i + 1], ix]
         shape = z.shape
 
+        # The simple case: the derivation of atomic forces is disabled.
         if not self._atomic_forces:
+          # `samples` is a 2D array, the Python advanced slicing will make the
+          # returned `z` a copy but not a view. The shape of `z` is transposed.
+          # So we should sort along axis 0 here!
           z.sort()
           out[self._offsets[i]: self._offsets[i + 1], ix] = z
 
+        # When atomic forces are required, a different strategy should be used.
+        # The two auxiliary matrices, covalent radii matrix and the coordinates
+        # differences matrix, must all be sorted. So we get the sorting orders
+        # at first.
         else:
           orders = np.argsort(z)
+          dr_orders = [list(chain(*[[x * 6 + loc for loc in range(6)]
+                                  for x in orders[row]]))
+                       for row in range(len(orders))]
           step = shape[1]
+          step6 = step * 6
           orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
+          dr_orders += np.tile(np.arange(0, z.size * 6, step6), (step6, 1)).T
 
           z = z.flatten()[orders].reshape(shape)
           out[self._offsets[i]: self._offsets[i + 1], ix] = z
@@ -549,7 +608,55 @@ class Transformer:
           l = l.flatten()[orders].reshape(shape)
           lmat[self._offsets[i]: self._offsets[i + 1], ix] = l
 
+          ix6 = list(chain(*[[x * 6 + loc for loc in range(6)] for x in ix]))
+          d = dr[self._offsets[i]: self._offsets[i + 1], ix6]
+          dr_shape = d.shape
+          d = d.flatten()[dr_orders].reshape(dr_shape)
+          dr[self._offsets[i]: self._offsets[i + 1], ix6] = d
+
     return out, lmat, dr
+
+  def transform(self, atoms, out=None):
+    """
+    Transform the given `ase.Atoms` object to an input feature matrix.
+
+    Args:
+      atoms: an `ase.Atoms` object.
+      out: a 2D `float32` array or None as the location into which the result is
+        stored. If not provided, a new array will be allocated.
+
+    Returns:
+      out: a `float32` array of shape `self.shape` as the input feature matrix.
+      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+        corresponding entries.
+      dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
+        corresponding differences of coordinates.
+
+    """
+
+    # Get the coordinates matrix.
+    coords = self._get_coords(atoms)
+
+    # Compute the interatomic distances. For non-periodic molecules we use the
+    # faster method `pairwise_distances`.
+    dists, delta = self._get_interatomic_distances(
+      coords,
+      cell=atoms.get_cell(),
+      pbc=atoms.get_pbc()
+    )
+
+    # Normalize the interatomic distances with the exponential function so that
+    # shorter bonds have larger normalized weights.
+    dists = dists.flatten()
+    if delta is not None:
+      delta = delta.reshape((-1, 3))
+    norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
+
+    # Assign the normalized distances to the input feature matrix.
+    out, lmat, dr = self._assign(norm_dists, delta, out=out)
+
+    # Apply the conditional sorting algorithm
+    return self._conditionally_sort(out, lmat, dr)
 
 
 class MultiTransformer:
@@ -1033,14 +1140,33 @@ class FixedLenMultiTransformer(MultiTransformer):
 
 if __name__ == "__main__":
 
+  def print_atoms(atoms):
+    """
+    Print the coordinates of the `ase.Atoms` in XYZ format.
+    """
+    for i, atom in enumerate(atoms):
+      print("{:2d} {:2s} {: 14.8f} {: 14.8f} {: 14.8f}".format(
+        i, atom.symbol, *atom.position))
+
   def debug():
     """
     A simple debugging function.
     """
     from ase.db import connect
 
+    formatter = {"float": lambda x: "%-8.3f" % x}
+
+    def array2string(_x):
+      """
+      Convert the numpy array to a string.
+      """
+      return np.array2string(_x, formatter=formatter)
+
     db = connect("../datasets/qm7.db")
     atoms = db.get_atoms('id=10')
+    print("Molecule: {}".format(atoms.get_chemical_symbols()))
+    print_atoms(atoms)
+
     clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
 
     bond_types = clf.get_bond_types()
@@ -1051,11 +1177,16 @@ if __name__ == "__main__":
     for i, kbody_term in enumerate(clf.kbody_terms):
       istart = offsets[i]
       istop = offsets[i + 1]
+      selections = clf.kbody_selections[kbody_term]
 
       print(kbody_term)
       print("Bond types: {}".format(bond_types[kbody_term]))
 
       for j, index in enumerate(range(istart, istop)):
-        print(out[index], dists[index], lmat[index])
+        print("Selection: {}".format(selections[j]))
+        print("out  : {}".format(array2string(out[index])))
+        print("dist : {}".format(array2string(dists[index])))
+        print("lmat : {}".format(array2string(lmat[index])))
+        print("dr   : {}".format(array2string(dr[index, :9])))
 
   debug()
