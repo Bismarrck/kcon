@@ -555,9 +555,18 @@ class Transformer:
         out[istart: istop, k] = dists[index_matrix[k]]
         if self._atomic_forces:
           lmat[istart: istop, k] = self._normalizers[index_matrix[k]]
-          for j in range(3):
-            dr[istart: istop, 6 * k + j] = delta[index_matrix[k], j]
-            dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
+          # for j in range(3):
+          #   dr[istart: istop, 6 * k + j] = delta[index_matrix[k], j]
+          #   dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
+          # for j in range(3):
+          #   dr[istart: istop, 6 * j + k] = delta[index_matrix[k], j]
+          dr[istart: istop, 6 * k + 0] = +delta[index_matrix[k], 0]
+          dr[istart: istop, 6 * k + 1] = +delta[index_matrix[k], 1]
+          dr[istart: istop, 6 * k + 2] = +delta[index_matrix[k], 2]
+          dr[istart: istop, 6 * k + 3] = -delta[index_matrix[k], 0]
+          dr[istart: istop, 6 * k + 4] = -delta[index_matrix[k], 1]
+          dr[istart: istop, 6 * k + 5] = -delta[index_matrix[k], 2]
+
     return out, lmat, dr
 
   def _conditionally_sort(self, out, lmat, dr):
@@ -616,6 +625,37 @@ class Transformer:
 
     return out, lmat, dr
 
+  def _get_coef_matrix(self, z, l, d):
+    """
+    Return the tiled coefficients matrix with the following equation:
+
+    C = np.tile((z * d) / (l**2 * log(d)), (6, 1))
+
+    Args:
+      z: a `float32` array of shape `[]` as the untiled input feature matrix.
+      l: a `float32` array of shape `[]` as the untiled covalent radii matrix.
+      d: a `float32` array of shape `[]` as the
+
+    Returns:
+      c: a `float32` array of shape `[]` as the coefficients matrix.
+
+    """
+    if self._atomic_forces:
+      logz = np.tile(np.log(z), (6, 1))
+      z = np.tile(z, (6, 1))
+      l2 = np.tile(l**2, (6, 1))
+      return z * d / (l2 * logz)
+    else:
+      return None
+
+  def _get_indexing_matrix(self):
+    """
+    Return the matrix for indexing the gradients matrix. By multiplying the
+    indexing matrix the flatten `[C(N, k), 6 * C(k, 2)]` gradients matrix will
+    be transformed to `[1, 3N]`. Reshape it, we can get the atomic forces.
+    """
+    return None
+
   def transform(self, atoms, out=None):
     """
     Transform the given `ase.Atoms` object to an input feature matrix.
@@ -656,7 +696,13 @@ class Transformer:
     out, lmat, dr = self._assign(norm_dists, delta, out=out)
 
     # Apply the conditional sorting algorithm
-    return self._conditionally_sort(out, lmat, dr)
+    out, lmat, dr = self._conditionally_sort(out, lmat, dr)
+
+    # Get coefficients matrix for computing atomic forces.
+    coef = self._get_coef_matrix(out, lmat, dr)
+    index = self._get_indexing_matrix()
+
+    return out, coef, index
 
 
 class MultiTransformer:
