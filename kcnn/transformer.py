@@ -10,6 +10,7 @@ import numpy as np
 import tensorflow as tf
 import json
 import sys
+import logging
 from collections import Counter
 from itertools import combinations, product, repeat, chain
 from os.path import basename, dirname, join, splitext
@@ -25,6 +26,16 @@ __email__ = 'Bismarrck@me.com'
 
 
 FLAGS = tf.app.flags.FLAGS
+
+# A private flag for debugging purpose only.
+_debug = True
+
+# Setup the private logger for debugging.
+if _debug:
+  _logger = logging.Logger("kcnn")
+  _logger.addHandler(logging.FileHandler("./af.log", mode='w'))
+else:
+  _logger = None
 
 
 def get_formula(species):
@@ -657,7 +668,7 @@ class Transformer:
     """
     Return the tiled coefficients matrix with the following equation:
 
-    C = np.tile((z * d) / (l**2 * log(d)), (6, 1))
+    C = np.tile((z * d) / (l**2 * log(d)), (1, 6))
 
     Args:
       z: a `float32` array of shape `[]` as the untiled input feature matrix.
@@ -683,8 +694,11 @@ class Transformer:
     if self._indexing_matrix is None:
       cnk = self._real_dim
       ck2 = self._ck2
-      index_matrix = np.zeros((cnk, ck2, 2), dtype=int)
+      # Set all entries to -1
+      index_matrix = np.zeros((cnk, ck2, 2), dtype=int) - 1
       for i, kbody_term in enumerate(self._kbody_terms):
+        if kbody_term not in self._selections:
+          continue
         selections = self._selections[kbody_term]
         offset = self._offsets[i]
         for j, selection in enumerate(selections):
@@ -693,8 +707,7 @@ class Transformer:
       self._indexing_matrix = index_matrix
     return self._indexing_matrix
 
-  @staticmethod
-  def _transform_indexing_matrix(indexing, natoms):
+  def _transform_indexing_matrix(self, indexing, natoms):
     """
     Transform the conditionally sorted indexing matrix.
 
@@ -707,6 +720,9 @@ class Transformer:
       indexing: an `int` array.
 
     """
+    if not self._atomic_forces:
+      return None
+
     nnn = natoms * 3
     num_entries = indexing.shape[0] * indexing.shape[1] * 6 // nnn
     matrix = np.zeros((nnn, num_entries), dtype=int)
@@ -716,6 +732,9 @@ class Transformer:
     for i in range(indexing.shape[0]):
       for j in range(indexing.shape[1]):
         a, b = indexing[i, j, :]
+        if a < 0 or b < 0:
+          loc += 6
+          continue
         ax = a * 3 + 0
         ay = a * 3 + 1
         az = a * 3 + 2
@@ -1013,7 +1032,7 @@ class MultiTransformer:
 
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
-    features = clf.transform(atoms)
+    features, _, _ = clf.transform(atoms)
     occurs = np.zeros((1, len(self._species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._species.index(specie)
@@ -1311,6 +1330,9 @@ def debug():
     for j, index in enumerate(range(istart, istop)):
       print("Selection: {}".format(selections[j]))
       print("out  : {}".format(array2string(features[index])))
+
+  print("Forces coefficients: ")
+  print(array2string(coef.flatten()[indexing]))
 
 
 if __name__ == "__main__":

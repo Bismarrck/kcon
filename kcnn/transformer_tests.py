@@ -46,7 +46,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(clf.binary_weights.sum(),
                            float(shape[0]), delta=0.0001)
 
-    features = clf.transform(Atoms(species, coords))
+    features, _, _ = clf.transform(Atoms(species, coords))
     self.assertTupleEqual(features.shape, (5985, 6))
     orders = np.argsort(features[0, :]).tolist()
     self.assertListEqual(orders, list(range(6)))
@@ -74,7 +74,7 @@ class TransformerTest(tf.test.TestCase):
       kbody_terms=kbody_terms
     )
 
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     # 4CH + 6HH + 6CHH + 4HHH + (10 - 2) + (6 - 2) = 32
     self.assertTupleEqual(features.shape, (32, 3))
 
@@ -96,7 +96,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertEqual(len(clf.split_dims), num_terms)
     self.assertEqual(len(clf.kbody_terms), num_terms)
 
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     self.assertTupleEqual(features.shape, (18, 3))
     self.assertListEqual(clf.split_dims, [1, 1, 1, 6, 1, 1, 4, 1, 1, 1])
     self.assertAlmostEqual(np.sum(features[0:3, :]), 0.0, delta=epsilon)
@@ -138,7 +138,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(clf.binary_weights.sum(), 20.0, delta=0.0001)
 
     coords = get_example(6)
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     offsets = [0] + np.cumsum(clf.split_dims).tolist()
     selections = clf.kbody_selections
     self.assertEqual(features.shape[0], comb(20, k_max, exact=True))
