@@ -545,13 +545,13 @@ class Transformer:
 
     """
     if features is None:
-      features = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
+      features = np.zeros((self._real_dim, self._ck2))
     elif features.shape != self.shape:
       raise ValueError("The shape should be {}".format(self.shape))
 
     if self._atomic_forces:
       cr = np.zeros_like(features)
-      dr = np.zeros((self._real_dim, self._ck2 * 6), dtype=np.float32)
+      dr = np.zeros((self._real_dim, self._ck2 * 6))
     else:
       cr = None
       dr = None
@@ -806,7 +806,7 @@ class Transformer:
     # Transform the conditionally sorted indexing matrix.
     indexing = self._transform_indexing_matrix(indexing, len(atoms))
 
-    return features, coef, indexing
+    return features.astype(np.float32), coef, indexing
 
 
 class MultiTransformer:
@@ -1290,9 +1290,9 @@ class FixedLenMultiTransformer(MultiTransformer):
 
 def debug():
   """
-  The function for debugging computing atomic forces.
+  Debugging the calculation of the atomic forces of the CH4 molecule with Td
+  symmetry. For this molecule the conditional sorting plays no real effect.
   """
-  from ase.db import connect
 
   def print_atoms(_atoms):
     """
@@ -1308,8 +1308,16 @@ def debug():
     """
     return np.array2string(_x, formatter={"float": lambda x: "%-8.3f" % x})
 
-  db = connect("../datasets/qm7.db")
-  atoms = db.get_atoms('id=1')
+  positions = np.array([
+    [0.99825996, -0.00246000, -0.00436000],
+    [2.09020996, -0.00243000,  0.00414000],
+    [0.63378996,  1.02686000,  0.00414000],
+    [0.62703997, -0.52772999,  0.87810999],
+    [0.64135998, -0.50746995, -0.90539992],
+  ])
+  symbols = ["C", "H", "H", "H", "H"]
+  atoms = Atoms(symbols=symbols, positions=positions)
+
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
   print_atoms(atoms)
 
@@ -1333,6 +1341,33 @@ def debug():
 
   print("Forces coefficients: ")
   print(array2string(coef.flatten()[indexing]))
+
+  n = len(atoms)
+  matrix = np.zeros((n * 3, (n - 1) * (n - 2)))
+  locations = np.zeros(n, dtype=int)
+
+  for kbody_term in clf.kbody_terms:
+    selections = clf.kbody_selections[kbody_term]
+    for selection in selections:
+      for (i, j) in combinations(selection, r=2):
+        r = atoms.get_distance(i, j)
+        l = pyykko[symbols[i]] + pyykko[symbols[j]]
+        z = np.exp(-r / l)
+        g = -1.0 / l * z * (positions[j] - positions[i]) / r
+        matrix[i * 3: i * 3 + 3, locations[i]] = +g
+        matrix[j * 3: j * 3 + 3, locations[j]] = -g
+        locations[i] += 1
+        locations[j] += 1
+
+  print("Targets: ")
+  print(array2string(matrix))
+
+  directions = ("x", "y", "z")
+  calculated = coef.flatten()[indexing]
+  diff = np.absolute(matrix - calculated).sum(axis=1)
+  print("Differences: ")
+  for i in range(len(matrix)):
+    print("{:d}{:s} : {: 10.6f}".format(i // 3, directions[i % 3], diff[i]))
 
 
 if __name__ == "__main__":
