@@ -660,12 +660,14 @@ class Transformer:
     C = np.tile((z * d) / (l**2 * log(d)), (1, 6))
 
     Args:
-      z: a `float32` array of shape `[]` as the untiled input feature matrix.
-      l: a `float32` array of shape `[]` as the untiled covalent radii matrix.
-      d: a `float32` array of shape `[]` as the
+      z: a `float32` array of shape `self.shape` as the input feature matrix.
+      l: a `float32` array of shape `self.shape` as the covalent radii matrix.
+      d: a `float32` array of shape `[self.shape[0], self.shape[1] * 6]` as the
+        differences of the coordinates.
 
     Returns:
-      c: a `float32` array of shape `[]` as the coefficients matrix.
+      coef: a `float32` array as the coefficients matrix. The shape of `coef` is
+        the same with input `d`.
 
     """
     if self._atomic_forces:
@@ -675,7 +677,7 @@ class Transformer:
       # return z * d / (l2 * logz)
 
       logz = np.log(z)
-      l2 = l**2
+      ll = l**2
       rows, cols = z.shape
       z6 = np.zeros((rows, cols * 6))
       l6 = np.zeros_like(z6)
@@ -683,7 +685,7 @@ class Transformer:
 
       for i in range(cols * 6):
         z6[:, i] = z[:, i // 6]
-        l6[:, i] = l2[:, i // 6]
+        l6[:, i] = ll[:, i // 6]
         logz6[:, i] = logz[:, i // 6]
 
       return z6 * d / (l6 * logz6)
@@ -1308,14 +1310,24 @@ def debug():
     """
     return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
 
+  # positions = np.array([
+  #   [0.99825996, -0.00246000, -0.00436000],
+  #   [2.09020996, -0.00243000,  0.00414000],
+  #   [0.63378996,  1.02686000,  0.00414000],
+  #   [0.62703997, -0.52772999,  0.87810999],
+  #   [0.64135998, -0.50746995, -0.90539992],
+  # ])
+  # symbols = ["C", "H", "H", "H", "H"]
+
   positions = np.array([
-    [0.99825996, -0.00246000, -0.00436000],
-    [2.09020996, -0.00243000,  0.00414000],
-    [0.63378996,  1.02686000,  0.00414000],
-    [0.62703997, -0.52772999,  0.87810999],
-    [0.64135998, -0.50746995, -0.90539992],
+   [0.98915994,  0.00010000,  0.00000000],
+   [2.32491994, -0.00017000, -0.00000000],
+   [0.42940998,  0.93013996,  0.00000000],
+   [0.42907000, -0.92984998,  0.00000000],
+   [2.88499999,  0.92979997, -0.00000000],
+   [2.88466978, -0.93019998,  0.00000000],
   ])
-  symbols = ["C", "H", "H", "H", "H"]
+  symbols = ["C", "C", "H", "H", "H", "H"]
   atoms = Atoms(symbols=symbols, positions=positions)
 
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
