@@ -217,6 +217,7 @@ class Transformer:
     self._real_dim = real_dim
     self._binary_weights = self._get_binary_weights()
     self._atomic_forces = atomic_forces
+    self._indexing_matrix = None
 
   @property
   def species(self):
@@ -480,11 +481,14 @@ class Transformer:
     if not self.is_periodic:
       dists = pairwise_distances(coords)
       if self._atomic_forces:
+        # Compute dx_ij, dy_ij and dz_ij. `sklearn.metrics.pairwise_distances`
+        # cannot be used here because it will return absolute values.
         ndim = len(dists)
         delta = np.zeros((ndim, ndim, 3))
-        delta[:, :, 0] = pairwise_distances(coords[:, 0].reshape(-1, 1))
-        delta[:, :, 1] = pairwise_distances(coords[:, 1].reshape(-1, 1))
-        delta[:, :, 2] = pairwise_distances(coords[:, 2].reshape(-1, 1))
+        for i in range(ndim):
+          for j in range(i + 1, ndim):
+            delta[i, j, :] = coords[j] - coords[i]
+            delta[j, i, :] = coords[i] - coords[j]
     else:
       atoms = Atoms(
         symbols=self._species,
@@ -508,7 +512,7 @@ class Transformer:
 
     return dists, delta
 
-  def _assign(self, dists, delta, out=None):
+  def _assign(self, dists, delta, features=None):
     """
     Assign the normalized distances to the input feature matrix and build the
     auxiliary matrices.
@@ -517,27 +521,28 @@ class Transformer:
       dists: a `float32` array of shape `[N**2, ]` as the scaled flatten
         interatomic distances matrix.
       delta: a `float32` array of shape `[N**2, 3]`.
-      out: a 2D `float32` array or None as the location into which the result is
-        stored. If not provided, a new array will be allocated.
+      features: a 2D `float32` array or None as the location into which the
+        result is stored. If not provided, a new array will be allocated.
 
     Returns:
-      out: a `float32` array of shape `self.shape` as the input feature matrix.
-      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+      features: a `float32` array of shape `self.shape` as the input feature
+        matrix.
+      cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
         corresponding differences of coordinates.
 
     """
-    if out is None:
-      out = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
-    elif out.shape != self.shape:
+    if features is None:
+      features = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
+    elif features.shape != self.shape:
       raise ValueError("The shape should be {}".format(self.shape))
 
     if self._atomic_forces:
-      lmat = np.zeros_like(out)
+      cr = np.zeros_like(features)
       dr = np.zeros((self._real_dim, self._ck2 * 6), dtype=np.float32)
     else:
-      lmat = None
+      cr = None
       dr = None
 
     for i, kbody_term in enumerate(self._kbody_terms):
@@ -552,41 +557,75 @@ class Transformer:
       istep = min(self._offsets[i + 1] - istart, index_matrix.shape[1])
       istop = istart + istep
       for k in range(self._ck2):
-        out[istart: istop, k] = dists[index_matrix[k]]
+        features[istart: istop, k] = dists[index_matrix[k]]
         if self._atomic_forces:
-          lmat[istart: istop, k] = self._normalizers[index_matrix[k]]
-          # for j in range(3):
-          #   dr[istart: istop, 6 * k + j] = delta[index_matrix[k], j]
-          #   dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
-          # for j in range(3):
-          #   dr[istart: istop, 6 * j + k] = delta[index_matrix[k], j]
-          dr[istart: istop, 6 * k + 0] = +delta[index_matrix[k], 0]
-          dr[istart: istop, 6 * k + 1] = +delta[index_matrix[k], 1]
-          dr[istart: istop, 6 * k + 2] = +delta[index_matrix[k], 2]
-          dr[istart: istop, 6 * k + 3] = -delta[index_matrix[k], 0]
-          dr[istart: istop, 6 * k + 4] = -delta[index_matrix[k], 1]
-          dr[istart: istop, 6 * k + 5] = -delta[index_matrix[k], 2]
+          cr[istart: istop, k] = self._normalizers[index_matrix[k]]
+          for j in range(3):
+            dr[istart: istop, 6 * k + j + 0] = +delta[index_matrix[k], j]
+            dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
 
-    return out, lmat, dr
+    return features, cr, dr
 
-  def _conditionally_sort(self, out, lmat, dr):
+  def _conditionally_sort_i_1(self, z, orders, i, ix, features, cr, indexing):
+    """
+    Sort the features, the covalent radii and the indexing matrix. The dimension
+    of axis=1 of all these matrices are C(k, 2).
+    """
+    shape = z.shape
+    step = shape[1]
+    orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
+
+    z = z.flatten()[orders].reshape(shape)
+    features[self._offsets[i]: self._offsets[i + 1], ix] = z
+
+    l = cr[self._offsets[i]: self._offsets[i + 1], ix]
+    l = l.flatten()[orders].reshape(shape)
+    cr[self._offsets[i]: self._offsets[i + 1], ix] = l
+
+    for axis in range(2):
+      idx = indexing[self._offsets[i]: self._offsets[i + 1], ix, axis]
+      idx = idx.flatten()[orders].reshape(shape)
+      indexing[self._offsets[i]: self._offsets[i + 1], ix, axis] = idx
+
+  def _conditionally_sort_i_6(self, z, orders, i, ix, dr):
+    """
+    Sort the coordinates differences matrix whose number of columns is
+    6 * C(k, 2).
+    """
+    step = z.shape[1] * 6
+    ix = list(chain(*[[x * 6 + loc for loc in range(6)] for x in ix]))
+    d = dr[self._offsets[i]: self._offsets[i + 1], ix]
+    orders = [
+      list(chain(*[[x * 6 + loc for loc in range(6)]
+                   for x in orders[row]])) for row in range(len(orders))
+    ]
+    orders += np.tile(np.arange(0, z.size * 6, step), (step, 1)).T
+    shape = d.shape
+    d = d.flatten()[orders].reshape(shape)
+    dr[self._offsets[i]: self._offsets[i + 1], ix] = d
+
+  def _conditionally_sort(self, features, cr, dr):
     """
     Apply the conditional sorting algorithm.
 
     Args:
-      out: a `float32` array of shape `self.shape` as the input feature matrix.
-      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+      features: a `float32` array of shape `self.shape` as the input feature
+        matrix.
+      cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
         corresponding differences of coordinates.
 
     """
+    indexing = self._get_indexing_matrix().copy()
+
     for i, kbody_term in enumerate(self._kbody_terms):
+
       if kbody_term not in self._mapping:
         continue
+
       for ix in self._cond_sort.get(kbody_term, []):
-        z = out[self._offsets[i]: self._offsets[i + 1], ix]
-        shape = z.shape
+        z = features[self._offsets[i]: self._offsets[i + 1], ix]
 
         # The simple case: the derivation of atomic forces is disabled.
         if not self._atomic_forces:
@@ -594,7 +633,7 @@ class Transformer:
           # returned `z` a copy but not a view. The shape of `z` is transposed.
           # So we should sort along axis 0 here!
           z.sort()
-          out[self._offsets[i]: self._offsets[i + 1], ix] = z
+          features[self._offsets[i]: self._offsets[i + 1], ix] = z
 
         # When atomic forces are required, a different strategy should be used.
         # The two auxiliary matrices, covalent radii matrix and the coordinates
@@ -602,28 +641,17 @@ class Transformer:
         # at first.
         else:
           orders = np.argsort(z)
-          dr_orders = [list(chain(*[[x * 6 + loc for loc in range(6)]
-                                  for x in orders[row]]))
-                       for row in range(len(orders))]
-          step = shape[1]
-          step6 = step * 6
-          orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
-          dr_orders += np.tile(np.arange(0, z.size * 6, step6), (step6, 1)).T
 
-          z = z.flatten()[orders].reshape(shape)
-          out[self._offsets[i]: self._offsets[i + 1], ix] = z
+          # Sort the features, the covalent radii and the indexing matrix. The
+          # dimension of axis=1 of all these matrices are C(k, 2).
+          self._conditionally_sort_i_1(
+            z, orders.copy(), i, ix, features, cr, indexing)
 
-          l = lmat[self._offsets[i]: self._offsets[i + 1], ix]
-          l = l.flatten()[orders].reshape(shape)
-          lmat[self._offsets[i]: self._offsets[i + 1], ix] = l
+          # Sort the coordinates differences matrix whose number of columns is
+          # 6 * C(k, 2).
+          self._conditionally_sort_i_6(z, orders.copy(), i, ix, dr)
 
-          ix6 = list(chain(*[[x * 6 + loc for loc in range(6)] for x in ix]))
-          d = dr[self._offsets[i]: self._offsets[i + 1], ix6]
-          dr_shape = d.shape
-          d = d.flatten()[dr_orders].reshape(dr_shape)
-          dr[self._offsets[i]: self._offsets[i + 1], ix6] = d
-
-    return out, lmat, dr
+    return features, cr, dr, indexing
 
   def _get_coef_matrix(self, z, l, d):
     """
@@ -641,33 +669,88 @@ class Transformer:
 
     """
     if self._atomic_forces:
-      logz = np.tile(np.log(z), (6, 1))
-      z = np.tile(z, (6, 1))
-      l2 = np.tile(l**2, (6, 1))
+      logz = np.tile(np.log(z), (1, 6))
+      z = np.tile(z, (1, 6))
+      l2 = np.tile(l**2, (1, 6))
       return z * d / (l2 * logz)
     else:
       return None
 
   def _get_indexing_matrix(self):
     """
-    Return the matrix for indexing the gradients matrix. By multiplying the
-    indexing matrix the flatten `[C(N, k), 6 * C(k, 2)]` gradients matrix will
-    be transformed to `[1, 3N]`. Reshape it, we can get the atomic forces.
+    Return the matrix for indexing the gradients matrix.
     """
-    return None
+    if self._indexing_matrix is None:
+      cnk = self._real_dim
+      ck2 = self._ck2
+      index_matrix = np.zeros((cnk, ck2, 2), dtype=int)
+      for i, kbody_term in enumerate(self._kbody_terms):
+        selections = self._selections[kbody_term]
+        offset = self._offsets[i]
+        for j, selection in enumerate(selections):
+          for l, (a, b) in enumerate(combinations(selection, r=2)):
+            index_matrix[offset + j, l] = a, b
+      self._indexing_matrix = index_matrix
+    return self._indexing_matrix
 
-  def transform(self, atoms, out=None):
+  @staticmethod
+  def _transform_indexing_matrix(indexing, natoms):
+    """
+    Transform the conditionally sorted indexing matrix.
+
+    Args:
+      indexing: an `int` array of shape `[self.shape[0], self.shape[1], 2]` as
+        the indexing matrix.
+      natoms: an `int` as the number of atoms in an `ase.Atoms` object.
+
+    Returns:
+      indexing: an `int` array.
+
+    """
+    nnn = natoms * 3
+    num_entries = indexing.shape[0] * indexing.shape[1] * 6 // nnn
+    matrix = np.zeros((nnn, num_entries), dtype=int)
+    axes = np.zeros((nnn, ), dtype=int)
+    loc = 0
+
+    for i in range(indexing.shape[0]):
+      for j in range(indexing.shape[1]):
+        a, b = indexing[i, j, :]
+        ax = a * 3 + 0
+        ay = a * 3 + 1
+        az = a * 3 + 2
+        bx = b * 3 + 0
+        by = b * 3 + 1
+        bz = b * 3 + 2
+        matrix[ax, axes[ax]] = loc + 0
+        axes[ax] += 1
+        matrix[ay, axes[ay]] = loc + 1
+        axes[ay] += 1
+        matrix[az, axes[az]] = loc + 2
+        axes[az] += 1
+        matrix[bx, axes[bx]] = loc + 3
+        axes[bx] += 1
+        matrix[by, axes[by]] = loc + 4
+        axes[by] += 1
+        matrix[bz, axes[bz]] = loc + 5
+        axes[bz] += 1
+        loc += 6
+
+    return matrix
+
+  def transform(self, atoms, features=None):
     """
     Transform the given `ase.Atoms` object to an input feature matrix.
 
     Args:
       atoms: an `ase.Atoms` object.
-      out: a 2D `float32` array or None as the location into which the result is
-        stored. If not provided, a new array will be allocated.
+      features: a 2D `float32` array or None as the location into which the
+        result is stored. If not provided, a new array will be allocated.
 
     Returns:
-      out: a `float32` array of shape `self.shape` as the input feature matrix.
-      lmat: a `float32` array of shape `self.shape` as the covalent radii for
+      features: a `float32` array of shape `self.shape` as the input feature
+        matrix.
+      cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
         corresponding differences of coordinates.
@@ -693,16 +776,18 @@ class Transformer:
     norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
 
     # Assign the normalized distances to the input feature matrix.
-    out, lmat, dr = self._assign(norm_dists, delta, out=out)
+    features, lr, dr = self._assign(norm_dists, delta, features=features)
 
     # Apply the conditional sorting algorithm
-    out, lmat, dr = self._conditionally_sort(out, lmat, dr)
+    features, lr, dr, indexing = self._conditionally_sort(features, lr, dr)
 
     # Get coefficients matrix for computing atomic forces.
-    coef = self._get_coef_matrix(out, lmat, dr)
-    index = self._get_indexing_matrix()
+    coef = self._get_coef_matrix(features, lr, dr)
 
-    return out, coef, index
+    # Transform the conditionally sorted indexing matrix.
+    indexing = self._transform_indexing_matrix(indexing, len(atoms))
+
+    return features, coef, indexing
 
 
 class MultiTransformer:
@@ -1184,55 +1269,49 @@ class FixedLenMultiTransformer(MultiTransformer):
         train_file, initial_1body_weights=weights, lookup_indices=ids)
 
 
-if __name__ == "__main__":
+def debug():
+  """
+  The function for debugging computing atomic forces.
+  """
+  from ase.db import connect
 
-  def print_atoms(atoms):
+  def print_atoms(_atoms):
     """
     Print the coordinates of the `ase.Atoms` in XYZ format.
     """
-    for i, atom in enumerate(atoms):
+    for _i, _atom in enumerate(_atoms):
       print("{:2d} {:2s} {: 14.8f} {: 14.8f} {: 14.8f}".format(
-        i, atom.symbol, *atom.position))
+        _i, _atom.symbol, *_atom.position))
 
-  def debug():
+  def array2string(_x):
     """
-    A simple debugging function.
+    Convert the numpy array to a string.
     """
-    from ase.db import connect
+    return np.array2string(_x, formatter={"float": lambda x: "%-8.3f" % x})
 
-    formatter = {"float": lambda x: "%-8.3f" % x}
+  db = connect("../datasets/qm7.db")
+  atoms = db.get_atoms('id=1')
+  print("Molecule: {}".format(atoms.get_chemical_symbols()))
+  print_atoms(atoms)
 
-    def array2string(_x):
-      """
-      Convert the numpy array to a string.
-      """
-      return np.array2string(_x, formatter=formatter)
+  clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
 
-    db = connect("../datasets/qm7.db")
-    atoms = db.get_atoms('id=10')
-    print("Molecule: {}".format(atoms.get_chemical_symbols()))
-    print_atoms(atoms)
+  bond_types = clf.get_bond_types()
+  features, coef, indexing = clf.transform(atoms)
+  offsets = [0] + np.cumsum(clf.split_dims).tolist()
 
-    clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
+  for i, kbody_term in enumerate(clf.kbody_terms):
+    istart = offsets[i]
+    istop = offsets[i + 1]
+    selections = clf.kbody_selections[kbody_term]
 
-    bond_types = clf.get_bond_types()
-    out, lmat, dr = clf.transform(atoms)
-    dists = -np.log(out) * lmat
-    offsets = [0] + np.cumsum(clf.split_dims).tolist()
+    print(kbody_term)
+    print("Bond types: {}".format(bond_types[kbody_term]))
 
-    for i, kbody_term in enumerate(clf.kbody_terms):
-      istart = offsets[i]
-      istop = offsets[i + 1]
-      selections = clf.kbody_selections[kbody_term]
+    for j, index in enumerate(range(istart, istop)):
+      print("Selection: {}".format(selections[j]))
+      print("out  : {}".format(array2string(features[index])))
 
-      print(kbody_term)
-      print("Bond types: {}".format(bond_types[kbody_term]))
 
-      for j, index in enumerate(range(istart, istop)):
-        print("Selection: {}".format(selections[j]))
-        print("out  : {}".format(array2string(out[index])))
-        print("dist : {}".format(array2string(dists[index])))
-        print("lmat : {}".format(array2string(lmat[index])))
-        print("dr   : {}".format(array2string(dr[index, :9])))
-
+if __name__ == "__main__":
   debug()
