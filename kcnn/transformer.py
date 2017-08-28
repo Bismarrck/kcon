@@ -10,7 +10,6 @@ import numpy as np
 import tensorflow as tf
 import json
 import sys
-import logging
 from collections import Counter
 from itertools import combinations, product, repeat, chain
 from os.path import basename, dirname, join, splitext
@@ -26,16 +25,6 @@ __email__ = 'Bismarrck@me.com'
 
 
 FLAGS = tf.app.flags.FLAGS
-
-# A private flag for debugging purpose only.
-_debug = True
-
-# Setup the private logger for debugging.
-if _debug:
-  _logger = logging.Logger("kcnn")
-  _logger.addHandler(logging.FileHandler("./af.log", mode='w'))
-else:
-  _logger = None
 
 
 def get_formula(species):
@@ -499,7 +488,7 @@ class Transformer:
         for i in range(ndim):
           for j in range(i + 1, ndim):
             delta[i, j, :] = coords[j] - coords[i]
-            delta[j, i, :] = coords[i] - coords[j]
+            delta[j, i, :] = coords[j] - coords[i]
     else:
       atoms = Atoms(
         symbols=self._species,
@@ -680,10 +669,25 @@ class Transformer:
 
     """
     if self._atomic_forces:
-      logz = np.tile(np.log(z), (1, 6))
-      z = np.tile(z, (1, 6))
-      l2 = np.tile(l**2, (1, 6))
-      return z * d / (l2 * logz)
+      # logz = np.tile(np.log(z), (1, 6))
+      # z = np.tile(z, (1, 6))
+      # l2 = np.tile(l**2, (1, 6))
+      # return z * d / (l2 * logz)
+
+      logz = np.log(z)
+      l2 = l**2
+      rows, cols = z.shape
+      z6 = np.zeros((rows, cols * 6))
+      l6 = np.zeros_like(z6)
+      logz6 = np.zeros_like(z6)
+
+      for i in range(cols * 6):
+        z6[:, i] = z[:, i // 6]
+        l6[:, i] = l2[:, i // 6]
+        logz6[:, i] = logz[:, i // 6]
+
+      return z6 * d / (l6 * logz6)
+
     else:
       return None
 
@@ -726,14 +730,14 @@ class Transformer:
     nnn = natoms * 3
     num_entries = indexing.shape[0] * indexing.shape[1] * 6 // nnn
     matrix = np.zeros((nnn, num_entries), dtype=int)
-    axes = np.zeros((nnn, ), dtype=int)
-    loc = 0
+    loc = np.zeros((natoms, ), dtype=int)
+    position = 0
 
     for i in range(indexing.shape[0]):
       for j in range(indexing.shape[1]):
         a, b = indexing[i, j, :]
         if a < 0 or b < 0:
-          loc += 6
+          position += 6
           continue
         ax = a * 3 + 0
         ay = a * 3 + 1
@@ -741,19 +745,15 @@ class Transformer:
         bx = b * 3 + 0
         by = b * 3 + 1
         bz = b * 3 + 2
-        matrix[ax, axes[ax]] = loc + 0
-        axes[ax] += 1
-        matrix[ay, axes[ay]] = loc + 1
-        axes[ay] += 1
-        matrix[az, axes[az]] = loc + 2
-        axes[az] += 1
-        matrix[bx, axes[bx]] = loc + 3
-        axes[bx] += 1
-        matrix[by, axes[by]] = loc + 4
-        axes[by] += 1
-        matrix[bz, axes[bz]] = loc + 5
-        axes[bz] += 1
-        loc += 6
+        matrix[ax, loc[a]] = position + 0
+        matrix[ay, loc[a]] = position + 1
+        matrix[az, loc[a]] = position + 2
+        loc[a] += 1
+        matrix[bx, loc[b]] = position + 3
+        matrix[by, loc[b]] = position + 4
+        matrix[bz, loc[b]] = position + 5
+        loc[b] += 1
+        position += 6
 
     return matrix
 
@@ -1291,7 +1291,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 def debug():
   """
   Debugging the calculation of the atomic forces of the CH4 molecule with Td
-  symmetry. For this molecule the conditional sorting plays no real effect.
+  symmetry.
   """
 
   def print_atoms(_atoms):
@@ -1306,7 +1306,7 @@ def debug():
     """
     Convert the numpy array to a string.
     """
-    return np.array2string(_x, formatter={"float": lambda x: "%-8.3f" % x})
+    return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
 
   positions = np.array([
     [0.99825996, -0.00246000, -0.00436000],
@@ -1345,17 +1345,64 @@ def debug():
   n = len(atoms)
   matrix = np.zeros((n * 3, (n - 1) * (n - 2)))
   locations = np.zeros(n, dtype=int)
+  vlist = np.zeros(3)
+  xlist = np.zeros(3)
+  ylist = np.zeros(3)
+  zlist = np.zeros(3)
+  ilist = np.zeros(3, dtype=int)
+  jlist = np.zeros(3, dtype=int)
 
   for kbody_term in clf.kbody_terms:
+
     selections = clf.kbody_selections[kbody_term]
+    bonds = bond_types[kbody_term]
+
+    if bonds[0] == bonds[1]:
+      if bonds[1] == bonds[2]:
+        cols = [0, 1, 2]
+      else:
+        cols = [0, 1]
+    elif bonds[0] == bonds[2]:
+      cols = [0, 2]
+    elif bonds[1] == bonds[2]:
+      cols = [1, 2]
+    else:
+      cols = []
+
     for selection in selections:
-      for (i, j) in combinations(selection, r=2):
+      vlist.fill(0.0)
+      xlist.fill(0.0)
+      ylist.fill(0.0)
+      zlist.fill(0.0)
+      for k, (i, j) in enumerate(combinations(selection, r=2)):
         r = atoms.get_distance(i, j)
         l = pyykko[symbols[i]] + pyykko[symbols[j]]
-        z = np.exp(-r / l)
-        g = -1.0 / l * z * (positions[j] - positions[i]) / r
-        matrix[i * 3: i * 3 + 3, locations[i]] = +g
-        matrix[j * 3: j * 3 + 3, locations[j]] = -g
+        v = np.exp(-r / l)
+        g = 1.0 / l**2 * v * (positions[j] - positions[i]) / np.log(v)
+        assert isinstance(g, np.ndarray)
+
+        vlist[k] = v
+        ilist[k] = i
+        jlist[k] = j
+        xlist[k] = g[0]
+        ylist[k] = g[1]
+        zlist[k] = g[2]
+
+      if len(cols) > 0:
+        orders = np.argsort(vlist[cols])
+        for vector in (ilist, jlist, xlist, ylist, zlist):
+          entries = vector[cols]
+          entries = entries[orders]
+          vector[cols] = entries
+
+      for k in range(3):
+        i = ilist[k]
+        j = jlist[k]
+        x = xlist[k]
+        y = ylist[k]
+        z = zlist[k]
+        matrix[i * 3: i * 3 + 3, locations[i]] = +x, +y, +z
+        matrix[j * 3: j * 3 + 3, locations[j]] = -x, -y, -z
         locations[i] += 1
         locations[j] += 1
 
@@ -1368,6 +1415,12 @@ def debug():
   print("Differences: ")
   for i in range(len(matrix)):
     print("{:d}{:s} : {: 10.6f}".format(i // 3, directions[i % 3], diff[i]))
+
+  sorted_diff = np.sort(calculated.flatten()) - np.sort(matrix.flatten())
+  abs_sorted_diff = np.absolute(sorted_diff)
+  ntotal = len(abs_sorted_diff)
+  for n in range(10):
+    print(abs_sorted_diff[0: (n + 1) * ntotal // 10].sum())
 
 
 if __name__ == "__main__":
