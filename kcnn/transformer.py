@@ -672,25 +672,10 @@ class Transformer:
 
     """
     if self._atomic_forces:
-      logz = np.tile(np.log(z), (1, 6))
-      z = np.tile(z, (1, 6))
-      l2 = np.tile(l**2, (1, 6))
-      return z * d / (l2 * logz)
-
-      # logz = np.log(z)
-      # ll = l**2
-      # rows, cols = z.shape
-      # z6 = np.zeros((rows, cols * 6))
-      # l6 = np.zeros_like(z6)
-      # logz6 = np.zeros_like(z6)
-      #
-      # for i in range(cols * 6):
-      #   z6[:, i] = z[:, i // 6]
-      #   l6[:, i] = ll[:, i // 6]
-      #   logz6[:, i] = logz[:, i // 6]
-      #
-      # return z6 * d / (l6 * logz6)
-
+      logz6 = np.tile(np.log(z), (1, 6))
+      z6 = np.tile(z, (1, 6))
+      l6 = np.tile(l**2, (1, 6))
+      return z6 * d / (l6 * logz6)
     else:
       return None
 
@@ -731,32 +716,33 @@ class Transformer:
       return None
 
     nnn = natoms * 3
-    num_entries = indexing.shape[0] * indexing.shape[1] * 6 // nnn
+    cnk = indexing.shape[0]
+    ck2 = indexing.shape[1]
+    num_entries = cnk * ck2 * 6 // nnn
     matrix = np.zeros((nnn, num_entries), dtype=int)
     loc = np.zeros((natoms, ), dtype=int)
     position = 0
+    half = ck2 * 3
+    zero = 0
 
-    for i in range(indexing.shape[0]):
-      for j in range(indexing.shape[1]):
+    for i in range(cnk):
+      for j in range(ck2):
         a, b = indexing[i, j, :]
-        if a < 0 or b < 0:
-          position += 6
-          continue
         ax = a * 3 + 0
         ay = a * 3 + 1
         az = a * 3 + 2
         bx = b * 3 + 0
         by = b * 3 + 1
         bz = b * 3 + 2
-        matrix[ax, loc[a]] = position + 0
-        matrix[ay, loc[a]] = position + 1
-        matrix[az, loc[a]] = position + 2
+        matrix[ax, loc[a]] = position + 0 * ck2 + j + zero
+        matrix[ay, loc[a]] = position + 1 * ck2 + j + zero
+        matrix[az, loc[a]] = position + 2 * ck2 + j + zero
         loc[a] += 1
-        matrix[bx, loc[b]] = position + 3
-        matrix[by, loc[b]] = position + 4
-        matrix[bz, loc[b]] = position + 5
+        matrix[bx, loc[b]] = position + 0 * ck2 + j + half
+        matrix[by, loc[b]] = position + 1 * ck2 + j + half
+        matrix[bz, loc[b]] = position + 2 * ck2 + j + half
         loc[b] += 1
-        position += 6
+      position += 6 * ck2
 
     return matrix
 
@@ -1311,24 +1297,24 @@ def debug():
     """
     return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
 
-  positions = np.array([
-    [0.99825996, -0.00246000, -0.00436000],
-    [2.09020996, -0.00243000,  0.00414000],
-    [0.63378996,  1.02686000,  0.00414000],
-    [0.62703997, -0.52772999,  0.87810999],
-    [0.64135998, -0.50746995, -0.90539992],
-  ])
-  symbols = ["C", "H", "H", "H", "H"]
-
   # positions = np.array([
-  #  [0.98915994,  0.00010000,  0.00000000],
-  #  [2.32491994, -0.00017000, -0.00000000],
-  #  [0.42940998,  0.93013996,  0.00000000],
-  #  [0.42907000, -0.92984998,  0.00000000],
-  #  [2.88499999,  0.92979997, -0.00000000],
-  #  [2.88466978, -0.93019998,  0.00000000],
+  #   [0.99825996, -0.00246000, -0.00436000],
+  #   [2.09020996, -0.00243000,  0.00414000],
+  #   [0.63378996,  1.02686000,  0.00414000],
+  #   [0.62703997, -0.52772999,  0.87810999],
+  #   [0.64135998, -0.50746995, -0.90539992],
   # ])
-  # symbols = ["C", "C", "H", "H", "H", "H"]
+  # symbols = ["C", "H", "H", "H", "H"]
+
+  positions = np.array([
+   [0.98915994,  0.00010000,  0.00000000],
+   [2.32491994, -0.00017000, -0.00000000],
+   [0.42940998,  0.93013996,  0.00000000],
+   [0.42907000, -0.92984998,  0.00000000],
+   [2.88499999,  0.92979997, -0.00000000],
+   [2.88466978, -0.93019998,  0.00000000],
+  ])
+  symbols = ["C", "C", "H", "H", "H", "H"]
   atoms = Atoms(symbols=symbols, positions=positions)
 
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
