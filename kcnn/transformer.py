@@ -18,7 +18,7 @@ from scipy.misc import comb
 from sklearn.metrics import pairwise_distances
 from tensorflow.python.training.training import Features, Example
 from constants import pyykko, GHOST
-from utils import get_atoms_from_kbody_term
+from utils import get_atoms_from_kbody_term, safe_divide
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -508,9 +508,11 @@ class Transformer:
     if self._num_ghosts > 0:
       dists[:, -self._num_ghosts:] = np.inf
       dists[-self._num_ghosts:, :] = np.inf
-      if self._atomic_forces and self.is_periodic:
-        delta[:, -self._num_ghosts:, :] = np.inf
-        delta[-self._num_ghosts:, :, :] = np.inf
+
+      # Set the delta differences to 0.
+      if self._atomic_forces:
+        delta[:, -self._num_ghosts:, :] = 0.0
+        delta[-self._num_ghosts:, :, :] = 0.0
 
     return dists, delta
 
@@ -680,7 +682,7 @@ class Transformer:
       logz6 = np.tile(np.log(z), (1, 6))
       z6 = np.tile(z, (1, 6))
       l6 = np.tile(l**2, (1, 6))
-      coef = z6 * d / (l6 * logz6)
+      coef = safe_divide(z6 * d, l6 * logz6)
       # There will be zeros in `l`. Here we convert all NaNs to zeros.
       return np.nan_to_num(coef)
     else:
@@ -731,12 +733,15 @@ class Transformer:
     position = 0
     half = ck2 * 3
     zero = 0
+    imax = len(self.species)
 
     for i in range(cnk):
-
       if indexing[i].min() >= 0:
         for j in range(ck2):
           a, b = indexing[i, j, :]
+          # The contributions from Atom-Ghost pairs should be ignored.
+          if a >= imax or b >= imax:
+            continue
           ax = a * 3 + 0
           ay = a * 3 + 1
           az = a * 3 + 2
@@ -1109,7 +1114,7 @@ class FixedLenMultiTransformer(MultiTransformer):
   """
 
   def __init__(self, max_occurs, periodic=False, k_max=3, norm_order=1,
-               include_all_k=False, atomic_forces=False):
+               include_all_k=True, atomic_forces=False):
     """
     Initialization method. 
     
@@ -1309,7 +1314,7 @@ def debug():
     1. [x] CH4 and C2H6, default settings.
     2. [x] CH4 and C2H6, alternative `kbody_terms`.
     3. [x] CH4 and C2H6, alternative `kbody_terms` and `split_dims`.
-    4. [ ] CH4 and C2H6, alternative `kbody_terms` and `split_dims`, GHOST
+    4. [x] CH4 and C2H6, alternative `kbody_terms` and `split_dims`, GHOST
     5. [ ] TiO2, default settings.
 
   """
@@ -1351,11 +1356,11 @@ def debug():
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
   print_atoms(atoms)
 
-  species = ["C", "C", "H", "H", "H", "H", "N"]
+  species = ["C", "C", "H", "H", "H", "H", "N", GHOST]
   kbody_terms = _get_kbody_terms(species, k_max=3)
 
   split_dims = []
-  max_occurs = {"C": 2, "H": 4, "N": 1}
+  max_occurs = {"C": 2, "H": 4, "N": 1, GHOST: 1}
   for kbody_term in kbody_terms:
     elements = get_atoms_from_kbody_term(kbody_term)
     counter = Counter(elements)
@@ -1363,7 +1368,7 @@ def debug():
     split_dims.append(np.prod(dims))
   split_dims = [int(x) for x in split_dims]
 
-  clf = Transformer(atoms.get_chemical_symbols(),
+  clf = Transformer(symbols + [GHOST],
                     kbody_terms=kbody_terms,
                     split_dims=split_dims,
                     atomic_forces=True)
@@ -1429,6 +1434,8 @@ def debug():
       ylist.fill(0.0)
       zlist.fill(0.0)
       for k, (i, j) in enumerate(combinations(selection, r=2)):
+        if i >= n or j >= n:
+          continue
         r = atoms.get_distance(i, j)
         l = pyykko[symbols[i]] + pyykko[symbols[j]]
         v = np.exp(-r / l)
