@@ -556,20 +556,20 @@ class Transformer:
         continue
       # The index matrix was transposed because typically C(N, k) >> C(k, 2).
       # See `_get_mapping`.
-      index_matrix = self._mapping[kbody_term]
+      mapping = self._mapping[kbody_term]
       istart = self._offsets[i]
       # Manually adjust the step size because the offset length may be larger if
       # `split_dims` is fixed.
-      istep = min(self._offsets[i + 1] - istart, index_matrix.shape[1])
+      istep = min(self._offsets[i + 1] - istart, mapping.shape[1])
       istop = istart + istep
       for k in range(self._ck2):
-        features[istart: istop, k] = dists[index_matrix[k]]
+        features[istart: istop, k] = dists[mapping[k]]
         if self._atomic_forces:
-          cr[istart: istop, k] = self._normalizers[index_matrix[k]]
+          cr[istart: istop, k] = self._normalizers[mapping[k]]
           # x = 0, y = 1, z = 2
           for j in range(3):
-            dr[istart: istop, j * step + k + zero] = +delta[index_matrix[k], j]
-            dr[istart: istop, j * step + k + half] = -delta[index_matrix[k], j]
+            dr[istart: istop, j * step + k + zero] = +delta[mapping[k], j]
+            dr[istart: istop, j * step + k + half] = -delta[mapping[k], j]
 
     return features, cr, dr
 
@@ -1308,7 +1308,7 @@ def debug():
   Goals:
     1. [x] CH4 and C2H6, default settings.
     2. [x] CH4 and C2H6, alternative `kbody_terms`.
-    3. [ ] CH4 and C2H6, alternative `kbody_terms` and `split_dims`.
+    3. [x] CH4 and C2H6, alternative `kbody_terms` and `split_dims`.
     4. [ ] CH4 and C2H6, alternative `kbody_terms` and `split_dims`, GHOST
     5. [ ] TiO2, default settings.
 
@@ -1354,8 +1354,18 @@ def debug():
   species = ["C", "C", "H", "H", "H", "H", "N"]
   kbody_terms = _get_kbody_terms(species, k_max=3)
 
+  split_dims = []
+  max_occurs = {"C": 2, "H": 4, "N": 1}
+  for kbody_term in kbody_terms:
+    elements = get_atoms_from_kbody_term(kbody_term)
+    counter = Counter(elements)
+    dims = [comb(max_occurs[e], k, True) for e, k in counter.items()]
+    split_dims.append(np.prod(dims))
+  split_dims = [int(x) for x in split_dims]
+
   clf = Transformer(atoms.get_chemical_symbols(),
                     kbody_terms=kbody_terms,
+                    split_dims=split_dims,
                     atomic_forces=True)
 
   bond_types = clf.get_bond_types()
@@ -1364,12 +1374,13 @@ def debug():
 
   for i, kbody_term in enumerate(clf.kbody_terms):
     istart = offsets[i]
-    istop = offsets[i + 1]
 
     print(kbody_term)
     print("Bond types: {}".format(bond_types[kbody_term]))
 
     if kbody_term in clf.kbody_selections:
+      istep = min(offsets[i + 1] - istart, clf.kbody_sizes[i])
+      istop = istart + istep
 
       selections = clf.kbody_selections[kbody_term]
       for j, index in enumerate(range(istart, istop)):
