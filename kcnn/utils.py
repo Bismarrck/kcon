@@ -6,13 +6,12 @@ Some utility functions.
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
+import numpy as np
+import logging
+from logging.config import dictConfig
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.contrib.framework import add_arg_scope
-
-import logging
-from logging.config import dictConfig
-
 from os import getpid
 from sys import platform
 from subprocess import Popen, PIPE
@@ -20,6 +19,20 @@ from sys import version_info
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
+
+def safe_divide(a, b):
+  """
+  Safe division while ignoring / 0, div0( [-1, 0, 1], 0 ) -> [0, 0, 0].
+
+  References:
+     https://stackoverflow.com/questions/26248654/numpy-return-0-with-divide-by-zero
+
+  """
+  with np.errstate(divide='ignore', invalid='ignore'):
+    c = np.true_divide(a, b)
+    c[~ np.isfinite(c)] = 0  # -inf inf NaN
+  return c
 
 
 def get_atoms_from_kbody_term(kbody_term):
