@@ -10,7 +10,7 @@ import numpy as np
 import tensorflow as tf
 import json
 import sys
-from collections import Counter
+from collections import Counter, namedtuple
 from itertools import combinations, product, repeat, chain
 from os.path import basename, dirname, join, splitext
 from ase.atoms import Atoms
@@ -27,6 +27,19 @@ __email__ = 'Bismarrck@me.com'
 FLAGS = tf.app.flags.FLAGS
 
 _safe_log = np.e**(-6)
+
+
+"""
+A data structure for storing transformed features and auxiliary parameters.
+"""
+KcnnSample = namedtuple("KcnnSample", (
+  "features",
+  "split_dims",
+  "weights",
+  "occurs",
+  "coefficients",
+  "indexing"
+))
 
 
 def get_formula(species):
@@ -718,7 +731,8 @@ class Transformer:
       natoms: an `int` as the number of atoms in an `ase.Atoms` object.
 
     Returns:
-      indexing: an `int` array.
+      indexing: an `int` array of shape `[3N, C(N, k) * C(k, 2) * 2 / N]` as the
+        indices of the entries for each atomic force component.
 
     """
     if not self._atomic_forces:
@@ -773,10 +787,10 @@ class Transformer:
     Returns:
       features: a `float32` array of shape `self.shape` as the input feature
         matrix.
-      cr: a `float32` array of shape `self.shape` as the covalent radii for
-        corresponding entries.
-      dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
-        corresponding differences of coordinates.
+      coef: a `float32` array as the coefficients matrix. The shape of `coef` is
+        `[self.shape[0], self.shape[1] * 6]`.
+      indexing: an `int` array of shape `[3N, C(N, k) * C(k, 2) * 2 / N]` as the
+        indices of the entries for each atomic force component.
 
     """
 
@@ -799,13 +813,13 @@ class Transformer:
     norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
 
     # Assign the normalized distances to the input feature matrix.
-    features, lr, dr = self._assign(norm_dists, delta, features=features)
+    features, cr, dr = self._assign(norm_dists, delta, features=features)
 
     # Apply the conditional sorting algorithm
-    features, lr, dr, indexing = self._conditionally_sort(features, lr, dr)
+    features, cr, dr, indexing = self._conditionally_sort(features, cr, dr)
 
     # Get coefficients matrix for computing atomic forces.
-    coef = self._get_coef_matrix(features, lr, dr)
+    coef = self._get_coef_matrix(features, cr, dr)
 
     # Transform the conditionally sorted indexing matrix.
     indexing = self._transform_indexing_matrix(indexing, len(atoms))
@@ -994,10 +1008,7 @@ class MultiTransformer:
         objects should have the same chemical symbols.
 
     Returns:
-      features: a `float32` 4D array as the input feature matrix.
-      split_dims: a `List[int]` for splitting the input features along axis 2.
-      weights: a 1D array as the binary weights of each row of the features.
-      occurs: a 2D array as the occurances of the species.
+      sample: a `KcnnSample` object.
 
     """
     ntotal = len(trajectory)
@@ -1012,16 +1023,37 @@ class MultiTransformer:
     split_dims = np.asarray(clf.split_dims)
     nrows, ncols = clf.shape
     features = np.zeros((ntotal, nrows, ncols), dtype=np.float32)
+
+    if self._atomic_forces:
+      coef = np.zeros_like(features, dtype=np.float32)
+      num_force_components = 3 * len(species)
+      num_entries = nrows * ncols * 6 // num_force_components
+      indexing = np.zeros((ntotal, num_force_components, num_entries),
+                          dtype=np.float32)
+    else:
+      coef = None
+      indexing = None
+
     occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._species.index(specie)
       if loc < 0:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[:, loc] = float(times)
+
     for i, atoms in enumerate(trajectory):
-      clf.transform(atoms, features[i])
+      _, coef_, indexing_ = clf.transform(atoms, features=features[i])
+      if self._atomic_forces:
+        coef[i] = coef_
+        indexing[i] = indexing_
+
     weights = np.tile(clf.binary_weights, (ntotal, 1))
-    return features, split_dims, weights, occurs
+    return KcnnSample(features=features,
+                      split_dims=split_dims,
+                      weights=weights,
+                      occurs=occurs,
+                      coefficients=coef,
+                      indexing=indexing)
 
   def transform(self, atoms):
     """
@@ -1031,10 +1063,7 @@ class MultiTransformer:
       atoms: an `ase.Atoms` object as the target to transform.
 
     Returns:
-      features: a `float32` 4D array as the input feature matrix.
-      split_dims: a `List[int]` for splitting the input features along axis 2.
-      weights: a 1D array as the binary weights of each row of the features. 
-      occurs: a 2D array as the occurances of the species.
+      sample: a `KcnnSample` object.
     
     Raises:
       ValueError: if the `species` is not supported by this transformer.
@@ -1047,7 +1076,7 @@ class MultiTransformer:
 
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
-    features, _, _ = clf.transform(atoms)
+    features, coef, indexing = clf.transform(atoms)
     occurs = np.zeros((1, len(self._species)), dtype=np.float32)
     for specie, times in Counter(species).items():
       loc = self._species.index(specie)
@@ -1055,7 +1084,12 @@ class MultiTransformer:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[0, loc] = float(times)
     weights = np.array(clf.binary_weights)
-    return features, split_dims, weights, occurs
+    return KcnnSample(features=features,
+                      split_dims=split_dims,
+                      weights=weights,
+                      occurs=occurs,
+                      coefficients=coef,
+                      indexing=indexing)
 
   def compute_atomic_energies(self, species, y_kbody, y_atomic_1body):
     """
@@ -1200,16 +1234,25 @@ class FixedLenMultiTransformer(MultiTransformer):
 
         species = atoms.get_chemical_symbols()
         y_true = atoms.get_total_energy()
-        features, split_dims, binary_weights, occurs = self.transform(atoms)
+        sample = self.transform(atoms)
 
-        x = _bytes_feature(features.tostring())
+        x = _bytes_feature(sample.features.tostring())
         y = _bytes_feature(np.atleast_2d(-y_true).tostring())
-        z = _bytes_feature(occurs.tostring())
-        w = _bytes_feature(binary_weights.tostring())
+        z = _bytes_feature(sample.occurs.tostring())
+        w = _bytes_feature(sample.binary_weights.tostring())
         y_weight = _float_feature(loss_fn(y_true))
-        example = Example(
-          features=Features(feature={'energy': y, 'features': x, 'occurs': z,
-                                     'weights': w, 'loss_weight': y_weight}))
+
+        if not self._atomic_forces:
+          example = Example(
+            features=Features(feature={'energy': y, 'features': x, 'occurs': z,
+                                       'weights': w, 'loss_weight': y_weight}))
+        else:
+          c = _bytes_feature(sample.coef.tostring())
+          indexing = _bytes_feature(sample.indexing.tostring())
+          example = Example(
+            features=Features(feature={'energy': y, 'features': x, 'occurs': z,
+                                       'weights': w, 'loss_weight': y_weight,
+                                       'indexing': indexing, 'coef': c}))
         writer.write(example.SerializeToString())
 
         counter = Counter(species)
@@ -1269,6 +1312,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       "max_occurs": max_occurs,
       "norm_order": self._norm_order,
       "initial_one_body_weights": initial_1body_weights,
+      "atomic_forces_enabled": self._atomic_forces,
     }
 
     with open(filename, "w+") as f:

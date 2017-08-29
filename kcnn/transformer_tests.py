@@ -171,22 +171,23 @@ class FixedLenMultiTransformerTest(tf.test.TestCase):
     k_max = 3
     clf = transformer.FixedLenMultiTransformer(
       max_occurs,
-      k_max=k_max
+      k_max=k_max,
+      include_all_k=False
     )
 
     species = get_species(max_occurs)
     coords = get_example(len(species))
-    features, split_dims, _, _ = clf.transform(Atoms(species, coords))
+    sample = clf.transform(Atoms(species, coords))
     total_dim = comb(max_natoms, k_max, True)
 
-    self.assertTupleEqual(features.shape, (total_dim, 3))
-    self.assertEqual(len(split_dims), 10)
+    self.assertTupleEqual(sample.features.shape, (total_dim, 3))
+    self.assertEqual(len(sample.split_dims), 10)
 
     species = get_species({"C": 1, "H": 4})
     coords = get_example(len(species))
-    features, split_dims_, _, _ = clf.transform(Atoms(species, coords))
-    self.assertListEqual(list(split_dims), list(split_dims_))
-    self.assertTupleEqual(features.shape, (total_dim, 3))
+    example = clf.transform(Atoms(species, coords))
+    self.assertListEqual(list(sample.split_dims), list(example.split_dims))
+    self.assertTupleEqual(example.features.shape, (total_dim, 3))
 
 
 if __name__ == "__main__":
