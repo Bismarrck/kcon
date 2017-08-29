@@ -545,6 +545,10 @@ class Transformer:
       cr = None
       dr = None
 
+    half = self._ck2 * 3
+    step = self._ck2
+    zero = 0
+
     for i, kbody_term in enumerate(self._kbody_terms):
       if kbody_term not in self._mapping:
         continue
@@ -560,49 +564,12 @@ class Transformer:
         features[istart: istop, k] = dists[index_matrix[k]]
         if self._atomic_forces:
           cr[istart: istop, k] = self._normalizers[index_matrix[k]]
+          # x = 0, y = 1, z = 2
           for j in range(3):
-            dr[istart: istop, 6 * k + j + 0] = +delta[index_matrix[k], j]
-            dr[istart: istop, 6 * k + j + 3] = -delta[index_matrix[k], j]
+            dr[istart: istop, j * step + k + zero] = +delta[index_matrix[k], j]
+            dr[istart: istop, j * step + k + half] = -delta[index_matrix[k], j]
 
     return features, cr, dr
-
-  def _conditionally_sort_i_1(self, z, orders, i, ix, features, cr, indexing):
-    """
-    Sort the features, the covalent radii and the indexing matrix. The dimension
-    of axis=1 of all these matrices are C(k, 2).
-    """
-    shape = z.shape
-    step = shape[1]
-    orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
-
-    z = z.flatten()[orders].reshape(shape)
-    features[self._offsets[i]: self._offsets[i + 1], ix] = z
-
-    l = cr[self._offsets[i]: self._offsets[i + 1], ix]
-    l = l.flatten()[orders].reshape(shape)
-    cr[self._offsets[i]: self._offsets[i + 1], ix] = l
-
-    for axis in range(2):
-      idx = indexing[self._offsets[i]: self._offsets[i + 1], ix, axis]
-      idx = idx.flatten()[orders].reshape(shape)
-      indexing[self._offsets[i]: self._offsets[i + 1], ix, axis] = idx
-
-  def _conditionally_sort_i_6(self, z, orders, i, ix, dr):
-    """
-    Sort the coordinates differences matrix whose number of columns is
-    6 * C(k, 2).
-    """
-    step = z.shape[1] * 6
-    ix = list(chain(*[[x * 6 + loc for loc in range(6)] for x in ix]))
-    d = dr[self._offsets[i]: self._offsets[i + 1], ix]
-    orders = [
-      list(chain(*[[x * 6 + loc for loc in range(6)]
-                   for x in orders[row]])) for row in range(len(orders))
-    ]
-    orders += np.tile(np.arange(0, z.size * 6, step), (step, 1)).T
-    shape = d.shape
-    d = d.flatten()[orders].reshape(shape)
-    dr[self._offsets[i]: self._offsets[i + 1], ix] = d
 
   def _conditionally_sort(self, features, cr, dr):
     """
@@ -616,8 +583,25 @@ class Transformer:
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
         corresponding differences of coordinates.
 
+    Returns:
+      features: a `float32` array of shape `self.shape` as the input feature
+        matrix.
+      cr: a `float32` array of shape `self.shape` as the covalent radii for
+        corresponding entries.
+      dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
+        corresponding differences of coordinates.
+      indexing: a `int` array of shape `[self.shape[0], self.shape[1], 2]`.
+
     """
+
+    def cond_sort(_part, _orders, _shape):
+      """
+      Do the conditional sorting.
+      """
+      return _part.flatten()[_orders].reshape(_shape)
+
     indexing = self._get_indexing_matrix().copy()
+    ck2 = self._ck2
 
     for i, kbody_term in enumerate(self._kbody_terms):
 
@@ -641,15 +625,32 @@ class Transformer:
         # at first.
         else:
           orders = np.argsort(z)
+          istart = self._offsets[i]
+          istop = self._offsets[i + 1]
+          shape = z.shape
+          step = shape[1]
+          orders += np.tile(np.arange(0, z.size, step), (step, 1)).T
 
-          # Sort the features, the covalent radii and the indexing matrix. The
-          # dimension of axis=1 of all these matrices are C(k, 2).
-          self._conditionally_sort_i_1(
-            z, orders.copy(), i, ix, features, cr, indexing)
+          # Sort the features
+          features[istart: istop, ix] = cond_sort(z, orders, shape)
 
-          # Sort the coordinates differences matrix whose number of columns is
-          # 6 * C(k, 2).
-          self._conditionally_sort_i_6(z, orders.copy(), i, ix, dr)
+          # Sort the covalend radii
+          cr[istart: istop, ix] = cond_sort(
+            cr[istart: istop, ix], orders, shape)
+
+          # Sort the indices
+          for axis in range(2):
+            array = indexing[istart: istop, :, axis]
+            array[:, ix] = cond_sort(array[:, ix], orders, shape)
+            indexing[istart: istop, :, axis] = array
+
+          # Sort the delta coordinates: dx, dy, dz
+          for axis in range(6):
+            cstart = axis * ck2
+            cstop = cstart + ck2
+            array = dr[istart: istop, cstart: cstop]
+            array[:, ix] = cond_sort(array[:, ix], orders, shape)
+            dr[istart: istop, cstart: cstop] = array
 
     return features, cr, dr, indexing
 
@@ -671,24 +672,24 @@ class Transformer:
 
     """
     if self._atomic_forces:
-      # logz = np.tile(np.log(z), (1, 6))
-      # z = np.tile(z, (1, 6))
-      # l2 = np.tile(l**2, (1, 6))
-      # return z * d / (l2 * logz)
+      logz = np.tile(np.log(z), (1, 6))
+      z = np.tile(z, (1, 6))
+      l2 = np.tile(l**2, (1, 6))
+      return z * d / (l2 * logz)
 
-      logz = np.log(z)
-      ll = l**2
-      rows, cols = z.shape
-      z6 = np.zeros((rows, cols * 6))
-      l6 = np.zeros_like(z6)
-      logz6 = np.zeros_like(z6)
-
-      for i in range(cols * 6):
-        z6[:, i] = z[:, i // 6]
-        l6[:, i] = ll[:, i // 6]
-        logz6[:, i] = logz[:, i // 6]
-
-      return z6 * d / (l6 * logz6)
+      # logz = np.log(z)
+      # ll = l**2
+      # rows, cols = z.shape
+      # z6 = np.zeros((rows, cols * 6))
+      # l6 = np.zeros_like(z6)
+      # logz6 = np.zeros_like(z6)
+      #
+      # for i in range(cols * 6):
+      #   z6[:, i] = z[:, i // 6]
+      #   l6[:, i] = ll[:, i // 6]
+      #   logz6[:, i] = logz[:, i // 6]
+      #
+      # return z6 * d / (l6 * logz6)
 
     else:
       return None
@@ -1310,24 +1311,24 @@ def debug():
     """
     return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
 
-  # positions = np.array([
-  #   [0.99825996, -0.00246000, -0.00436000],
-  #   [2.09020996, -0.00243000,  0.00414000],
-  #   [0.63378996,  1.02686000,  0.00414000],
-  #   [0.62703997, -0.52772999,  0.87810999],
-  #   [0.64135998, -0.50746995, -0.90539992],
-  # ])
-  # symbols = ["C", "H", "H", "H", "H"]
-
   positions = np.array([
-   [0.98915994,  0.00010000,  0.00000000],
-   [2.32491994, -0.00017000, -0.00000000],
-   [0.42940998,  0.93013996,  0.00000000],
-   [0.42907000, -0.92984998,  0.00000000],
-   [2.88499999,  0.92979997, -0.00000000],
-   [2.88466978, -0.93019998,  0.00000000],
+    [0.99825996, -0.00246000, -0.00436000],
+    [2.09020996, -0.00243000,  0.00414000],
+    [0.63378996,  1.02686000,  0.00414000],
+    [0.62703997, -0.52772999,  0.87810999],
+    [0.64135998, -0.50746995, -0.90539992],
   ])
-  symbols = ["C", "C", "H", "H", "H", "H"]
+  symbols = ["C", "H", "H", "H", "H"]
+
+  # positions = np.array([
+  #  [0.98915994,  0.00010000,  0.00000000],
+  #  [2.32491994, -0.00017000, -0.00000000],
+  #  [0.42940998,  0.93013996,  0.00000000],
+  #  [0.42907000, -0.92984998,  0.00000000],
+  #  [2.88499999,  0.92979997, -0.00000000],
+  #  [2.88466978, -0.93019998,  0.00000000],
+  # ])
+  # symbols = ["C", "C", "H", "H", "H", "H"]
   atoms = Atoms(symbols=symbols, positions=positions)
 
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
@@ -1423,10 +1424,10 @@ def debug():
 
   directions = ("x", "y", "z")
   calculated = coef.flatten()[indexing]
-  diff = np.absolute(matrix - calculated).sum(axis=1)
   print("Differences: ")
   for i in range(len(matrix)):
-    print("{:d}{:s} : {: 10.6f}".format(i // 3, directions[i % 3], diff[i]))
+    diff = np.abs(np.sort(calculated[i]) - np.sort(matrix[i])).sum()
+    print("{:d}{:s} : {: 10.6f}".format(i // 3, directions[i % 3], diff))
 
   sorted_diff = np.sort(calculated.flatten()) - np.sort(matrix.flatten())
   abs_sorted_diff = np.absolute(sorted_diff)
