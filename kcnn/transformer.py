@@ -26,6 +26,8 @@ __email__ = 'Bismarrck@me.com'
 
 FLAGS = tf.app.flags.FLAGS
 
+_safe_log = np.e**(-6)
+
 
 def get_formula(species):
   """
@@ -89,20 +91,20 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
     return lmat
 
 
-def _get_kbody_terms(species, many_body_k):
+def _get_kbody_terms(species, k_max):
   """
   Return the k-body terms given the chemical symbols and `many_body_k`.
 
   Args:
     species: a `list` of `str` as the chemical symbols.
-    many_body_k: a `int` as the maximum k-body terms that we should consider.
+    k_max: a `int` as the maximum k-body terms that we should consider.
 
   Returns:
     kbody_terms: a `list` of `str` as the k-body terms.
 
   """
   return sorted(list(set(
-      ["".join(sorted(c)) for c in combinations(species, many_body_k)])))
+      ["".join(sorted(c)) for c in combinations(species, k_max)])))
 
 
 def exponential(x, l, order=1):
@@ -672,10 +674,15 @@ class Transformer:
 
     """
     if self._atomic_forces:
+      # There will be zeros in `z`. Here we make sure every entry is no smaller
+      # than e^-6.
+      z = np.maximum(z, _safe_log)
       logz6 = np.tile(np.log(z), (1, 6))
       z6 = np.tile(z, (1, 6))
       l6 = np.tile(l**2, (1, 6))
-      return z6 * d / (l6 * logz6)
+      coef = z6 * d / (l6 * logz6)
+      # There will be zeros in `l`. Here we convert all NaNs to zeros.
+      return np.nan_to_num(coef)
     else:
       return None
 
@@ -726,22 +733,25 @@ class Transformer:
     zero = 0
 
     for i in range(cnk):
-      for j in range(ck2):
-        a, b = indexing[i, j, :]
-        ax = a * 3 + 0
-        ay = a * 3 + 1
-        az = a * 3 + 2
-        bx = b * 3 + 0
-        by = b * 3 + 1
-        bz = b * 3 + 2
-        matrix[ax, loc[a]] = position + 0 * ck2 + j + zero
-        matrix[ay, loc[a]] = position + 1 * ck2 + j + zero
-        matrix[az, loc[a]] = position + 2 * ck2 + j + zero
-        loc[a] += 1
-        matrix[bx, loc[b]] = position + 0 * ck2 + j + half
-        matrix[by, loc[b]] = position + 1 * ck2 + j + half
-        matrix[bz, loc[b]] = position + 2 * ck2 + j + half
-        loc[b] += 1
+
+      if indexing[i].min() >= 0:
+        for j in range(ck2):
+          a, b = indexing[i, j, :]
+          ax = a * 3 + 0
+          ay = a * 3 + 1
+          az = a * 3 + 2
+          bx = b * 3 + 0
+          by = b * 3 + 1
+          bz = b * 3 + 2
+          matrix[ax, loc[a]] = position + 0 * ck2 + j + zero
+          matrix[ay, loc[a]] = position + 1 * ck2 + j + zero
+          matrix[az, loc[a]] = position + 2 * ck2 + j + zero
+          loc[a] += 1
+          matrix[bx, loc[b]] = position + 0 * ck2 + j + half
+          matrix[by, loc[b]] = position + 1 * ck2 + j + half
+          matrix[bz, loc[b]] = position + 2 * ck2 + j + half
+          loc[b] += 1
+
       position += 6 * ck2
 
     return matrix
@@ -804,7 +814,7 @@ class MultiTransformer:
   """
 
   def __init__(self, atom_types, k_max=3, max_occurs=None, norm_order=1,
-               include_all_k=True, periodic=False):
+               include_all_k=True, periodic=False, atomic_forces=False):
     """
     Initialization method.
 
@@ -818,6 +828,8 @@ class MultiTransformer:
         considered.
       periodic: a `bool` indicating whether we shall use periodic boundary 
         conditions.
+      atomic_forces: a `bool` indicating whether the atomic forces derivation is
+        enabled or not.
 
     """
 
@@ -850,6 +862,7 @@ class MultiTransformer:
     self._num_atom_types = len(self._species)
     self._num_ghosts = num_ghosts
     self._periodic = periodic
+    self._atomic_forces = atomic_forces
     # The global split dims is None so that internal `_Transformer` objects will
     # construct their own `splid_dims`.
     self._split_dims = None
@@ -920,6 +933,13 @@ class MultiTransformer:
     """
     return self._max_occurs
 
+  @property
+  def atomic_forces_enabled(self):
+    """
+    Return True if atomic forces are also computed.
+    """
+    return self._atomic_forces
+
   def accept_species(self, species):
     """
     Return True if the given species can be handled.
@@ -953,7 +973,8 @@ class MultiTransformer:
                            kbody_terms=self._kbody_terms,
                            split_dims=self._split_dims,
                            norm_order=self._norm_order,
-                           periodic=self._periodic)
+                           periodic=self._periodic,
+                           atomic_forces=self._atomic_forces)
     )
     self._transformers[formula] = clf
     return clf
@@ -1088,7 +1109,7 @@ class FixedLenMultiTransformer(MultiTransformer):
   """
 
   def __init__(self, max_occurs, periodic=False, k_max=3, norm_order=1,
-               include_all_k=False):
+               include_all_k=False, atomic_forces=False):
     """
     Initialization method. 
     
@@ -1102,6 +1123,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       include_all_k: a `bool` indicating whether we shall include all k-body
         terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
         considered.
+      atomic_forces: a `bool` indicating whether the atomic forces derivation is
+        enabled or not.
     
     """
     super(FixedLenMultiTransformer, self).__init__(
@@ -1111,6 +1134,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       norm_order=norm_order,
       include_all_k=include_all_k,
       periodic=periodic,
+      atomic_forces=atomic_forces,
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
@@ -1279,8 +1303,15 @@ class FixedLenMultiTransformer(MultiTransformer):
 
 def debug():
   """
-  Debugging the calculation of the atomic forces of the CH4 molecule with Td
-  symmetry.
+  Debugging the calculation of the atomic forces.
+
+  Goals:
+    1. [x] CH4 and C2H6, default settings.
+    2. [x] CH4 and C2H6, alternative `kbody_terms`.
+    3. [ ] CH4 and C2H6, alternative `kbody_terms` and `split_dims`.
+    4. [ ] CH4 and C2H6, alternative `kbody_terms` and `split_dims`, GHOST
+    5. [ ] TiO2, default settings.
+
   """
 
   def print_atoms(_atoms):
@@ -1297,30 +1328,35 @@ def debug():
     """
     return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
 
-  # positions = np.array([
-  #   [0.99825996, -0.00246000, -0.00436000],
-  #   [2.09020996, -0.00243000,  0.00414000],
-  #   [0.63378996,  1.02686000,  0.00414000],
-  #   [0.62703997, -0.52772999,  0.87810999],
-  #   [0.64135998, -0.50746995, -0.90539992],
-  # ])
-  # symbols = ["C", "H", "H", "H", "H"]
-
   positions = np.array([
-   [0.98915994,  0.00010000,  0.00000000],
-   [2.32491994, -0.00017000, -0.00000000],
-   [0.42940998,  0.93013996,  0.00000000],
-   [0.42907000, -0.92984998,  0.00000000],
-   [2.88499999,  0.92979997, -0.00000000],
-   [2.88466978, -0.93019998,  0.00000000],
+    [0.99825996, -0.00246000, -0.00436000],
+    [2.09020996, -0.00243000,  0.00414000],
+    [0.63378996,  1.02686000,  0.00414000],
+    [0.62703997, -0.52772999,  0.87810999],
+    [0.64135998, -0.50746995, -0.90539992],
   ])
-  symbols = ["C", "C", "H", "H", "H", "H"]
+  symbols = ["C", "H", "H", "H", "H"]
+
+  # positions = np.array([
+  #  [0.98915994,  0.00010000,  0.00000000],
+  #  [2.32491994, -0.00017000, -0.00000000],
+  #  [0.42940998,  0.93013996,  0.00000000],
+  #  [0.42907000, -0.92984998,  0.00000000],
+  #  [2.88499999,  0.92979997, -0.00000000],
+  #  [2.88466978, -0.93019998,  0.00000000],
+  # ])
+  # symbols = ["C", "C", "H", "H", "H", "H"]
   atoms = Atoms(symbols=symbols, positions=positions)
 
   print("Molecule: {}".format(atoms.get_chemical_symbols()))
   print_atoms(atoms)
 
-  clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
+  species = ["C", "C", "H", "H", "H", "H", "N"]
+  kbody_terms = _get_kbody_terms(species, k_max=3)
+
+  clf = Transformer(atoms.get_chemical_symbols(),
+                    kbody_terms=kbody_terms,
+                    atomic_forces=True)
 
   bond_types = clf.get_bond_types()
   features, coef, indexing = clf.transform(atoms)
@@ -1329,20 +1365,25 @@ def debug():
   for i, kbody_term in enumerate(clf.kbody_terms):
     istart = offsets[i]
     istop = offsets[i + 1]
-    selections = clf.kbody_selections[kbody_term]
 
     print(kbody_term)
     print("Bond types: {}".format(bond_types[kbody_term]))
 
-    for j, index in enumerate(range(istart, istop)):
-      print("Selection: {}".format(selections[j]))
-      print("out  : {}".format(array2string(features[index])))
+    if kbody_term in clf.kbody_selections:
+
+      selections = clf.kbody_selections[kbody_term]
+      for j, index in enumerate(range(istart, istop)):
+        print("Selection: {}".format(selections[j]))
+        print("out  : {}".format(array2string(features[index])))
+
+    else:
+      print("Selection: None")
 
   print("Forces coefficients: ")
   print(array2string(coef.flatten()[indexing]))
 
   n = len(atoms)
-  matrix = np.zeros((n * 3, (n - 1) * (n - 2)))
+  matrix = np.zeros((n * 3, clf.shape[0] * clf.shape[1] * 2 // n))
   locations = np.zeros(n, dtype=int)
   vlist = np.zeros(3)
   xlist = np.zeros(3)
@@ -1352,6 +1393,9 @@ def debug():
   jlist = np.zeros(3, dtype=int)
 
   for kbody_term in clf.kbody_terms:
+
+    if kbody_term not in clf.kbody_selections:
+      continue
 
     selections = clf.kbody_selections[kbody_term]
     bonds = bond_types[kbody_term]
