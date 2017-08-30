@@ -8,6 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import logging
+from scipy.misc import factorial, comb
 from logging.config import dictConfig
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
@@ -19,6 +20,30 @@ from sys import version_info
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
+
+def compute_n_from_cnk(cnk, k):
+  """
+  Return the correponding N given C(N, k) and k.
+
+  Args:
+    cnk: an `int` as the value of C(N, k).
+    k: an `int` as the value of k.
+
+  Returns:
+    n: an `int` as the value of N.
+
+  """
+  if k == 2:
+    return int((1 + np.sqrt(1 + 8 * cnk)) * 0.5)
+  else:
+    istart = int(np.floor(np.power(factorial(k) * cnk, 1.0 / k)))
+    for v in range(istart, istart + k):
+      if comb(v, k) == cnk:
+        return v
+    else:
+      raise ValueError(
+        "The N for C(N, {}) = {} cannot be solved!".format(k, cnk))
 
 
 def safe_divide(a, b):
