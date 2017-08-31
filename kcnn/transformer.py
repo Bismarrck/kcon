@@ -18,7 +18,7 @@ from scipy.misc import comb
 from sklearn.metrics import pairwise_distances
 from tensorflow.python.training.training import Features, Example
 from constants import pyykko, GHOST
-from utils import get_atoms_from_kbody_term, safe_divide
+from utils import get_atoms_from_kbody_term, safe_divide, compute_n_from_cnk
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -233,6 +233,7 @@ class Transformer:
     self._binary_weights = self._get_binary_weights()
     self._atomic_forces = atomic_forces
     self._indexing_matrix = None
+    self._num_f_components = compute_n_from_cnk(offsets[-1], k_max) * 3
 
   @property
   def species(self):
@@ -721,14 +722,13 @@ class Transformer:
       self._indexing_matrix = index_matrix
     return self._indexing_matrix
 
-  def _transform_indexing_matrix(self, indexing, natoms):
+  def _transform_indexing_matrix(self, indexing):
     """
     Transform the conditionally sorted indexing matrix.
 
     Args:
       indexing: an `int` array of shape `[self.shape[0], self.shape[1], 2]` as
         the indexing matrix.
-      natoms: an `int` as the number of atoms in an `ase.Atoms` object.
 
     Returns:
       indexing: an `int` array of shape `[3N, C(N, k) * C(k, 2) * 2 / N]` as the
@@ -738,7 +738,8 @@ class Transformer:
     if not self._atomic_forces:
       return None
 
-    nnn = natoms * 3
+    nnn = self._num_f_components
+    natoms = nnn // 3
     cnk = indexing.shape[0]
     ck2 = indexing.shape[1]
     num_entries = cnk * ck2 * 6 // nnn
@@ -748,6 +749,7 @@ class Transformer:
     half = ck2 * 3
     zero = 0
     imax = len(self.species)
+    nnn_real = nnn - 3 * self._num_ghosts
 
     for i in range(cnk):
       if indexing[i].min() >= 0:
@@ -773,7 +775,7 @@ class Transformer:
 
       position += 6 * ck2
 
-    return matrix
+    return matrix[:nnn_real]
 
   def transform(self, atoms, features=None):
     """
@@ -822,9 +824,14 @@ class Transformer:
     coef = self._get_coef_matrix(features, cr, dr)
 
     # Transform the conditionally sorted indexing matrix.
-    indexing = self._transform_indexing_matrix(indexing, len(atoms))
+    indexing = self._transform_indexing_matrix(indexing)
 
-    return features.astype(np.float32), coef, indexing
+    # Convert the data types
+    features = features.astype(np.float32)
+    coef = coef.astype(np.float32)
+    indexing = indexing.astype(np.int32)
+
+    return features, coef, indexing
 
 
 class MultiTransformer:
@@ -1197,15 +1204,24 @@ class FixedLenMultiTransformer(MultiTransformer):
       split_dims.append(np.prod(dims))
     return [int(x) for x in split_dims]
 
-  def _transform_and_save(self, filename, examples, num_examples, loss_fn=None,
-                          verbose=True):
+  def _get_shape_of_indexing_matrix(self):
+    """
+    Return the shape of the indexing matrix returned by this transformer.
+    """
+    pass
+
+  def _transform_and_save(self, filename, examples, num_examples, max_size,
+                          loss_fn=None, verbose=True):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
 
     Args:
       filename: a `str` as the file to save examples.
-      examples: a iterator which shall iterate through all samples.
+      examples: a iterator which iterates through all examples.
+      num_examples: an `int` as the number of examples.
+      max_size: an `int` as the maximum size of all structures. This determines
+        the dimension of the forces.
       verbose: boolean indicating whether.
       loss_fn: a `Callable` for transforming the calculated raw loss.
 
@@ -1247,12 +1263,20 @@ class FixedLenMultiTransformer(MultiTransformer):
             features=Features(feature={'energy': y, 'features': x, 'occurs': z,
                                        'weights': w, 'loss_weight': y_weight}))
         else:
-          c = _bytes_feature(sample.coef.tostring())
+          # Pad zeros to the forces so that all forces of this dataset have the
+          # same dimension.
+          forces = atoms.get_forces()
+          pad = max_size - len(forces)
+          if pad > 0:
+            forces = np.pad(forces, ((0, pad), (0, 0)), mode='constant')
+          forces = _bytes_feature(forces.tostring())
+          coef = _bytes_feature(sample.coef.tostring())
           indexing = _bytes_feature(sample.indexing.tostring())
           example = Example(
             features=Features(feature={'energy': y, 'features': x, 'occurs': z,
                                        'weights': w, 'loss_weight': y_weight,
-                                       'indexing': indexing, 'coef': c}))
+                                       'indexing': indexing, 'coef': coef,
+                                       'forces': forces}))
         writer.write(example.SerializeToString())
 
         counter = Counter(species)
@@ -1271,21 +1295,20 @@ class FixedLenMultiTransformer(MultiTransformer):
       num_real_atom_types = self._num_atom_types - self._num_ghosts
       return _compute_lr_weights(coef, b, num_real_atom_types)
 
-  def _save_auxiliary_for_file(self, filename, initial_1body_weights=None,
-                               lookup_indices=None):
+  def _save_auxiliary_for_file(self, filename, max_size, lookup_indices=None,
+                               initial_1body_weights=None):
     """
     Save auxiliary data for the given dataset.
 
     Args:
       filename: a `str` as the tfrecords file.
-      initial_1body_weights: a 1D array of shape `[num_atom_types, ]` as the
-        initial weights for the one-body convolution kernels.
+      max_size: an `int` as maximum size of all structures. This determines the
+        dimension of the forces.
+      initial_1body_weights: a `float32` array of shape `[num_atom_types, ]` as
+        the initial weights for the one-body convolution kernels.
       lookup_indices: a `List[int]` as the indices of each given example.
 
     """
-    name = splitext(basename(filename))[0]
-    filename = join(dirname(filename), "{}.json".format(name))
-
     if lookup_indices is not None:
       lookup_indices = list(lookup_indices)
     else:
@@ -1299,7 +1322,10 @@ class FixedLenMultiTransformer(MultiTransformer):
     max_occurs = {atom: times for atom, times in self._max_occurs.items()
                   if times < self._k_max}
 
-    aux_dict = {
+    n = compute_n_from_cnk(self._total_dim, self._k_max)
+    num_entries = int(self._total_dim * comb(self._k_max, 2) * 2) // n
+
+    auxiliary_properties = {
       "kbody_terms": self._kbody_terms,
       "split_dims": self._split_dims,
       "shape": self.shape,
@@ -1313,10 +1339,13 @@ class FixedLenMultiTransformer(MultiTransformer):
       "norm_order": self._norm_order,
       "initial_one_body_weights": initial_1body_weights,
       "atomic_forces_enabled": self._atomic_forces,
+      "indexing_shape": [max_size * 3, num_entries]
     }
 
-    with open(filename, "w+") as f:
-      json.dump(aux_dict, fp=f, indent=2)
+    with open(join(dirname(filename),
+                   "{}.json".format(splitext(basename(filename))[0])),
+              "w+") as fp:
+      json.dump(auxiliary_properties, fp=fp, indent=2)
 
   def transform_and_save(self, database, train_file=None, test_file=None,
                          verbose=True, loss_fn=None):
@@ -1332,22 +1361,45 @@ class FixedLenMultiTransformer(MultiTransformer):
       loss_fn: a `Callable` for computing the exponential scaled RMSE loss.
 
     """
+    sizes = database.get_atoms_size_distribution()
+    max_size = max(sizes)
+
     if test_file:
       examples = database.examples(for_training=False)
       ids = database.ids_of_testing_examples
       num_examples = len(ids)
       self._transform_and_save(
-        test_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
-      self._save_auxiliary_for_file(test_file, lookup_indices=ids)
+        test_file,
+        examples,
+        num_examples,
+        max_size,
+        loss_fn=loss_fn,
+        verbose=verbose
+      )
+      self._save_auxiliary_for_file(
+        test_file,
+        max_size=max_size,
+        lookup_indices=ids
+      )
 
     if train_file:
       examples = database.examples(for_training=True)
       ids = database.ids_of_training_examples
       num_examples = len(ids)
       weights = self._transform_and_save(
-        train_file, examples, num_examples, loss_fn=loss_fn, verbose=verbose)
+        train_file,
+        examples,
+        num_examples,
+        max_size,
+        loss_fn=loss_fn,
+        verbose=verbose
+      )
       self._save_auxiliary_for_file(
-        train_file, initial_1body_weights=weights, lookup_indices=ids)
+        train_file,
+        max_size=max_size,
+        initial_1body_weights=weights,
+        lookup_indices=ids
+      )
 
 
 def debug():
@@ -1411,6 +1463,7 @@ def debug():
     dims = [comb(max_occurs[e], k, True) for e, k in counter.items()]
     split_dims.append(np.prod(dims))
   split_dims = [int(x) for x in split_dims]
+  print(split_dims)
 
   clf = Transformer(symbols + [GHOST],
                     kbody_terms=kbody_terms,
@@ -1442,8 +1495,9 @@ def debug():
   print("Forces coefficients: ")
   print(array2string(coef.flatten()[indexing]))
 
-  n = len(atoms)
-  matrix = np.zeros((n * 3, clf.shape[0] * clf.shape[1] * 2 // n))
+  n = sum(max_occurs.values())
+  natoms = n - max_occurs.get(GHOST, 0)
+  matrix = np.zeros((natoms * 3, clf.shape[0] * clf.shape[1] * 2 // n))
   locations = np.zeros(n, dtype=int)
   vlist = np.zeros(3)
   xlist = np.zeros(3)
@@ -1478,7 +1532,7 @@ def debug():
       ylist.fill(0.0)
       zlist.fill(0.0)
       for k, (i, j) in enumerate(combinations(selection, r=2)):
-        if i >= n or j >= n:
+        if i >= len(atoms) or j >= len(atoms):
           continue
         r = atoms.get_distance(i, j)
         l = pyykko[symbols[i]] + pyykko[symbols[j]]
@@ -1526,6 +1580,10 @@ def debug():
   ntotal = len(abs_sorted_diff)
   for n in range(10):
     print(abs_sorted_diff[0: (n + 1) * ntotal // 10].sum())
+
+  print("Shape of the features:        {}".format(features.shape))
+  print("Shape of the indexing matrix: {}".format(indexing.shape))
+  print("Shape of the coef matrix:     {}".format(coef.shape))
 
 
 if __name__ == "__main__":
