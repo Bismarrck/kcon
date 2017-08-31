@@ -35,7 +35,7 @@ A data structure for storing transformed features and auxiliary parameters.
 KcnnSample = namedtuple("KcnnSample", (
   "features",
   "split_dims",
-  "weights",
+  "binary_weights",
   "occurs",
   "coefficients",
   "indexing"
@@ -1057,7 +1057,7 @@ class MultiTransformer:
     weights = np.tile(clf.binary_weights, (ntotal, 1))
     return KcnnSample(features=features,
                       split_dims=split_dims,
-                      weights=weights,
+                      binary_weights=weights,
                       occurs=occurs,
                       coefficients=coef,
                       indexing=indexing)
@@ -1093,7 +1093,7 @@ class MultiTransformer:
     weights = np.array(clf.binary_weights)
     return KcnnSample(features=features,
                       split_dims=split_dims,
-                      weights=weights,
+                      binary_weights=weights,
                       occurs=occurs,
                       coefficients=coef,
                       indexing=indexing)
@@ -1243,7 +1243,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       if verbose:
         print("Start transforming {} ... ".format(filename))
 
-      coef = np.zeros((num_examples, self.number_of_atom_types))
+      lr = np.zeros((num_examples, self.number_of_atom_types))
       b = np.zeros((num_examples, ))
 
       for i, atoms in enumerate(examples):
@@ -1270,7 +1270,7 @@ class FixedLenMultiTransformer(MultiTransformer):
           if pad > 0:
             forces = np.pad(forces, ((0, pad), (0, 0)), mode='constant')
           forces = _bytes_feature(forces.tostring())
-          coef = _bytes_feature(sample.coef.tostring())
+          coef = _bytes_feature(sample.coefficients.tostring())
           indexing = _bytes_feature(sample.indexing.tostring())
           example = Example(
             features=Features(feature={'energy': y, 'features': x, 'occurs': z,
@@ -1281,7 +1281,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 
         counter = Counter(species)
         for loc, atom in enumerate(self._species):
-          coef[i, loc] = counter[atom]
+          lr[i, loc] = counter[atom]
         b[i] = y_true
 
         if verbose and (i + 1) % 100 == 0:
@@ -1293,7 +1293,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Transforming {} finished!".format(filename))
 
       num_real_atom_types = self._num_atom_types - self._num_ghosts
-      return _compute_lr_weights(coef, b, num_real_atom_types)
+      return _compute_lr_weights(lr, b, num_real_atom_types)
 
   def _save_auxiliary_for_file(self, filename, max_size, lookup_indices=None,
                                initial_1body_weights=None):
