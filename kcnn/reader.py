@@ -167,12 +167,15 @@ TFExample = namedtuple("TFExample", (
   "y_weight",
   "forces",
   "coef",
-  "indexing"
+  "indexing",
+  # the number of valid entries in each sample
+  "length"
 ))
 
 
 def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
-                    atomic_forces=False, max_size=None, num_entries=None):
+                    atomic_forces=False, num_f_components=None,
+                    num_entries=None):
   """
   Read and decode a single example from the TFRecords file.
 
@@ -183,8 +186,8 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
     num_atom_types: an `int` as the number of atom types.
     atomic_forces: a `bool` indicating whether atomic forces should be included
       or not.
-    max_size: an `int` as the maximum number of atoms in any structure of the
-      dataset. This must be set if `atomic_forces` is True.
+    num_f_components: an `int` as the maximum number of force components. This
+      must be set if `atomic_forces` is True.
     num_entries: an `int` as the number of entries per each force component.
       This must be set if `atomic_forces` is True.
 
@@ -217,9 +220,9 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
         'loss_weight': tf.FixedLenFeature([], tf.float32),
         'coef': tf.FixedLenFeature([], tf.string),
         'indexing': tf.FixedLenFeature([], tf.string),
-        'f_true': tf.FixedLenFeature([], tf.string)
+        'forces': tf.FixedLenFeature([], tf.string)
       })
-    assert max_size > 0 and num_entries > 0
+    assert num_f_components > 0 and num_entries > 0
 
   features = tf.decode_raw(example['features'], tf.float32)
   features.set_shape([cnk * ck2])
@@ -245,21 +248,23 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
     coef = tf.reshape(coef, [cnk, ck2 * 6])
 
     indexing = tf.decode_raw(example['indexing'], tf.int32)
-    indexing.set_shape([max_size * 3 * num_entries])
-    indexing = tf.reshape(indexing, [max_size * 3, num_entries])
+    indexing.set_shape([num_f_components * num_entries])
+    indexing = tf.reshape(indexing, [num_f_components, num_entries])
 
-    forces = tf.decode_raw(example['f_true'], tf.float64)
-    forces.set_shape([max_size * 3])
-    forces = tf.reshape(forces, (max_size, 3))
+    forces = tf.decode_raw(example['forces'], tf.float64)
+    forces.set_shape([num_f_components])
+
+    length = 8
 
   else:
     coef = None
     indexing = None
     forces = None
+    length = 5
 
   return TFExample(features=features, energy=energy, occurs=occurs,
                    weights=weights, y_weight=y_weight, forces=forces,
-                   coef=coef, indexing=indexing)
+                   coef=coef, indexing=indexing, length=length)
 
 
 def inputs(train, batch_size=50, shuffle=True, dataset=None):
@@ -294,11 +299,8 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
   cnk = shape[0]
   ck2 = shape[1]
   num_atom_types = configs["num_atom_types"]
-  atomic_forces = configs.get("atomic_forces", False)
-  if not atomic_forces:
-    end = 5
-  else:
-    end = 8
+  atomic_forces = configs.get("atomic_forces_enabled", False)
+  num_f_components, num_entries = configs.get("indexing_shape", (None, None))
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -311,20 +313,22 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
                               cnk,
                               ck2,
                               num_atom_types=num_atom_types,
-                              atomic_forces=atomic_forces)
+                              atomic_forces=atomic_forces,
+                              num_f_components=num_f_components,
+                              num_entries=num_entries)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
       batches = tf.train.batch(
-        example[0: end],
+        example[0: example.length],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
       batches = tf.train.shuffle_batch(
-        example[0: end],
+        example[0: example.length],
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
