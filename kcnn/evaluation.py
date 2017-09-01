@@ -175,7 +175,7 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       # Save the y_true and y_pred to a npz file for plotting
       if FLAGS.run_once:
         np.savez("{}_at_{}.npz".format(FLAGS.dataset, global_step),
-                 y_true=y_true, y_pred=y_pred)
+                 y_true=y_true, y_pred=y_pred, f_true=f_true, f_pred=f_pred)
 
       else:
         summary = tf.Summary()
