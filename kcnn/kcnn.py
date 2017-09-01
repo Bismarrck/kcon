@@ -211,7 +211,7 @@ def extract_configs(configs, for_training=True):
   if len(weights) == 0:
     weights = np.ones((num_atom_types, ), dtype=np.float32)
   else:
-    weights = weights[:-1]
+    weights = weights[:num_atom_types]
 
   # Create the parameter dict and the feed dict
   params = dict(split_dims=split_dims, kbody_terms=kbody_terms,
