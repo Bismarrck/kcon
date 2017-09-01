@@ -72,6 +72,9 @@ class BatchIndex:
   occurs = 2
   weights = 3
   loss_weight = 4
+  f_true = 5
+  coefficients = 6
+  indices = 7
 
 
 def get_batch(train=True, shuffle=True, dataset=None):
@@ -114,7 +117,8 @@ def get_batch_configs(train=True, dataset=None):
 
 
 def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
-         is_training, num_kernels=None, verbose=True, one_body_weights=None):
+         is_training, num_kernels=None, verbose=True, one_body_weights=None,
+         atomic_forces=False, coefficients=None, indexing=None):
   """
   Inference the model of `KCNN`.
 
@@ -135,9 +139,15 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       layers. This also determines the number of layers in each atomic network.
     one_body_weights: a 1D array of shape `[nat, ]` as the initial
       weights of the one-body kernel.
+    atomic_forces: a `bool` indicating whether the atomic forces should be
+      trained or not.
+    coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
+      forces.
+    indexing: a 3D Tensor as the indexing matrix for force compoenents.
 
   Returns:
     y_total: a Tensor of shape `[-1, ]` as the predicted total energies.
+    f_calc: a Tensor as the calculated atomic forces.
 
   """
 
@@ -153,13 +163,26 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
-  y_total, _ = inference(inputs, occurs, weights, split_dims,
-                         num_atom_types=num_atom_types, kbody_terms=kbody_terms,
-                         is_training=is_training, max_k=FLAGS.k_max,
-                         num_kernels=num_kernels, activation_fn=activation_fn,
-                         alpha=alpha, one_body_weights=one_body_weights,
-                         verbose=verbose, trainable_one_body=trainable)
-  return y_total
+  y_total, _, f_calc = inference(
+    inputs,
+    occurs,
+    weights,
+    split_dims,
+    num_atom_types=num_atom_types,
+    kbody_terms=kbody_terms,
+    is_training=is_training,
+    max_k=FLAGS.k_max,
+    num_kernels=num_kernels,
+    activation_fn=activation_fn,
+    alpha=alpha,
+    one_body_weights=one_body_weights,
+    verbose=verbose,
+    trainable_one_body=trainable,
+    atomic_forces=atomic_forces,
+    coefficients=coefficients,
+    indexing=indexing
+  )
+  return y_total, f_calc
 
 
 def extract_configs(configs, for_training=True):
@@ -181,6 +204,7 @@ def extract_configs(configs, for_training=True):
   num_atom_types = configs["num_atom_types"]
   kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
   num_kernels = [int(units) for units in FLAGS.conv_sizes.split(",")]
+  atomic_forces = configs.get("atomic_forces_enabled", False)
 
   # The last weight corresponds to the average contribs from k_max-body terms.
   weights = np.array(configs["initial_one_body_weights"], dtype=np.float32)
@@ -192,7 +216,8 @@ def extract_configs(configs, for_training=True):
   # Create the parameter dict and the feed dict
   params = dict(split_dims=split_dims, kbody_terms=kbody_terms,
                 is_training=for_training, one_body_weights=weights,
-                num_atom_types=num_atom_types, num_kernels=num_kernels)
+                num_atom_types=num_atom_types, num_kernels=num_kernels,
+                atomic_forces=atomic_forces)
   return params
 
 
@@ -211,7 +236,8 @@ def kcnn_from_dataset(dataset, for_training=True, **kwargs):
     y_true: a `float32` Tensor of shape `(-1, )` as the true energy.
     y_weight: a `float32` Tensor of shape `(-1, )` as the weights for computing
       weighted RMSE loss.
-    feed_dict: a `dict` as the feed dict for tensorflow sessions.
+    f_true: a `float32` Tensor as the true atomic forces or None.
+    f_calc: a `float32` Tensor as the calculated atomic forces or None.
 
   """
   batch = get_batch(train=for_training, dataset=dataset, shuffle=for_training)
@@ -224,18 +250,34 @@ def kcnn_from_dataset(dataset, for_training=True, **kwargs):
       tf.logging.warning("Unrecognized key={}".format(key))
 
   y_true = batch[BatchIndex.y_true]
-  y_total = kcnn(batch[BatchIndex.inputs], batch[BatchIndex.occurs],
-                 batch[BatchIndex.weights], **params)
   y_weight = batch[BatchIndex.loss_weight]
-  return y_total, y_true, y_weight
+
+  if not params["atomic_forces"]:
+    y_total, _ = kcnn(batch[BatchIndex.inputs],
+                      batch[BatchIndex.occurs],
+                      batch[BatchIndex.weights],
+                      **params)
+    f_calc = None
+    f_true = None
+
+  else:
+    y_total, f_calc = kcnn(batch[BatchIndex.inputs],
+                           batch[BatchIndex.occurs],
+                           batch[BatchIndex.weights],
+                           coefficients=batch[BatchIndex.coefficients],
+                           indexing=batch[BatchIndex.indices],
+                           **params)
+    f_true = batch[BatchIndex.f_true]
+
+  return y_total, y_true, y_weight, f_calc, f_true
 
 
-def loss(y_true, y_nn, weights=None):
+def get_y_loss(y_true, y_nn, weights=None):
   """
-  Return the total loss tensor.
+  Return the total loss tensor of energy only.
 
   Args:
-    y_true: the desired energies.
+    y_true: the true energies.
     y_nn: the neural network predicted energies.
     weights: the weights for the energies.
 
@@ -243,7 +285,7 @@ def loss(y_true, y_nn, weights=None):
     loss: the total loss tensor.
 
   """
-  with tf.name_scope("RMSE"):
+  with tf.name_scope("yRMSE"):
     if weights is None:
       weights = tf.constant(1.0, name='weight')
     mean_squared_error = tf.losses.mean_squared_error(
@@ -251,6 +293,52 @@ def loss(y_true, y_nn, weights=None):
     rmse = tf.sqrt(mean_squared_error, name="RMSE")
     tf.add_to_collection('losses', rmse)
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
+
+
+def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
+  """
+  Return the total loss tensor that also includes forces.
+
+  Args:
+    y_true: the true energies.
+    y_nn: the neural network predicted energies.
+    f_true: the true forces.
+    f_nn: the neural network predicted forces.
+    y_weights: the weights for the energy losses. If None, all losses have the
+      weight of 1.0.
+
+  Returns:
+    loss: the total loss tensor.
+    y_loss: the energy loss tensor.
+    f_loss: the forces loss tensor.
+
+  """
+  with tf.name_scope("yfRMSE"):
+
+    if y_weights is None:
+      y_weights = tf.constant(1.0, name="y_weight")
+
+    y_mse = tf.losses.mean_squared_error(
+      y_true,
+      y_nn,
+      scope="yMSE",
+      loss_collection=None,
+      weights=y_weights
+    )
+    y_rmse = tf.sqrt(y_mse, name="yRMSE")
+
+    f_mse = tf.losses.mean_squared_error(
+      f_true,
+      f_nn,
+      scope="fMSE",
+      loss_collection=None,
+    )
+    f_rmse = tf.sqrt(f_mse)
+
+    loss = tf.add(y_rmse, f_rmse)
+    tf.add_to_collection("losses", loss)
+    total_loss = tf.add_n(tf.get_collection("losses"), name="total_loss")
+    return total_loss, y_rmse, f_rmse
 
 
 def _add_loss_summaries(total_loss):

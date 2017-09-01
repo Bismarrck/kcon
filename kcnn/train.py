@@ -1,6 +1,7 @@
 # coding=utf-8
 """
-This script is used to train the kbody network.
+This script is used to train the KCNN network on a single node with CPUs or a
+single GPU.
 """
 from __future__ import print_function, absolute_import
 
@@ -8,7 +9,7 @@ import tensorflow as tf
 import json
 import time
 import kcnn
-from kcnn import kcnn_from_dataset as inference
+from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
@@ -77,38 +78,48 @@ def train_model():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Inference the KCNN model
-    y_nn, y_true, y_weight = inference(
+    y_nn, y_true, y_weights, f_nn, f_true = kcnn_from_dataset(
       FLAGS.dataset, for_training=True
     )
 
-    # Cast the true values to float32 and set the shape of the `y_pred`
-    # explicitly.
+    # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
     y_true = tf.cast(y_true, tf.float32)
     y_nn.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kcnn.loss(y_true, y_nn, y_weight)
+    if not FLAGS.forces:
+      loss = kcnn.get_y_loss(y_true, y_nn, y_weights)
+      yloss = None
+      floss = None
+
+    else:
+      loss, yloss, floss = kcnn.get_yf_loss(y_true,
+                                            y_nn,
+                                            f_true,
+                                            f_nn,
+                                            y_weights=y_weights)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
-    train_op = kbody.get_train_op(loss, global_step)
+    train_op = kcnn.get_train_op(loss, global_step)
 
     # Save the training flags
     save_training_flags()
 
-    class _RunHook(tf.train.SessionRunHook):
+    class RunHook(tf.train.SessionRunHook):
       """ Log loss and runtime and regularly freeze the model. """
 
-      def __init__(self):
+      def __init__(self, atomic_forces=False):
         """
         Initialization method.
         """
-        super(_RunHook, self).__init__()
+        super(RunHook, self).__init__()
         self._step = -1
         self._start_time = 0
         self._epoch = 0.0
         self._log_frequency = FLAGS.log_frequency
         self._freeze_frequency = FLAGS.freeze_frequency
+        self._atomic_forces = atomic_forces
 
       def begin(self):
         """
@@ -132,8 +143,15 @@ def train_model():
         self._step += 1
         self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
         self._start_time = time.time()
-        return tf.train.SessionRunArgs({"loss": loss,
-                                        "global_step": global_step})
+
+        if not self._atomic_forces:
+          return tf.train.SessionRunArgs({"loss": loss,
+                                          "global_step": global_step})
+        else:
+          return tf.train.SessionRunArgs({"loss": loss,
+                                          "yloss": yloss,
+                                          "floss": floss,
+                                          "global_step": global_step})
 
       def should_log(self):
         """
@@ -167,12 +185,24 @@ def train_model():
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
-          format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
-                       "(%6.1f examples/sec; %7.3f sec/batch)"
-          tf.logging.info(
-            format_str % (self._step, self._epoch, loss_value,
-                          examples_per_sec, sec_per_batch)
-          )
+
+          if not self._atomic_forces:
+            format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
+                         "(%6.1f examples/sec; %7.3f sec/batch)"
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value,
+                            examples_per_sec, sec_per_batch)
+            )
+          else:
+            yloss_value = run_values.results['yloss']
+            floss_value = run_values.results['floss']
+            format_str = "step %6d, epoch=%7.2f, loss = %10.6f, " \
+                         "yloss = %10.6f, floss = %10.6f, " \
+                         "(%6.1f examples/sec; %7.3f sec/batch)"
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value, yloss_value,
+                            floss_value, examples_per_sec, sec_per_batch)
+            )
 
         if self.should_freeze():
           save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
@@ -183,11 +213,11 @@ def train_model():
       saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
 
     # noinspection PyMissingOrEmptyDocstring
-    class _TimelineHook(tf.train.SessionRunHook):
+    class TimelineHook(tf.train.SessionRunHook):
       """ A hook to output tracing results for further performance analysis. """
 
       def __init__(self):
-        super(_TimelineHook, self).__init__()
+        super(TimelineHook, self).__init__()
         self._counter = -1
 
       def begin(self):
@@ -212,8 +242,8 @@ def train_model():
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
-               _RunHook(),
-               _TimelineHook()],
+               RunHook(atomic_forces=FLAGS.forces),
+               TimelineHook()],
         scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
