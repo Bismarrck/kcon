@@ -277,14 +277,27 @@ class Database:
     if isinstance(index, int):
       if index < 1:
         raise ValueError("The minimum id is 1 but not 0!")
-      obj = self._db.get_atoms('id={}'.format(index))
-    elif isinstance(index, (list, tuple, np.ndarray)):
-      self._db.update(list(index), selected=True)
-      obj = [self._get_atoms(row) for row in self._db.select(selected=True)]
-      self._db.update(list(index), selected=False)
+      objects = self._db.get_atoms('id={}'.format(index))
+
+    elif isinstance(index, (list, tuple, np.ndarray, slice)):
+
+      if isinstance(index, slice):
+        step = index.step or 1
+        indices = list(range(index.start, index.stop, step))
+      else:
+        indices = list(index)
+
+      if min(indices) < 1:
+        raise ValueError("The minimum id is 1 but not 0!")
+
+      self._db.update(indices, selected=True)
+      objects = [self._get_atoms(row) for row in self._db.select(selected=True)]
+      self._db.update(indices, selected=False)
+
     else:
       raise ValueError('The index should be an int or a list of ints!')
-    return obj
+
+    return objects
 
   @staticmethod
   def _get_atoms(row):
