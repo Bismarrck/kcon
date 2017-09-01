@@ -148,6 +148,79 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
   )
 
 
+def _inference_forces(y_total, inputs, coefficients, indexing):
+  """
+  Inference the KCNN forces.
+
+  Args:
+    y_total: a `float32` Tensor of shape `[-1, ]` as the output.
+    inputs: a Tensor of shape `[-1, 1, D, C(k, 2)]` as the inputs.
+    coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
+      forces.
+    indexing: a 3D Tensor as the indexing matrix for force compoenents.
+
+  Returns:
+    forces: a `float32` Tensor of shape `[-1, num_force_components]` as the
+      neural network forces.
+
+  """
+
+  assert isinstance(coefficients, tf.Tensor)
+  assert isinstance(indexing, tf.Tensor)
+
+  with tf.name_scope("Forces"):
+
+    # Compute the derivative of dE / dz. `z` is the input feature matrix and
+    # E = NN(z) is the output of the KCNN model.
+    dydz = tf.gradients([y_total], [inputs], name="dydz")[0]
+
+    # Squeeze the `dydz`. Now its shape will be `[-1, D, C(k, 2)]`
+    dydz = tf.squeeze(dydz, axis=1, name="dydz3d")
+
+    # Tile the derivatives because each entry of `z` contributes to six force
+    # components.
+    tiled = tf.tile(dydz, (1, 1, 6), "tiled")
+
+    # Do the element-wise multiplication. Now we get dy/dz * dz/dr * dr/df.
+    # Here `f` represents arbitrary force compoenent. `g` has the shape of
+    # `[-1, D, 6 * C(k, 2)]`.
+    g = tf.multiply(tiled, coefficients, name="g")
+
+    # Now we should re-order all entries of `g`. Flatten it so that its shape
+    # will be `[-1, D * 6 * C(k, 2)]`.
+    g = flatten(g)
+
+    # The basic idea of the re-ordering algorithm is taking advantage of the
+    # array broadcasting scheme of TensorFlow (Numpy). Since the batch size (the
+    # first axis of `g`) will not be 1, we cannot do broadcasting directly.
+    # Instead, we make the `g` a total flatten vector and broadcast it into a
+    # matrix with `indexing`.
+    batch_size, step = g.get_shape().as_list()
+    num_f, num_entries = indexing.get_shape().as_list()[1:3]
+    multiples = [1, num_f, num_entries]
+    size = batch_size * step
+    steps = np.arange(0, size, step, dtype=np.int32)
+    steps = np.reshape(steps, (batch_size, 1, 1))
+    steps = tf.tile(tf.constant(steps), multiples)
+    g = tf.reshape(g, (-1,), "1D")
+    indices = tf.add(indexing, steps, name="indices")
+    g = tf.gather(g, indices, name="reorder")
+
+    # Reshape `g` so that all entries of each row (axis=2) correspond to the
+    # same force component (axis=1).
+    g = tf.reshape(g, (batch_size, num_f, num_entries), "reshape")
+
+    # Sum up all entries of each row to get the final gradient for each force
+    # component.
+    g = tf.reduce_sum(g, axis=2, keep_dims=False, name="sum")
+
+    # Always remember the physics law: f = -dE / dr. So do not forget the minus
+    # sign here!
+    forces = tf.negative(g, "forces")
+
+  return forces
+
+
 def _split_inputs(inputs, split_dims):
   """
   Split the inputs into different parts. Each part represents a k-body atomic
@@ -161,7 +234,8 @@ def _split_inputs(inputs, split_dims):
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, verbose=True, num_kernels=None,
               activation_fn=lrelu, alpha=0.2, one_body_weights=None,
-              trainable_one_body=True):
+              trainable_one_body=True, atomic_forces=False, coefficients=None,
+              indexing=None):
   """
   The general inference function.
 
@@ -187,11 +261,18 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
       trainable or not.
+    atomic_forces: a `bool` indicating whether the atomic forces should be
+      trained or not.
+    coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
+      forces.
+    indexing: a 3D Tensor as the indexing matrix for force compoenents.
 
   Returns:
     y_total: a `float32` Tensor of shape `[-1, ]` as the total energies.
     y_contribs: a `float32` Tensor of shape `[-1, D]` as the predicted energies
       of the kbody contribs.
+    forces: a `float32` Tensor of shape `[-1, num_force_components]` as the
+      neural network forces.
 
   """
 
@@ -249,9 +330,15 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
     y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
 
+  # Inference the KCNN forces
+  if atomic_forces:
+    forces = _inference_forces(y_total, inputs, coefficients, indexing)
+  else:
+    forces = None
+
   if verbose:
     get_number_of_trainable_parameters(verbose=verbose)
-  return y_total, contribs
+  return y_total, contribs, forces
 
 
 def print_activations(tensor):
@@ -309,3 +396,63 @@ def variable_summaries(tensor):
     tf.summary.scalar('max', tf.reduce_max(tensor))
     tf.summary.scalar('min', tf.reduce_min(tensor))
     tf.summary.histogram('histogram', tensor)
+
+
+def debug():
+  """
+  Debug the KCNN inference.
+  """
+  properties = dict(
+    num_atom_types=4,
+    split_dims=[84, 252, 36, 36, 189, 63, 63, 9, 35, 21, 21, 7],
+    atomic_forces=True,
+    kbody_terms=["CCC", "CCH", "CCN", "CCX", "CHH", "CHN", "CHX", "CNX", "HHH",
+                 "HHN", "HHX", "HNX"],
+    one_body_weights=np.ones(4, dtype=np.float32),
+  )
+
+  graph = tf.Graph()
+
+  with graph.as_default():
+
+    inputs = tf.placeholder(
+      tf.float32, shape=[50, 1, 816, 3], name="inputs"
+    )
+    occurs = tf.placeholder(
+      tf.float32, shape=[50, 1, 1, properties['num_atom_types']], name="occurs"
+    )
+    binary_weights = tf.placeholder(
+      tf.float32, shape=[50, 1, 816, 1], name="weights"
+    )
+    split_dims = tf.placeholder(
+      tf.int64, shape=[len(properties['split_dims']), 0], name="split_dims"
+    )
+    coefficients = tf.placeholder(
+      tf.float32, shape=[50, 816, 18], name="aux_coef"
+    )
+    indexing = tf.placeholder(
+      tf.int32, shape=[50, 51, 272], name="indexing"
+    )
+
+    y_total, y_contribs, f_calc = inference(
+      inputs=inputs,
+      occurs=occurs,
+      weights=binary_weights,
+      split_dims=split_dims,
+      num_atom_types=properties['num_atom_types'],
+      kbody_terms=properties['kbody_terms'],
+      is_training=True,
+      verbose=True,
+      one_body_weights=properties['one_body_weights'],
+      atomic_forces=properties['atomic_forces'],
+      coefficients=coefficients,
+      indexing=indexing
+    )
+
+    print(y_total.get_shape())
+    print(y_contribs.get_shape())
+    print(f_calc.get_shape())
+
+
+if __name__ == "__main__":
+  debug()
