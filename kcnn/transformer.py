@@ -1269,7 +1269,7 @@ class FixedLenMultiTransformer(MultiTransformer):
           pad = max_size - len(forces)
           if pad > 0:
             forces = np.pad(forces, ((0, pad), (0, 0)), mode='constant')
-          forces = _bytes_feature(forces.tostring())
+          forces = _bytes_feature(forces.flatten().tostring())
           coef = _bytes_feature(sample.coefficients.tostring())
           indexing = _bytes_feature(sample.indexing.tostring())
           example = Example(
