@@ -34,6 +34,8 @@ tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.2,
                           """Set the parameter `alpha` for `lrelu`.""")
+tf.app.flags.DEFINE_boolean('batch_norm', False,
+                            """Use batch normalization if True.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -163,6 +165,11 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
+  if FLAGS.batch_norm:
+    use_batch_norm = True
+  else:
+    use_batch_norm = False
+
   y_total, _, f_calc = inference(
     inputs,
     occurs,
@@ -175,6 +182,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     num_kernels=num_kernels,
     activation_fn=activation_fn,
     alpha=alpha,
+    use_batch_norm=use_batch_norm,
     one_body_weights=one_body_weights,
     verbose=verbose,
     trainable_one_body=trainable,

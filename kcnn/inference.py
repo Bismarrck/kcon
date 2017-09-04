@@ -73,10 +73,6 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   batch_norm_params = {
     "is_training": is_training,
     "decay": BATCH_NORM_DECAY_FACTOR,
-    "param_initializers": {
-      "gamma_initializer": init_ops.constant_initializer(0.5),
-      "moving_variance_initializer": init_ops.constant_initializer(0.5)
-    }
   }
 
   # Build the convolution neural network for this k-body atomic interaction.
@@ -233,9 +229,9 @@ def _split_inputs(inputs, split_dims):
 
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, verbose=True, num_kernels=None,
-              activation_fn=lrelu, alpha=0.2, one_body_weights=None,
-              trainable_one_body=True, atomic_forces=False, coefficients=None,
-              indexing=None):
+              activation_fn=lrelu, alpha=0.2, use_batch_norm=False,
+              one_body_weights=None, trainable_one_body=True,
+              atomic_forces=False, coefficients=None, indexing=None):
   """
   The general inference function.
 
@@ -257,6 +253,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       layers. This also determines the number of layers in each atomic network.
     activation_fn: a `Callable` as the activation function.
     alpha: a `float` as the parameter alpha for Leaky ReLU.
+    use_batch_norm: a `bool` indicating whether the batch normalization should
+      be used or not.
     one_body_weights: a `float32` array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
@@ -289,6 +287,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
                                              activation_fn=activation_fn,
                                              alpha=alpha,
+                                             use_batch_norm=use_batch_norm,
                                              is_training=is_training,
                                              num_kernels=num_kernels,
                                              verbose=verbose))
