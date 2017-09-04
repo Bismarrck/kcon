@@ -672,16 +672,16 @@ class Transformer:
 
     return features, cr, dr, indexing
 
-  def _get_coef_matrix(self, z, l, d):
+  def _get_coef_matrix(self, z, l, d6):
     """
     Return the tiled coefficients matrix with the following equation:
 
-    C = np.tile((z * d) / (l**2 * log(d)), (1, 6))
+    C = np.tile((z * d) / (l**2 * log(z)), (1, 6))
 
     Args:
       z: a `float32` array of shape `self.shape` as the input feature matrix.
       l: a `float32` array of shape `self.shape` as the covalent radii matrix.
-      d: a `float32` array of shape `[self.shape[0], self.shape[1] * 6]` as the
+      d6: a `float32` array of shape `[self.shape[0], self.shape[1] * 6]` as the
         differences of the coordinates.
 
     Returns:
@@ -696,7 +696,7 @@ class Transformer:
       logz6 = np.tile(np.log(z), (1, 6))
       z6 = np.tile(z, (1, 6))
       l6 = np.tile(l**2, (1, 6))
-      coef = safe_divide(z6 * d, l6 * logz6)
+      coef = safe_divide(z6 * d6, l6 * logz6)
       # There will be zeros in `l`. Here we convert all NaNs to zeros.
       return np.nan_to_num(coef)
     else:
