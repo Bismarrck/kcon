@@ -1,0 +1,231 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+
+\title{The theory of KCNN}
+
+\author{Xin Chen}
+\date{\today}
+
+
+\begin{document}
+\maketitle
+	
+
+\section{Energy}
+
+The energy of KCNN is modeled under the many-body expression scheme:
+
+\begin{eqnarray}
+E^{total} = \sum_{a}^{C^N_1}{E^{(k=1)}_{a}} + \sum_{a,b}^{C^{N}_2}{E^{(k=2)}_{ab}} 
++ \sum_{a,b,c}^{C^{N}_3}{E^{(k=3)}_{abc}} + \cdots
+\end{eqnarray}
+
+\noindent For most cases, the equation above can be truncated at $k = 3$. Higher order 
+terms contribute far less to the total energy while require much more computational
+resources as $C^N_k$ roughly scales as $\mathcal{O}(N)$.
+
+\subsection{One-body}
+
+In KCNN, the 1-body terms are expressed by a linear model:
+
+\begin{eqnarray}
+\sum_{a}^{C^N_1}{E^{(k=1)}_{a}} = \sum_{a}^{N}{E^{A_a}} = \sum_{A_{a}}{n^{A_a}E^{A_a}}
+\end{eqnarray}
+
+\noindent As an example, the 1-body contribution of a 
+$\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ is:
+
+\begin{eqnarray}
+E^{(k=1)} = 9E^{\mathrm{C}} + 7E^{\mathrm{H}} + E^{\mathrm{N}}
+\end{eqnarray}
+
+\noindent Here $E^{\mathrm{C}}$, $E^{\mathrm{H}}$ and $E^{\mathrm{N}}$ are all
+trainable parameters.
+
+\subsection{Two/three-body}
+
+Independent convolutional neural networks are used to fit two/three-body terms:
+
+\begin{eqnarray}
+E^{(k=2)} & = & \sum_{a,b}^{C^N_2}{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}
+}(r_{ab}) \\
+E^{(k=3)} & = & \sum_{a,b,c}^{C^N_3}{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+}(r_{ab}, r_{ac}, r_{bc})
+\end{eqnarray}
+
+To simplify the equations and normalize the distances $r$, an exponential 
+transformation is adopted:
+
+\begin{eqnarray}
+z_{ab} = \exp{\left(-\frac{r_{ab}}{L_{A_a} + L_{A_b}}\right)}
+\end{eqnarray}
+
+\noindent where $L_{A_a}$ is the covalent radius of element $A_{a}$. For non periodic 
+molecules the Pÿÿkko radii are used.
+
+\subsection{The construction of the input feature matrix}
+
+Now we can build the input feature matrix in a straightforward way. Taking the example 
+of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the terms and their dimensions are:
+
+\begin{center}
+	\scalebox{1.0}{
+		\begin{tabular}{l*{3}{c}r}
+			Term              & k & Expression & Dimension \\
+			\hline
+			CC    & 2 & $C^9_2$                         &  36 \\
+			CH    & 2 & $C^9_1 \cdot C^7_1$             &  63 \\
+			CN    & 2 & $C^9_1 \cdot C^1_1$             &   9 \\
+			HH    & 2 & $C^7_2$                         &  21 \\
+			HN    & 2 & $C^7_1 \cdot C^1_1$             &   7 \\
+			CCC   & 3 & $C^9_3$                         &  84 \\
+			CCH   & 3 & $C^9_2 \cdot C^7_1$             & 252 \\
+			CCN   & 3 & $C^9_2$                         &  36 \\
+			CHH   & 3 & $C^9_1 \cdot C^7_2$             & 189 \\
+			CHN   & 3 & $C^9_1 \cdot C^7_1 \cdot C^1_1$ &  63 \\
+			HHH   & 3 & $C^7_3$                         &  35 \\
+			HHN   & 3 & $C^7_2 \cdot C^1_1$             &  21 \\
+			Total &   &                                 & 816 
+		\end{tabular}	
+	}
+\end{center}
+
+One can notice that $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ has 17 atoms but $C^{18}_3=816$.
+The CC and CCN, CH and CHN, HH and HHN all have the same dimension because $\mathrm{C}_9 
+\mathrm{H}_7 \mathrm{N}$ only has one nitrogen atom. So here we propose a 'ghost atom' 
+scheme which can simplify the construction of the input feature matrix. 
+A ghost atom, denoted as X, is appended. Its distances to any real atom is $+\infty$. 
+According to equation 6, the scaled distance of X to any real atom will be zero. 
+Then we drop all previous 2-body terms and only keep 3-body terms:
+
+\begin{center}
+	\scalebox{1.0}{
+		\begin{tabular}{l*{3}{c}r}
+			Term              & k & Expression & Dimension \\
+			\hline
+			CCX   & 3 & $C^9_2$                         &  36 \\
+			CHX   & 3 & $C^9_1 \cdot C^7_1$             &  63 \\
+			CNX   & 3 & $C^9_1 \cdot C^1_1$             &   9 \\
+			HHX   & 3 & $C^7_2$                         &  21 \\
+			HNX   & 3 & $C^7_1 \cdot C^1_1$             &   7 \\
+			CCC   & 3 & $C^9_3$                         &  84 \\
+			CCH   & 3 & $C^9_2 \cdot C^7_1$             & 252 \\
+			CCN   & 3 & $C^9_2$                         &  36 \\
+			CHH   & 3 & $C^9_1 \cdot C^7_2$             & 189 \\
+			CHN   & 3 & $C^9_1 \cdot C^7_1 \cdot C^1_1$ &  63 \\
+			HHH   & 3 & $C^7_3$                         &  35 \\
+			HHN   & 3 & $C^7_2 \cdot C^1_1$             &  21 \\
+			Total &   &                                 & 816 
+		\end{tabular}	
+	}
+\end{center}
+
+Now we only have 3-body terms but the dimensions are unchanged. With this scheme, we can 
+use just one matrix to store all 2-body and 3-body features.
+
+\subsection{Permutational Invariance}
+
+The three spatial (translational, rotational and permutational) invariances must all be 
+satisfied. Since KCNN only uses interatomic distances $r$, the translational and 
+rotational invariances are naturally kept and the 1-body and 2-body terms are also 
+permutationally invariant. However, the 3-body terms \(or higher\) do not satisfy this
+requirement because the orders of the parameters of convolutional kernels are fixed 
+while $(\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c})$ are inter-changeable. 
+
+To overcome this problem, the conditional sorting scheme is adopted: the columns of the 
+input matrix (the input layer) of each k-body CNN are ordered according to the bond types, 
+and for each k-body interaction (matrix row) we only sort the  entries of the same atom 
+types. Taking the examples of CHN, CCH and CCC:
+
+\begin{itemize}
+	\item CHN: each column represents a unique bond type (C-H, C-N, H-N). Sorting is not needed.
+	\item CCN: the entries corresponding to C-C of each row should be sorted.
+	\item CCC: all three entries of each row should be sorted.
+\end{itemize}
+
+
+\section{Force}
+
+Atomic force is the negative first-order derivative of energy with respect to 
+displacement:
+
+\begin{eqnarray}
+f(r) = -\frac{\partial E(r)}{\partial r}
+\end{eqnarray}
+
+\noindent So it's straightforward to get KCNN atomic forces:
+
+\begin{eqnarray}
+f(x_{i}) & = & -\frac{\partial{E^{total}}}{\partial{x_{i}}} \nonumber \\
+& = & -\left(
+	\frac{\partial{E^{(k=1)}}}{\partial{x_i}} 
+	+ \frac{\partial{E^{(k=2)}}}{\partial{x_i}}
+	+ \frac{\partial{E^{(k=3)}}}{\partial{x_i}} 
+\right) \nonumber \\
+& = & -\left(
+\frac{
+	\partial{\sum_{a,b}^{C^N_2}{
+		\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}}(z_{ab})}
+	}{
+		\partial{x_i}
+	} 
++ 
+\frac{
+	\partial{\sum_{a,b,c}^{C^N_3}{
+		\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}}
+		(z_{ab}, z_{ac}, z_{bc})}
+	}{
+		\partial{x_i}
+	} 
+\right) \nonumber \\
+& = & -\left(
+\sum_{a,b}^{C^N_2}{
+	\frac{
+		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}(z_{ab})}
+	}{
+		\partial{x_i}
+	}
+}
+	+
+\sum_{a,b,c}^{C^N_3}{
+	\frac{
+		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}
+		(z_{ab}, z_{ac}, z_{bc})}
+	}{
+		\partial{x_i}
+	}
+}
+\right)
+\end{eqnarray}
+
+\noindent where $f(x_{i})$ is the force component of atom $i$ along the X direction. We 
+also have:
+
+\begin{eqnarray}
+\frac{
+	\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}(z_{ab})}
+}{
+	\partial{x_i}
+} 
+& = & 
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}(z_{ab})}
+}{
+	\partial{z_{ab}}
+} \frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{x_i}} \\
+\frac{ \partial{z_{ab}}}{\partial{r_{ab}}} 
+& = & 
+-\frac{z_{ab}}{L_{A_a} + L_{A_b}} = -\frac{z_{ab}}{L_{ab}} \\
+\frac{\partial{r_{ab}}}{\partial{x_i}} & = & \begin{cases}
+	\frac{x_i - x_b}{r_{ib}} & \quad \text{if } i = a \\
+	\frac{x_a - x_i}{r_{ai}} & \quad \text{if } i = b \\
+	0                        & \quad \text{else}
+\end{cases} 
+\end{eqnarray}
+
+\end{document}
