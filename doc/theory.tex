@@ -4,7 +4,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
 
-\title{The theory of KCNN}
+\title{The theory and implementation of KCNN}
 
 \author{Xin Chen}
 \date{\today}
@@ -85,7 +85,7 @@ of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the terms and their dimensions are:
 			HN    & 2 & $C^7_1 \cdot C^1_1$             &   7 \\
 			CCC   & 3 & $C^9_3$                         &  84 \\
 			CCH   & 3 & $C^9_2 \cdot C^7_1$             & 252 \\
-			CCN   & 3 & $C^9_2$                         &  36 \\
+			CCN   & 3 & $C^9_2 \cdot C^1_1$             &  36 \\
 			CHH   & 3 & $C^9_1 \cdot C^7_2$             & 189 \\
 			CHN   & 3 & $C^9_1 \cdot C^7_1 \cdot C^1_1$ &  63 \\
 			HHH   & 3 & $C^7_3$                         &  35 \\
@@ -108,14 +108,14 @@ Then we drop all previous 2-body terms and only keep 3-body terms:
 		\begin{tabular}{l*{3}{c}r}
 			Term              & k & Expression & Dimension \\
 			\hline
-			CCX   & 3 & $C^9_2$                         &  36 \\
-			CHX   & 3 & $C^9_1 \cdot C^7_1$             &  63 \\
-			CNX   & 3 & $C^9_1 \cdot C^1_1$             &   9 \\
-			HHX   & 3 & $C^7_2$                         &  21 \\
-			HNX   & 3 & $C^7_1 \cdot C^1_1$             &   7 \\
+			CCX   & 3 & $C^9_2 \cdot C^1_1$             &  36 \\
+			CHX   & 3 & $C^9_1 \cdot C^7_1 \cdot C^1_1$ &  63 \\
+			CNX   & 3 & $C^9_1 \cdot C^1_1 \cdot C^1_1$ &   9 \\
+			HHX   & 3 & $C^7_2 \cdot C^1_1$             &  21 \\
+			HNX   & 3 & $C^7_1 \cdot C^1_1 \cdot C^1_1$ &   7 \\
 			CCC   & 3 & $C^9_3$                         &  84 \\
 			CCH   & 3 & $C^9_2 \cdot C^7_1$             & 252 \\
-			CCN   & 3 & $C^9_2$                         &  36 \\
+			CCN   & 3 & $C^9_2 \cdot C^1_1$             &  36 \\
 			CHH   & 3 & $C^9_1 \cdot C^7_2$             & 189 \\
 			CHN   & 3 & $C^9_1 \cdot C^7_1 \cdot C^1_1$ &  63 \\
 			HHH   & 3 & $C^7_3$                         &  35 \\
@@ -148,8 +148,35 @@ types. Taking the examples of CHN, CCH and CCC:
 	\item CCC: all three entries of each row should be sorted.
 \end{itemize}
 
+\subsection{Loss}
+
+By default, KCNN uses the root mean squared error as the total loss to minimize:
+
+\begin{eqnarray}
+\mathrm{RMSE} = \sqrt{
+	\frac{1}{n}
+	\sum_{i=1}^{n}{ 
+		\left( y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}} \right)^2
+	}
+}	
+\end{eqnarray}
+
+KCNN also supports exponentially-scaled RMSE if the contributions of the unstable structures 
+should be minimized:
+
+\begin{eqnarray}
+\mathrm{esRMSE} = \sqrt{
+	\frac{1}{n} 
+	\sum_{i=1}^{n}{
+		\exp{\left(-\frac{y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}}}{k_BT} \right)}
+		\left(y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}} \right)^2
+	}
+}	
+\end{eqnarray}
 
 \section{Force}
+
+\subsection{Theoretical Analysis}
 
 Atomic force is the negative first-order derivative of energy with respect to 
 displacement:
@@ -194,7 +221,7 @@ f(x_{i}) & = & -\frac{\partial{E^{total}}}{\partial{x_{i}}} \nonumber \\
 	+
 \sum_{a,b,c}^{C^N_3}{
 	\frac{
-		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}
+		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
 		(z_{ab}, z_{ac}, z_{bc})}
 	}{
 		\partial{x_i}
@@ -218,6 +245,33 @@ also have:
 }{
 	\partial{z_{ab}}
 } \frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{x_i}} \\
+\frac{
+	\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{x_i}
+} 
+& = & 
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{ab}}
+} \frac{\partial{z_{ab}}}{\partial{r_{ab}}}\frac{\partial{r_{ab}}}{\partial{x_i}} \nonumber \\
+& + & 
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{ac}}
+} \frac{\partial{z_{ac}}}{\partial{r_{ac}}}\frac{\partial{r_{ac}}}{\partial{x_i}} \nonumber \\
+& + &
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{bc}}
+} \frac{\partial{z_{bc}}}{\partial{r_{bc}}}\frac{\partial{r_{bc}}}{\partial{x_i}} \\
 \frac{ \partial{z_{ab}}}{\partial{r_{ab}}} 
 & = & 
 -\frac{z_{ab}}{L_{A_a} + L_{A_b}} = -\frac{z_{ab}}{L_{ab}} \\
@@ -227,5 +281,33 @@ also have:
 	0                        & \quad \text{else}
 \end{cases} 
 \end{eqnarray}
+
+As KCNN is built upon Google's TensorFlow, the calculations of the gradients above become far 
+more easier as TensorFlow can output the these complicated derivatives automatically:
+
+\begin{eqnarray}
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{ab}}
+} \nonumber \\	
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{ac}}
+} \nonumber \\
+\frac{\partial{
+	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
+	(z_{ab}, z_{ac}, z_{bc})}
+}{
+	\partial{z_{bc}}
+} \nonumber
+\end{eqnarray}
+
+\subsection{Implementation}
+
+
 
 \end{document}
