@@ -36,6 +36,8 @@ tf.app.flags.DEFINE_float('alpha', 0.2,
                           """Set the parameter `alpha` for `lrelu`.""")
 tf.app.flags.DEFINE_boolean('batch_norm', False,
                             """Use batch normalization if True.""")
+tf.app.flags.DEFINE_float('floss_weight', 1.0 / 3.0,
+                          """The weight of the f-loss in total loss.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -341,12 +343,13 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
       scope="fMSE",
       loss_collection=None,
     )
-    f_rmse = tf.sqrt(f_mse)
+    f_rmse = tf.sqrt(f_mse, name="fRMSE")
+    f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
-    loss = tf.add(y_rmse, f_rmse)
+    loss = tf.add(y_rmse, f_loss, "together")
     tf.add_to_collection("losses", loss)
     total_loss = tf.add_n(tf.get_collection("losses"), name="total_loss")
-    return total_loss, y_rmse, f_rmse
+    return total_loss, y_rmse, f_loss
 
 
 def _add_loss_summaries(total_loss):
