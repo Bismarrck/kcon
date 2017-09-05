@@ -828,8 +828,9 @@ class Transformer:
 
     # Convert the data types
     features = features.astype(np.float32)
-    coef = coef.astype(np.float32)
-    indexing = indexing.astype(np.int32)
+    if self._atomic_forces:
+      coef = coef.astype(np.float32)
+      indexing = indexing.astype(np.int32)
 
     return features, coef, indexing
 
