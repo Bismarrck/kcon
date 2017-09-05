@@ -191,20 +191,32 @@ def _inference_forces(y_total, inputs, coefficients, indexing):
     # first axis of `g`) will not be 1, we cannot do broadcasting directly.
     # Instead, we make the `g` a total flatten vector and broadcast it into a
     # matrix with `indexing`.
-    batch_size, step = g.get_shape().as_list()
-    num_f, num_entries = indexing.get_shape().as_list()[1:3]
-    multiples = [1, num_f, num_entries]
-    size = batch_size * step
-    steps = np.arange(0, size, step, dtype=np.int32)
-    steps = np.reshape(steps, (batch_size, 1, 1))
-    steps = tf.tile(tf.constant(steps), multiples)
-    g = tf.reshape(g, (-1,), "1D")
-    indices = tf.add(indexing, steps, name="indices")
-    g = tf.gather(g, indices, name="reorder")
+    with tf.name_scope("reshape"):
 
-    # Reshape `g` so that all entries of each row (axis=2) correspond to the
-    # same force component (axis=1).
-    g = tf.reshape(g, (batch_size, num_f, num_entries), "reshape")
+      with tf.name_scope("indices"):
+
+        with tf.name_scope("g"):
+          shape = tf.shape(g, name="shape")
+          batch_size, step = shape[0], shape[1]
+
+        with tf.name_scope("indexing"):
+          shape = tf.shape(indexing, name="shape")
+          num_f, num_entries = shape[1], shape[2]
+
+        multiples = [1, num_f, num_entries]
+        size = tf.multiply(batch_size, step, name="total_size")
+        steps = tf.range(0, limit=size, delta=step, name="arange")
+        steps = tf.reshape(steps, (batch_size, 1, 1), name="steps")
+        steps = tf.tile(steps, multiples, name="tiled")
+        indices = tf.add(indexing, steps, name="indices")
+
+      # Do the broadcast
+      g = tf.reshape(g, (-1,), "1D")
+      g = tf.gather(g, indices, name="gather")
+
+      # Reshape `g` so that all entries of each row (axis=2) correspond to the
+      # same force component (axis=1).
+      g = tf.reshape(g, (batch_size, num_f, num_entries), "reshape")
 
     # Sum up all entries of each row to get the final gradient for each force
     # component.
@@ -415,22 +427,22 @@ def debug():
   with graph.as_default():
 
     inputs = tf.placeholder(
-      tf.float32, shape=[50, 1, 816, 3], name="inputs"
+      tf.float32, shape=[50, 1, None, 3], name="inputs"
     )
     occurs = tf.placeholder(
       tf.float32, shape=[50, 1, 1, properties['num_atom_types']], name="occurs"
     )
     binary_weights = tf.placeholder(
-      tf.float32, shape=[50, 1, 816, 1], name="weights"
+      tf.float32, shape=[50, 1, None, 1], name="weights"
     )
     split_dims = tf.placeholder(
       tf.int64, shape=[len(properties['split_dims']), 0], name="split_dims"
     )
     coefficients = tf.placeholder(
-      tf.float32, shape=[50, 816, 18], name="aux_coef"
+      tf.float32, shape=[50, None, 18], name="aux_coef"
     )
     indexing = tf.placeholder(
-      tf.int32, shape=[50, 51, 272], name="indexing"
+      tf.int32, shape=[50, None, None], name="indexing"
     )
 
     y_total, y_contribs, f_calc = inference(
