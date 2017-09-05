@@ -32,7 +32,7 @@ tf.app.flags.DEFINE_integer('save_frequency', 200,
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """The frequency, in number of global steps, that
                             the training progress wiil be logged.""")
-tf.app.flags.DEFINE_integer('freeze_frequency', 100000,
+tf.app.flags.DEFINE_integer('freeze_frequency', 0,
                             """The frequency, in number of global steps, that
                             the graph will be freezed and exported.""")
 tf.app.flags.DEFINE_integer('max_to_keep', 50,
@@ -109,7 +109,7 @@ def train_model():
     class RunHook(tf.train.SessionRunHook):
       """ Log loss and runtime and regularly freeze the model. """
 
-      def __init__(self, atomic_forces=False):
+      def __init__(self, atomic_forces=False, should_freeze=True):
         """
         Initialization method.
         """
@@ -118,6 +118,7 @@ def train_model():
         self._start_time = 0
         self._epoch = 0.0
         self._log_frequency = FLAGS.log_frequency
+        self._should_freeze = should_freeze
         self._freeze_frequency = FLAGS.freeze_frequency
         self._atomic_forces = atomic_forces
 
@@ -163,7 +164,7 @@ def train_model():
         """
         Return True if we should freeze the current graph and values.
         """
-        return self._step % self._freeze_frequency == 0
+        return self._should_freeze and self._step % self._freeze_frequency == 0
 
       def after_run(self, run_context, run_values):
         """
@@ -237,12 +238,14 @@ def train_model():
           with open(self.get_ctf(), "w+") as f:
             f.write(ctf)
 
+    export_graph = True if FLAGS.freeze_frequency else False
+
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
-               RunHook(atomic_forces=FLAGS.forces),
+               RunHook(atomic_forces=FLAGS.forces, should_freeze=export_graph),
                TimelineHook()],
         scaffold=scaffold,
         config=tf.ConfigProto(
@@ -259,7 +262,8 @@ def train_model():
           mon_sess.run(train_op)
 
   # Do not forget to export the final model
-  save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
+  if export_graph:
+    save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
