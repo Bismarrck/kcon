@@ -3,6 +3,13 @@
 \usepackage{amsmath}
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
+\usepackage{hyperref}
+\hypersetup{
+	linkcolor=blue,
+	colorlinks=true
+}
+\usepackage{blkarray}
+
 
 \title{The theory and implementation of kCON}
 
@@ -12,7 +19,7 @@
 
 \begin{document}
 \maketitle
-	
+
 
 \section{Energy}
 
@@ -58,15 +65,17 @@ E^{(k=3)} & = & \sum_{a,b,c}^{C^N_3}{
 }(r_{ab}, r_{ac}, r_{bc})
 \end{eqnarray}
 
-To simplify the equations and normalize the distances $r$, an exponential 
+\noindent To simplify the equations and normalize the distances $r$, an exponential 
 transformation is adopted:
 
 \begin{eqnarray}
-z_{ab} = \exp{\left(-\frac{r_{ab}}{L_{a} + L_{b}}\right)}
+z_{ab} 
+= \exp{\left(-\frac{r_{ab}}{L_{a} + L_{b}}\right)}
+= \exp{\left(-\frac{r_{ab}}{L_{ab}}\right)}
 \end{eqnarray}
 
 \noindent where $L_{a}$ is the covalent radius of element $A_{a}$. For non periodic 
-molecules the Pÿÿkko radii are used.
+molecules the P$\ddot{\mathrm{y}}\ddot{\mathrm{y}}$kko radii are used.
 
 \subsection{The construction of the input feature matrix}
 
@@ -95,13 +104,13 @@ of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the k-body terms and their dimensions
 	}
 \end{center}
 
-One can notice that $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ has 17 atoms but $816=C^{18}_3$.
-The CC and CCN, CH and CHN, HH and HHN all have the same dimension because $\mathrm{C}_9 
-\mathrm{H}_7 \mathrm{N}$ only has one nitrogen atom. So here we propose a 'ghost atom' 
-scheme which can simplify the construction of the input feature matrix. 
-A ghost atom, denoted as X, is appended. Its distances to any real atom is $+\infty$. 
-According to equation 6, the scaled distance of X to any real atom will be zero. 
-Then we drop all previous 2-body terms and only keep 3-body terms:
+\noindent One can notice that $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ has 17 atoms but 
+$816=C^{18}_3$. The CC and CCN, CH and CHN, HH and HHN all have the same dimension because $
+\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ only has one nitrogen atom. So here we propose a 'ghost 
+atom' scheme which can simplify the construction of the input feature matrix. A ghost atom, 
+denoted as X, is appended. Its distances to any real atom is $+\infty$. According to equation 
+6, the scaled distance of X to any real atom will be zero. Then we drop all previous 2-body 
+terms and only keep 3-body terms:
 
 \begin{center}
 	\scalebox{1.0}{
@@ -125,8 +134,8 @@ Then we drop all previous 2-body terms and only keep 3-body terms:
 	}
 \end{center}
 
-Now we only have 3-body terms but the dimensions are unchanged. With this scheme, we can 
-use just one matrix to store all 2-body and 3-body features.
+\noindent Now we only have 3-body terms but the dimensions are unchanged. With this scheme, we 
+can use just one matrix to store all 2-body and 3-body features.
 
 \subsection{Permutational Invariance}
 
@@ -161,8 +170,8 @@ By default, kCON uses the root mean squared error as the total loss to minimize:
 }	
 \end{eqnarray}
 
-kCON also supports exponentially-scaled RMSE if the contributions of the unstable structures 
-should be minimized:
+\noindent kCON also supports exponentially-scaled RMSE if the contributions of the unstable 
+structures should be minimized:
 
 \begin{eqnarray}
 \mathrm{esRMSE} = \sqrt{
@@ -174,9 +183,7 @@ should be minimized:
 }	
 \end{eqnarray}
 
-\section{Force}
-
-\subsection{Theoretical Analysis}
+\section{Theoretical analysis of the forces}
 
 Atomic force is the negative first-order derivative of energy with respect to 
 displacement:
@@ -268,11 +275,14 @@ also have:
 
 \begin{eqnarray}
 r_{ab} & = & -L_{ab}\log{\left( z_{ab} \right)} \\
-\frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{x_i}} 
+d^x_{ab} & = & x_{a} - x_{b} \\
+d^y_{ab} & = & y_{a} - y_{b} \\
+d^z_{ab} & = & z_{a} - z_{b} \\
+\frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{\{x, y, z\}_i}} 
 & = &
 \begin{cases}
-z_{ab} (x_{a} - x_{b}) / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = a \\
--z_{ab} (x_{a} - x_{b}) / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = b \\
+z_{ab} d^{\{x,y,z\}}_{ab} / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = a \\
+-z_{ab} d^{\{x,y,z\}}_{ab} / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = b \\
 0 & \quad \text{else}
 \end{cases}
 \end{eqnarray}
@@ -305,8 +315,201 @@ far more easier as TensorFlow can output the these complicated derivatives autom
 }	
 \end{eqnarray}
 
-\subsection{Implementation}
+\section{Implementation of the forces}
 
+The implementation the atomic forces is a complicated though the theoretical analysis is 
+clear because we must make all operations \textbf{vectorizable} so that we can take
+advantages of modern deep learning frameworks like TensorFlow or MXNet. 
 
+\subsection{Dimension analysis}
+
+Suppose we have a system composed of N atoms with $k^\mathrm{max}=3$, the total energy can be 
+computed with the following equations:
+
+\begin{eqnarray}
+	E^{\mathrm{kCON}} & = & E^{(k=1)} + \mathrm{NN}(\boldsymbol{Z}) \\
+	\boldsymbol{Z} & = & \left[
+		\begin{array}{c}
+			\vec{z_{1}}  \\
+			\vec{z_{2}}  \\
+			\vec{z_{3}}  \\
+			\vec{z_{4}}  \\
+			\vec{z_{5}}  \\
+			\vdots \\
+			\vec{z_{n}}  \\
+		\end{array}
+	\right]                                                         \\
+	n & = & C^{N + 1}_3                                             \\
+	\boldsymbol{L} & = & \left[
+		\begin{array}{c}
+			\vec{l_{1}}  \\
+			\vec{l_{2}}  \\
+			\vec{l_{3}}  \\
+			\vec{l_{4}}  \\
+			\vec{l_{5}}  \\
+			\vdots \\
+			\vec{l_{n}}  \\			
+		\end{array}
+	\right]
+\end{eqnarray}
+
+\noindent where \textbf{Z} is the input feature matrix with shape $[C^{N+1}_{3}, 3]$, 
+$\vec{z_{i}}$ is a three-components vector representing the \textbf{conditionally sorted} 
+features of a chemical pattern and \textbf{L} is the associated covalent radii matrix for 
+\textbf{Z}. $E^{(k=1)}$ does not depend on interatomic distances, so we can safely ignore it 
+when computing atomic forces. Now TensorFlow can output the derivatives of 
+$E^{\mathrm{kCON}}$ with respect to the input feature matrix \textbf{Z} directly:
+
+\begin{equation}
+\frac{\partial{E^{\mathrm{kCON}}}}{\partial{\mathbf{Z}}} = 
+\left[
+	\begin{array}{c}
+		\partial{E} / \partial{\vec{z_{1}}}  \\
+		\partial{E} / \partial{\vec{z_{2}}}  \\
+		\partial{E} / \partial{\vec{z_{3}}}  \\
+		\partial{E} / \partial{\vec{z_{4}}}  \\
+		\partial{E} / \partial{\vec{z_{5}}}  \\
+		\vdots \\
+		\partial{E} / \partial{\vec{z_{n}}}  \\
+	\end{array}
+\right]
+\end{equation}
+
+\noindent and the shape of $\partial{E^{\mathrm{kCON}}} / \partial{\boldsymbol{Z}}$ is
+also $[C^{N+1}_{3}, 3]$. 
+
+Now let's look into $\partial{E} / \partial{\vec{z_{i}}}$. Here we define 
+$\vec{z_{1}} = [z_{12}, z_{13}, z_{23}]$ where $z_{ab}$ is the scaled interatomic distance of
+atom $a$ and $b$. According to equation 15, $\partial{z_{12}} / \partial{x_{i}}$ will be non
+-zero if and only if $i = a$ or $i = b$. Hence, 
+$\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{x_{i}}$ will only give 
+effective contributions to \textbf{six} atomic force components: $f^x_1$, $f^y_1$, $f^z_1$, 
+$f^x_2$, $f^y_2$ and $f^z_2$. Thus, $\partial{E^{\mathrm{kCON}}} / \partial{\boldsymbol{Z}}$ 
+will produce $6 \cdot C^{N+1}_3 \cdot 3=18C^{N+1}_3$ atomic force contributions but only
+$6 \cdot C^N_3 \cdot 3 + 6 \cdot C^N_2 \cdot 1$ of them are effective because the ghost atom 
+should give zero contribution. Since we have N atoms, there will be 3N force components and 
+each force component is the sum of $(N - 1)^2$ force contributions.
+
+\subsection{Tiling}
+
+According to the dimension analysis, each entry of \textbf{Z}, \textbf{L} and 
+$\partial{E^{\mathrm{kCON}}} / \partial{Z}$ corresponds to six force components. So repeating 
+these matrices 6 times will make each entry correspond to only one force component. This can
+be achieved by  
+\href{https://docs.scipy.org/doc/numpy/reference/generated/numpy.tile.html}{tiling}.
+The following example demonstrates the tiled \textbf{Z}:
+
+\begin{equation}
+Z_{tiled} = \mathrm{tile}(Z, (1,6)) = \left[
+\begin{array}{cccccc}
+	\vec{z_{1}} & \vec{z_{1}} & \vec{z_{1}} & \vec{z_{1}} & \vec{z_{1}} & \vec{z_{1}}  \\
+	\vec{z_{2}} & \vec{z_{2}} & \vec{z_{2}} & \vec{z_{2}} & \vec{z_{2}} & \vec{z_{2}}  \\
+	\vec{z_{3}} & \vec{z_{3}} & \vec{z_{3}} & \vec{z_{3}} & \vec{z_{3}} & \vec{z_{3}}  \\
+	\vec{z_{4}} & \vec{z_{4}} & \vec{z_{4}} & \vec{z_{4}} & \vec{z_{4}} & \vec{z_{4}}  \\
+	\vec{z_{5}} & \vec{z_{5}} & \vec{z_{5}} & \vec{z_{5}} & \vec{z_{5}} & \vec{z_{5}}  \\
+	\vdots      & \vdots      & \vdots      & \vdots      & \vdots      & \vdots       \\
+	\vec{z_{n}} & \vec{z_{n}} & \vec{z_{n}} & \vec{z_{n}} & \vec{z_{n}} & \vec{z_{n}}  \\
+		\end{array}
+	\right]
+\end{equation}
+
+\noindent After the tiling, the shapes of $\boldsymbol{Z}_{tiled}$, $\boldsymbol{L}_{tiled}$ 
+and $(\partial{E^{\mathrm{kCON}}} / \partial{Z})_{tiled}$ now become $[C^{N+1}_{3}, 18]$.
+
+\subsection{Coordinates differences}
+
+The one last auxiliary matrix to compute is the differences of the atomic coordinates 
+$d^{\{x, y, z\}}_{ab}$ introduced in equation 18. The matrix, denoted as \textbf{D}, also has 
+the shape of $[C^{N+1}_{3}, 18]$:
+
+\begin{equation}
+\mathbf{D} = \left[ 
+\begin{array}{ccccccc}
+\vec{d}_1 & \vec{d}_2 & \vec{d}_3 & \vec{d}_4 & \vec{d}_5 & \dots & \vec{d}_n 
+\end{array}
+\right]^T
+\end{equation}
+
+Suppose $\vec{z}_{1} = [z_{12}, z_{13}, z_{23}]$ and 
+$\vec{l}_{1} = [l_{12}, l_{13}, l_{23}]$. After the tiling, we have:
+\begin{eqnarray}
+\left(\vec{z}_{1, tiled}\right)^T = \left[
+	\begin{array}{c}
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+		z_{12} \\
+		z_{13} \\
+		z_{23} \\
+	\end{array}
+\right]
+, \quad
+\left(\vec{l}_{1, tiled}\right)^T = \left[
+	\begin{array}{c}
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+		l_{12} \\
+		l_{13} \\
+		l_{23} \\
+	\end{array}
+\right]
+\end{eqnarray}
+
+\noindent So, we can easily compute the corresponding $d^{\{ x,y,z \}}_{ab}$:
+
+\begin{equation}
+\vec{d}_{1} = \begin{blockarray}{cc}
+              & component \\
+\begin{block}{(c)c}
+	+d^x_{12} & f^x_1 \\
+	+d^x_{13} & f^x_1 \\
+	+d^x_{23} & f^x_2 \\
+	+d^y_{12} & f^y_1 \\
+	+d^y_{13} & f^y_1 \\
+	+d^y_{23} & f^y_2 \\
+	+d^z_{12} & f^z_1 \\
+	+d^z_{13} & f^z_1 \\
+	+d^z_{23} & f^z_2 \\
+	-d^x_{12} & f^x_2 \\
+	-d^x_{13} & f^x_3 \\
+	-d^x_{23} & f^x_3 \\
+	-d^y_{12} & f^y_2 \\
+	-d^y_{13} & f^y_3 \\
+	-d^y_{23} & f^y_3 \\
+	-d^z_{12} & f^z_2 \\
+	-d^z_{13} & f^z_3 \\
+	-d^z_{23} & f^z_3 \\
+\end{block}
+\end{blockarray}
+\end{equation}
+
+\subsection{Atomic forces}
+
+Finally we can compute atomic forces. The force contribution matrix can be easily obtained
 
 \end{document}
