@@ -69,10 +69,12 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   # Setup the initializers and normalization function.
   weights_initializer = initializers.xavier_initializer(
     seed=WEIGHT_INIT_SEED, dtype=dtype)
-  normalizer_fn = batch_norm if use_batch_norm else None
   batch_norm_params = {
     "is_training": is_training,
     "decay": BATCH_NORM_DECAY_FACTOR,
+    "scale": True,
+    "center": True,
+    "epsilon": 0.0001,
   }
 
   # Build the convolution neural network for this k-body atomic interaction.
@@ -82,6 +84,10 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                  variables_collections=[MODEL_VARIABLES]):
     with arg_scope([lrelu], alpha=alpha):
       for i, num_kernels in enumerate(num_kernels):
+        if i > 0 and use_batch_norm:
+          normalizer_fn = batch_norm
+        else:
+          normalizer_fn = None
         inputs = conv2d(inputs,
                         kernel_size=kernel_size,
                         num_outputs=num_kernels,
