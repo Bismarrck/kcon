@@ -325,7 +325,7 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
   """
   with tf.name_scope("yfRMSE"):
 
-    with tf.name_scope("y"):
+    with tf.name_scope("energy"):
       if y_weights is None:
         y_weights = tf.constant(1.0, name="y_weight")
 
@@ -338,7 +338,7 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
       )
       y_rmse = tf.sqrt(y_mse, name="yRMSE")
 
-    with tf.name_scope("f"):
+    with tf.name_scope("force"):
       f_mse = tf.losses.mean_squared_error(
         f_true,
         f_nn,
