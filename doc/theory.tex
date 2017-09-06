@@ -4,7 +4,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
 
-\title{The theory and implementation of KCNN}
+\title{The theory and implementation of kCON}
 
 \author{Xin Chen}
 \date{\today}
@@ -16,7 +16,7 @@
 
 \section{Energy}
 
-The energy of KCNN is modeled under the many-body expression scheme:
+The energy of kCON is modeled under the many-body expression scheme:
 
 \begin{eqnarray}
 E^{total} = \sum_{a}^{C^N_1}{E^{(k=1)}_{a}} + \sum_{a,b}^{C^{N}_2}{E^{(k=2)}_{ab}} 
@@ -29,7 +29,7 @@ resources as $C^N_k$ roughly scales as $\mathcal{O}(N)$.
 
 \subsection{One-body}
 
-In KCNN, the 1-body terms are expressed by a linear model:
+In kCON, the 1-body terms are expressed by a linear model:
 
 \begin{eqnarray}
 \sum_{a}^{C^N_1}{E^{(k=1)}_{a}} = \sum_{a}^{N}{E^{A_a}} = \sum_{A_{a}}{n^{A_a}E^{A_a}}
@@ -62,16 +62,16 @@ To simplify the equations and normalize the distances $r$, an exponential
 transformation is adopted:
 
 \begin{eqnarray}
-z_{ab} = \exp{\left(-\frac{r_{ab}}{L_{A_a} + L_{A_b}}\right)}
+z_{ab} = \exp{\left(-\frac{r_{ab}}{L_{a} + L_{b}}\right)}
 \end{eqnarray}
 
-\noindent where $L_{A_a}$ is the covalent radius of element $A_{a}$. For non periodic 
+\noindent where $L_{a}$ is the covalent radius of element $A_{a}$. For non periodic 
 molecules the Pÿÿkko radii are used.
 
 \subsection{The construction of the input feature matrix}
 
 Now we can build the input feature matrix in a straightforward way. Taking the example 
-of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the terms and their dimensions are:
+of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the k-body terms and their dimensions are:
 
 \begin{center}
 	\scalebox{1.0}{
@@ -95,7 +95,7 @@ of $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$, the terms and their dimensions are:
 	}
 \end{center}
 
-One can notice that $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ has 17 atoms but $C^{18}_3=816$.
+One can notice that $\mathrm{C}_9 \mathrm{H}_7 \mathrm{N}$ has 17 atoms but $816=C^{18}_3$.
 The CC and CCN, CH and CHN, HH and HHN all have the same dimension because $\mathrm{C}_9 
 \mathrm{H}_7 \mathrm{N}$ only has one nitrogen atom. So here we propose a 'ghost atom' 
 scheme which can simplify the construction of the input feature matrix. 
@@ -131,7 +131,7 @@ use just one matrix to store all 2-body and 3-body features.
 \subsection{Permutational Invariance}
 
 The three spatial (translational, rotational and permutational) invariances must all be 
-satisfied. Since KCNN only uses interatomic distances $r$, the translational and 
+satisfied. Since kCON only uses interatomic distances $r$, the translational and 
 rotational invariances are naturally kept and the 1-body and 2-body terms are also 
 permutationally invariant. However, the 3-body terms \(or higher\) do not satisfy this
 requirement because the orders of the parameters of convolutional kernels are fixed 
@@ -150,26 +150,26 @@ types. Taking the examples of CHN, CCH and CCC:
 
 \subsection{Loss}
 
-By default, KCNN uses the root mean squared error as the total loss to minimize:
+By default, kCON uses the root mean squared error as the total loss to minimize:
 
 \begin{eqnarray}
 \mathrm{RMSE} = \sqrt{
 	\frac{1}{n}
 	\sum_{i=1}^{n}{ 
-		\left( y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}} \right)^2
+		\left( y_{i}^{\mathrm{kCON}} - y_{i}^{\mathrm{True}} \right)^2
 	}
 }	
 \end{eqnarray}
 
-KCNN also supports exponentially-scaled RMSE if the contributions of the unstable structures 
+kCON also supports exponentially-scaled RMSE if the contributions of the unstable structures 
 should be minimized:
 
 \begin{eqnarray}
 \mathrm{esRMSE} = \sqrt{
 	\frac{1}{n} 
 	\sum_{i=1}^{n}{
-		\exp{\left(-\frac{y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}}}{k_BT} \right)}
-		\left(y_{i}^{\mathrm{KCNN}} - y_{i}^{\mathrm{True}} \right)^2
+		\exp{\left(-\frac{y_{i}^{\mathrm{kCON}} - y_{i}^{\mathrm{True}}}{k_BT} \right)}
+		\left(y_{i}^{\mathrm{kCON}} - y_{i}^{\mathrm{True}} \right)^2
 	}
 }	
 \end{eqnarray}
@@ -185,7 +185,7 @@ displacement:
 f(r) = -\frac{\partial E(r)}{\partial r}
 \end{eqnarray}
 
-\noindent So it's straightforward to get KCNN atomic forces:
+\noindent So it's straightforward to get kCON atomic forces:
 
 \begin{eqnarray}
 f(x_{i}) & = & -\frac{\partial{E^{total}}}{\partial{x_{i}}} \nonumber \\
@@ -234,6 +234,9 @@ f(x_{i}) & = & -\frac{\partial{E^{total}}}{\partial{x_{i}}} \nonumber \\
 also have:
 
 \begin{eqnarray}
+%
+% equation 11
+%
 \frac{
 	\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}(z_{ab})}
 }{
@@ -245,65 +248,61 @@ also have:
 }{
 	\partial{z_{ab}}
 } \frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{x_i}} \\
-\frac{
-	\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
-}{
-	\partial{x_i}
-} 
-& = & 
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
-}{
-	\partial{z_{ab}}
-} \frac{\partial{z_{ab}}}{\partial{r_{ab}}}\frac{\partial{r_{ab}}}{\partial{x_i}} \nonumber \\
-& + & 
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
-}{
-	\partial{z_{ac}}
-} \frac{\partial{z_{ac}}}{\partial{r_{ac}}}\frac{\partial{r_{ac}}}{\partial{x_i}} \nonumber \\
-& + &
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
-}{
-	\partial{z_{bc}}
-} \frac{\partial{z_{bc}}}{\partial{r_{bc}}}\frac{\partial{r_{bc}}}{\partial{x_i}} \\
+%
+% equation 12
+%
 \frac{ \partial{z_{ab}}}{\partial{r_{ab}}} 
 & = & 
 -\frac{z_{ab}}{L_{A_a} + L_{A_b}} = -\frac{z_{ab}}{L_{ab}} \\
+%
+% equation 13
+%
 \frac{\partial{r_{ab}}}{\partial{x_i}} & = & \begin{cases}
-	\frac{x_i - x_b}{r_{ib}} & \quad \text{if } i = a \\
-	\frac{x_a - x_i}{r_{ai}} & \quad \text{if } i = b \\
+	\frac{x_a - x_b}{r_{ab}} & \quad \text{if } i = a \\
+	-\frac{x_a - x_b}{r_{ab}} & \quad \text{if } i = b \\
 	0                        & \quad \text{else}
 \end{cases} 
 \end{eqnarray}
 
-As KCNN is built upon Google's TensorFlow, the calculations of the gradients above become far 
-more easier as TensorFlow can output the these complicated derivatives automatically:
+\noindent Finally we get:
 
 \begin{eqnarray}
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
+r_{ab} & = & -L_{ab}\log{\left( z_{ab} \right)} \\
+\frac{\partial{z_{ab}}}{\partial{r_{ab}}} \frac{\partial{r_{ab}}}{\partial{x_i}} 
+& = &
+\begin{cases}
+z_{ab} (x_{a} - x_{b}) / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = a \\
+-z_{ab} (x_{a} - x_{b}) / (L_{ab}^{2} \log{(z_{ab})}) & \quad \text{if } i = b \\
+0 & \quad \text{else}
+\end{cases}
+\end{eqnarray}
+
+For three (or higher body) terms, the result is similar to Equation 11 (See the Appendix 
+A for detailed derivation):
+
+\begin{eqnarray}
+\frac{
+	\partial{\boldmath{\mathrm{CNN}}^{k}\left(\left\{ z \right\} \right)}
+}{
+	\partial{x_i}
+} 
+=  \sum_{ab}^{C^N_k}{
+\frac{
+	\partial{\boldmath{\mathrm{CNN}}^{k}\left(\left\{ z \right\} \right)}
 }{
 	\partial{z_{ab}}
-} \nonumber \\	
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
+} \frac{\partial{z_{ab}}}{\partial{r_{ab}}}\frac{\partial{r_{ab}}}{\partial{x_i}}}
+\end{eqnarray}
+
+As kCON is built upon Google's TensorFlow, the calculations of the gradients above become 
+far more easier as TensorFlow can output the these complicated derivatives automatically:
+
+\begin{eqnarray}
+\frac{
+	\partial{\boldmath{\mathrm{CNN}}^{k}\left(\left\{ z \right\} \right)}
 }{
-	\partial{z_{ac}}
-} \nonumber \\
-\frac{\partial{
-	\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-	(z_{ab}, z_{ac}, z_{bc})}
-}{
-	\partial{z_{bc}}
-} \nonumber
+	\partial{z_{ab}}
+}	
 \end{eqnarray}
 
 \subsection{Implementation}
