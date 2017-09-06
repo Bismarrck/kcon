@@ -32,7 +32,7 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
-tf.app.flags.DEFINE_float('alpha', 0.2,
+tf.app.flags.DEFINE_float('alpha', 0.01,
                           """Set the parameter `alpha` for `lrelu`.""")
 tf.app.flags.DEFINE_boolean('batch_norm', False,
                             """Use batch normalization if True.""")
@@ -325,26 +325,29 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
   """
   with tf.name_scope("yfRMSE"):
 
-    if y_weights is None:
-      y_weights = tf.constant(1.0, name="y_weight")
+    with tf.name_scope("y"):
+      if y_weights is None:
+        y_weights = tf.constant(1.0, name="y_weight")
 
-    y_mse = tf.losses.mean_squared_error(
-      y_true,
-      y_nn,
-      scope="yMSE",
-      loss_collection=None,
-      weights=y_weights
-    )
-    y_rmse = tf.sqrt(y_mse, name="yRMSE")
+      y_mse = tf.losses.mean_squared_error(
+        y_true,
+        y_nn,
+        scope="yMSE",
+        loss_collection=None,
+        weights=y_weights
+      )
+      y_rmse = tf.sqrt(y_mse, name="yRMSE")
 
-    f_mse = tf.losses.mean_squared_error(
-      f_true,
-      f_nn,
-      scope="fMSE",
-      loss_collection=None,
-    )
-    f_rmse = tf.sqrt(f_mse, name="fRMSE")
-    f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
+    with tf.name_scope("f"):
+      f_mse = tf.losses.mean_squared_error(
+        f_true,
+        f_nn,
+        scope="fMSE",
+        loss_collection=None,
+      )
+      f_rmse = tf.sqrt(f_mse, name="fRMSE")
+      tf.summary.scalar("fRMSE", f_rmse)
+      f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
     loss = tf.add(y_rmse, f_loss, "together")
     tf.add_to_collection("losses", loss)
