@@ -24,6 +24,9 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
+# TODO: fix the multi-counting problem when the number of ghost atoms >= 2.
+
+
 FLAGS = tf.app.flags.FLAGS
 
 _safe_log = np.e**(-6)
@@ -120,7 +123,7 @@ def _get_kbody_terms(species, k_max):
       ["".join(sorted(c)) for c in combinations(species, k_max)])))
 
 
-def exponential(x, l, order=1):
+def normalize(x, l, order=1):
   """
   Normalize the `inputs` with the exponential function:
     f(r) = exp(-r/L)
@@ -233,7 +236,11 @@ class Transformer:
     self._binary_weights = self._get_binary_weights()
     self._atomic_forces = atomic_forces
     self._indexing_matrix = None
-    self._num_f_components = compute_n_from_cnk(offsets[-1], k_max) * 3
+
+    n = compute_n_from_cnk(self._offsets[-1], self._k_max)
+    self._num_real = n - self._num_ghosts
+    self._num_f_components = 3 * self._num_real
+    self._num_entries = self._get_num_force_entries()
 
   @property
   def species(self):
@@ -330,6 +337,14 @@ class Transformer:
       atoms = get_atoms_from_kbody_term(kbody_term)
       bonds[kbody_term] = ["-".join(ab) for ab in combinations(atoms, r=2)]
     return bonds
+
+  def _get_num_force_entries(self):
+    """
+    Return the number of entries per force component.
+    """
+    n = self._num_real
+    return np.sum([comb(n, k) * comb(k, 2) * 2 / n
+                   for k in range(2, self._k_max + 1)]).astype(int)
 
   @staticmethod
   def _get_num_ghosts(species, many_body_k):
@@ -738,18 +753,14 @@ class Transformer:
     if not self._atomic_forces:
       return None
 
-    nnn = self._num_f_components
-    natoms = nnn // 3
     cnk = indexing.shape[0]
     ck2 = indexing.shape[1]
-    num_entries = cnk * ck2 * 6 // nnn
-    matrix = np.zeros((nnn, num_entries), dtype=int)
-    loc = np.zeros((natoms, ), dtype=int)
+    matrix = np.zeros((self._num_f_components, self._num_entries), dtype=int)
+    loc = np.zeros((self._num_real, ), dtype=int)
     position = 0
     half = ck2 * 3
     zero = 0
     imax = len(self.species)
-    nnn_real = nnn - 3 * self._num_ghosts
 
     for i in range(cnk):
       if indexing[i].min() >= 0:
@@ -775,7 +786,7 @@ class Transformer:
 
       position += 6 * ck2
 
-    return matrix[:nnn_real]
+    return matrix
 
   def transform(self, atoms, features=None):
     """
@@ -812,7 +823,7 @@ class Transformer:
     dists = dists.flatten()
     if delta is not None:
       delta = delta.reshape((-1, 3))
-    norm_dists = exponential(dists, self._normalizers, order=self._norm_order)
+    norm_dists = normalize(dists, self._normalizers, order=self._norm_order)
 
     # Assign the normalized distances to the input feature matrix.
     features, cr, dr = self._assign(norm_dists, delta, features=features)
@@ -1498,7 +1509,7 @@ def debug():
 
   n = sum(max_occurs.values())
   natoms = n - max_occurs.get(GHOST, 0)
-  matrix = np.zeros((natoms * 3, clf.shape[0] * clf.shape[1] * 2 // n))
+  matrix = np.zeros((natoms * 3, (natoms - 1)**2))
   locations = np.zeros(n, dtype=int)
   vlist = np.zeros(3)
   xlist = np.zeros(3)
