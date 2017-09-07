@@ -513,29 +513,68 @@ $\vec{l}_{1} = [l_{12}, l_{13}, l_{23}]$. After the tiling, we have:
 Finally we can compute atomic forces.
 
 
-\section*{Appendix: a simple example}
 
-Consider a simple example of $\mathrm{B}_{4}$, its input feature matrix should be:
+\newpage
 
-\begin{equation}
-\mathbf{Z}^{(0)} = \left[\begin{array}{ccc}
-	z_{12} & 0        & 0        \\
-	z_{13} & 0        & 0        \\
-	z_{14} & 0        & 0        \\
-	z_{23} & 0        & 0        \\
-	z_{24} & 0        & 0        \\
-	z_{34} & 0        & 0        \\
-	z_{12} & z_{13} & z_{23} \\
-	z_{12} & z_{14} & z_{24} \\
-	z_{13} & z_{14} & z_{23} \\
-	z_{23} & z_{24} & z_{34} \\
+\section*{Appendix: an example of $\mathrm{B}_4$}
+
+Consider a simple example of $\mathrm{B}_{4}$. This molecule has 4 atoms, so the total 
+dimension of the input feature matrix should be $C^{4+1}_3=10$, including $C^4_3$ 3-body 
+features and $C^4_2$ 2-body features.
+Its input feature matrix, $\mathbf{Z}^{(0)}$, can be expressed like this:
+
+\begin{eqnarray}
+\mathbf{Z}^{(0)} & = & \left[\begin{array}{c}
+	\mathbf{Z^{(0)}}_{k=2} \\
+	\mathbf{Z^{(0)}}_{k=3} \\
 \end{array}
 \right]
-\end{equation}
+\end{eqnarray}
 
-\noindent where $z^(k)_{ab}$ represents the k-body normalized distance between atom $a$ and 
-$b$. The first six rows of \textbf{Z} are 2-body features and the last four rows are 3-body
-features. The latter analysis will only consider the 3-body part for simplicity.
+\noindent where:
+
+\begin{eqnarray}
+f(r_{ab}) & = & \exp{\left( -\frac{r_{ab}}{L_{ab}} \right)} \\
+\mathbf{Z}^{(0)}_{k=2} & = & \begin{blockarray}{ccc}
+  \mathrm{BB} & \mathrm{BX} & \mathrm{BX} \\
+\begin{block}{(ccc)}
+	z_{11} & 0        & 0        \\
+	z_{21} & 0        & 0        \\
+	z_{31} & 0        & 0        \\
+	z_{41} & 0        & 0        \\
+	z_{51} & 0        & 0        \\
+	z_{61} & 0        & 0        \\
+\end{block}
+\end{blockarray} = 
+f(\left[\begin{array}{ccc}
+	r_{12} & +\infty  & +\infty  \\
+	r_{13} & +\infty  & +\infty  \\
+	r_{14} & +\infty  & +\infty  \\
+	r_{23} & +\infty  & +\infty  \\
+	r_{24} & +\infty  & +\infty  \\
+	r_{34} & +\infty  & +\infty  \\
+\end{array}
+\right]) \\
+\mathbf{Z}^{(0)}_{k=3} & = & \begin{blockarray}{ccc}
+\mathrm{BB} & \mathrm{BB} & \mathrm{BB} \\ 
+\begin{block}{(ccc)}
+	z_{11} & z_{12}   & z_{13}   \\
+	z_{21} & z_{22}   & z_{23}   \\
+	z_{31} & z_{32}   & z_{33}   \\
+	z_{41} & z_{42}   & z_{43}   \\
+\end{block}
+\end{blockarray} =
+f(\left[\begin{array}{ccc}
+	r_{12} & r_{13}   & r_{23}   \\
+	r_{12} & r_{14}   & r_{24}   \\
+	r_{13} & r_{14}   & r_{34}   \\
+	r_{23} & r_{24}   & r_{34}   \\
+\end{array}
+\right])
+\end{eqnarray}
+
+\noindent and $\mathbf{z}^{(0)}_{k=2,3}$ are 2-body and 3-body input features. The analysis 
+will only consider the 3-body part for simplicity.
 
 Suppose the convolutional neural network for BBB has two hidden layers and one output layer.
 The convolutional kernels are:
@@ -560,14 +599,14 @@ The convolutional kernels are:
 \noindent where $\mathbf{W}^{(k)}$ is the kernel matrix for layer $k$. Each row of  
 $\mathbf{W}^{(k)}$ represents a kernel and the last entry of each kernel is the bias unit. 
 One should notice that the last layer (the output layer) does not have a bias unit.
-The activation function used here is leaky ReLU:
+The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 
 \begin{eqnarray}
-f(x) & = & \begin{cases}
+\sigma(x) & = & \begin{cases}
 	x & \quad \text{if } x \geq 0 \\
 	\alpha x & \quad \text{else} \\
 \end{cases} \\
-\frac{\partial{f(x)}}{\partial{x}} & = & \begin{cases}
+\frac{\partial{\sigma(x)}}{\partial{x}} & = & \begin{cases}
 	1 & \quad \text{if } x \geq 0 \\
 	\alpha & \quad \text{else} \\
 \end{cases} \\
@@ -579,14 +618,21 @@ f(x) & = & \begin{cases}
 \begin{eqnarray}
 \mathbf{Z}^{(1)} 
 & = & \left[\begin{array}{ccc}
-	f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{13} + w^{(1)}_{13}z_{23} + b^{(1)}_1) &
-	f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{13} + w^{(1)}_{23}z_{23} + b^{(1)}_2) \\
-	f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{24} + b^{(1)}_1) &
-	f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{24} + b^{(1)}_2) \\
-	f(w^{(1)}_{11}z_{13} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{34} + b^{(1)}_1) &
-	f(w^{(1)}_{21}z_{13} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{34} + b^{(1)}_2) \\
-	f(w^{(1)}_{11}z_{23} + w^{(1)}_{12}z_{24} + w^{(1)}_{13}z_{34} + b^{(1)}_1) &
-	f(w^{(1)}_{21}z_{23} + w^{(1)}_{22}z_{24} + w^{(1)}_{23}z_{34} + b^{(1)}_2) \\
+	\sigma(w^{(1)}_{11}z_{11} + w^{(1)}_{12}z_{12} + w^{(1)}_{13}z_{13} + b^{(1)}_1) &
+	\sigma(w^{(1)}_{21}z_{11} + w^{(1)}_{22}z_{12} + w^{(1)}_{23}z_{13} + b^{(1)}_2) \\
+	\sigma(w^{(1)}_{11}z_{21} + w^{(1)}_{12}z_{22} + w^{(1)}_{13}z_{23} + b^{(1)}_1) &
+	\sigma(w^{(1)}_{21}z_{21} + w^{(1)}_{22}z_{22} + w^{(1)}_{23}z_{23} + b^{(1)}_2) \\
+	\sigma(w^{(1)}_{11}z_{31} + w^{(1)}_{12}z_{32} + w^{(1)}_{13}z_{33} + b^{(1)}_1) &
+	\sigma(w^{(1)}_{21}z_{31} + w^{(1)}_{22}z_{32} + w^{(1)}_{23}z_{33} + b^{(1)}_2) \\
+	\sigma(w^{(1)}_{11}z_{41} + w^{(1)}_{12}z_{42} + w^{(1)}_{13}z_{43} + b^{(1)}_1) &
+	\sigma(w^{(1)}_{21}z_{41} + w^{(1)}_{22}z_{42} + w^{(1)}_{23}z_{43} + b^{(1)}_2) \\
+\end{array}
+\right] \nonumber \\
+& = & \left[\begin{array}{ccc}	
+	\sigma(a^{(1)}_{11}) & \sigma(a^{(1)}_{12}) \\
+	\sigma(a^{(1)}_{21}) & \sigma(a^{(1)}_{22}) \\
+	\sigma(a^{(1)}_{31}) & \sigma(a^{(1)}_{32}) \\
+	\sigma(a^{(1)}_{41}) & \sigma(a^{(1)}_{42}) \\
 \end{array}
 \right] \nonumber \\
 & = & \left[\begin{array}{ccc}	
@@ -603,14 +649,21 @@ f(x) & = & \begin{cases}
 \begin{eqnarray}
 \mathbf{Z}^{(2)} 
 & = & \left[\begin{array}{ccc}
-	f(w^{(2)}_{11}z^{(1)}_{11} + w^{(2)}_{12}z^{(1)}_{12} + b^{(2)}_1) &
-	f(w^{(2)}_{21}z^{(1)}_{11} + w^{(2)}_{22}z^{(1)}_{12} + b^{(2)}_2) \\
-	f(w^{(2)}_{11}z^{(1)}_{21} + w^{(2)}_{12}z^{(1)}_{22} + b^{(2)}_1) &
-	f(w^{(2)}_{21}z^{(1)}_{21} + w^{(2)}_{22}z^{(1)}_{22} + b^{(2)}_2) \\
-	f(w^{(2)}_{11}z^{(1)}_{31} + w^{(2)}_{12}z^{(1)}_{32} + b^{(2)}_1) &
-	f(w^{(2)}_{21}z^{(1)}_{31} + w^{(2)}_{22}z^{(1)}_{32} + b^{(2)}_2) \\
-	f(w^{(2)}_{11}z^{(1)}_{41} + w^{(2)}_{12}z^{(1)}_{42} + b^{(2)}_1) &
-	f(w^{(2)}_{21}z^{(1)}_{41} + w^{(2)}_{22}z^{(1)}_{42} + b^{(2)}_2) \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{11} + w^{(2)}_{12}z^{(1)}_{12} + b^{(2)}_1) &
+	\sigma(w^{(2)}_{21}z^{(1)}_{11} + w^{(2)}_{22}z^{(1)}_{12} + b^{(2)}_2) \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{21} + w^{(2)}_{12}z^{(1)}_{22} + b^{(2)}_1) &
+	\sigma(w^{(2)}_{21}z^{(1)}_{21} + w^{(2)}_{22}z^{(1)}_{22} + b^{(2)}_2) \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{31} + w^{(2)}_{12}z^{(1)}_{32} + b^{(2)}_1) &
+	\sigma(w^{(2)}_{21}z^{(1)}_{31} + w^{(2)}_{22}z^{(1)}_{32} + b^{(2)}_2) \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{41} + w^{(2)}_{12}z^{(1)}_{42} + b^{(2)}_1) &
+	\sigma(w^{(2)}_{21}z^{(1)}_{41} + w^{(2)}_{22}z^{(1)}_{42} + b^{(2)}_2) \\
+\end{array}
+\right] \nonumber \\
+& = & \left[\begin{array}{ccc}	
+	\sigma(a^{(2)}_{11}) & \sigma(a^{(2)}_{12}) \\
+	\sigma(a^{(2)}_{21}) & \sigma(a^{(2)}_{22}) \\
+	\sigma(a^{(2)}_{31}) & \sigma(a^{(2)}_{32}) \\
+	\sigma(a^{(2)}_{41}) & \sigma(a^{(2)}_{42}) \\
 \end{array}
 \right] \nonumber \\
 & = & \left[\begin{array}{ccc}	
@@ -634,7 +687,8 @@ f(x) & = & \begin{cases}
 \right]
 \end{equation}
 
-\noindent Finally we can get the total energy $E$ which is the sum of the k-body energies of 
+\noindent The activation function will not be applied to the output layer.
+Finally we can get the total energy $E$ which is the sum of the k-body energies of 
 the output layer:
 
 \begin{eqnarray}
@@ -663,16 +717,30 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 & = &
 \mathbf{I}^T
 \left[\begin{array}{c}
-	f(w^{(2)}_{11}z^1_{11} + w^{(2)}_{12}z^1_{12} + b^{(2)}_1)w^3_{11} \\
-	f(w^{(2)}_{21}z^1_{11} + w^{(2)}_{22}z^1_{12} + b^{(2)}_2)w^3_{12} \\
-	f(w^{(2)}_{11}z^1_{21} + w^{(2)}_{12}z^1_{22} + b^{(2)}_1)w^3_{11} \\ 
-	f(w^{(2)}_{21}z^1_{21} + w^{(2)}_{22}z^1_{22} + b^{(2)}_2)w^3_{12} \\
-	f(w^{(2)}_{11}z^1_{31} + w^{(2)}_{12}z^1_{32} + b^{(2)}_1)w^3_{11} \\
-	f(w^{(2)}_{21}z^1_{31} + w^{(2)}_{22}z^1_{32} + b^{(2)}_2)w^3_{12} \\
-	f(w^{(2)}_{11}z^1_{41} + w^{(2)}_{12}z^1_{42} + b^{(2)}_1)w^3_{11} \\
-	f(w^{(2)}_{21}z^1_{41} + w^{(2)}_{22}z^1_{42} + b^{(2)}_2)w^3_{12}
+	\sigma(w^{(2)}_{11}z^{(1)}_{11} + w^{(2)}_{12}z^{(1)}_{12} + b^{(2)}_1)w^3_{11} \\
+	\sigma(w^{(2)}_{21}z^{(1)}_{11} + w^{(2)}_{22}z^{(1)}_{12} + b^{(2)}_2)w^3_{12} \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{21} + w^{(2)}_{12}z^{(1)}_{22} + b^{(2)}_1)w^3_{11} \\ 
+	\sigma(w^{(2)}_{21}z^{(1)}_{21} + w^{(2)}_{22}z^{(1)}_{22} + b^{(2)}_2)w^3_{12} \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{31} + w^{(2)}_{12}z^{(1)}_{32} + b^{(2)}_1)w^3_{11} \\
+	\sigma(w^{(2)}_{21}z^{(1)}_{31} + w^{(2)}_{22}z^{(1)}_{32} + b^{(2)}_2)w^3_{12} \\
+	\sigma(w^{(2)}_{11}z^{(1)}_{41} + w^{(2)}_{12}z^{(1)}_{42} + b^{(2)}_1)w^3_{11} \\
+	\sigma(w^{(2)}_{21}z^{(1)}_{41} + w^{(2)}_{22}z^{(1)}_{42} + b^{(2)}_2)w^3_{12}
 \end{array}
-\right] = \mathbf{I}^T \mathbf{Y}
+\right] \nonumber \\ 
+& = & 
+\mathbf{I}^T \left[\begin{array}{c}
+	Y_{1} \\
+	Y_{2} \\
+	Y_{3} \\
+	Y_{4} \\
+	Y_{5} \\
+	Y_{6} \\
+	Y_{7} \\
+	Y_{8} \\
+\end{array}
+\right] \nonumber \\
+& = & 
+\mathbf{I}^T \mathbf{Y}
 \end{eqnarray}
 
 \noindent where \textbf{Y} is:
@@ -680,60 +748,60 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \begin{equation}
 \mathbf{Y} = 
 \left[\begin{array}{c}
-	f\left(
+	\sigma\left(
 		w^{(2)}_{11}
-			f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{13} + w^{(1)}_{13}z_{23} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{11} + w^{(1)}_{12}z_{12} + w^{(1)}_{13}z_{13} + b^{(1)}_1) + 
 		w^{(2)}_{12}
-			f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{13} + w^{(1)}_{23}z_{23} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{11} + w^{(1)}_{22}z_{12} + w^{(1)}_{23}z_{13} + b^{(1)}_2) + 
 		b^{(2)}_1
 	\right)w^{(3)}_{11} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{21}
-			f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{13} + w^{(1)}_{13}z_{23} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{11} + w^{(1)}_{12}z_{12} + w^{(1)}_{13}z_{13} + b^{(1)}_1) + 
 		w^{(2)}_{22}
-			f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{13} + w^{(1)}_{23}z_{23} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{11} + w^{(1)}_{22}z_{12} + w^{(1)}_{23}z_{13} + b^{(1)}_2) + 
 		b^{(2)}_2
 	\right)w^{(3)}_{12} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{11}
-			f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{24} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{21} + w^{(1)}_{12}z_{22} + w^{(1)}_{13}z_{23} + b^{(1)}_1) + 
 		w^{(2)}_{12}
-			f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{24} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{21} + w^{(1)}_{22}z_{22} + w^{(1)}_{23}z_{23} + b^{(1)}_2) + 
 		b^{(2)}_1
 	\right)w^{(3)}_{11} \\ 
-	f\left(
+	\sigma\left(
 		w^{(2)}_{21}
-			f(w^{(1)}_{11}z_{12} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{24} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{21} + w^{(1)}_{12}z_{22} + w^{(1)}_{13}z_{23} + b^{(1)}_1) + 
 		w^{(2)}_{22}
-			f(w^{(1)}_{21}z_{12} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{24} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{21} + w^{(1)}_{22}z_{22} + w^{(1)}_{23}z_{23} + b^{(1)}_2) + 
 		b^{(2)}_2
 	\right)w^{(3)}_{12} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{11}
-			f(w^{(1)}_{11}z_{13} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{34} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{31} + w^{(1)}_{12}z_{32} + w^{(1)}_{13}z_{33} + b^{(1)}_1) + 
 		w^{(2)}_{12}
-			f(w^{(1)}_{21}z_{13} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{34} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{31} + w^{(1)}_{22}z_{32} + w^{(1)}_{23}z_{33} + b^{(1)}_2) + 
 		b^{(2)}_1
 	\right)w^{(3)}_{11} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{21}
-			f(w^{(1)}_{11}z_{13} + w^{(1)}_{12}z_{14} + w^{(1)}_{13}z_{34} + b^{(1)}_1) +
+			\sigma(w^{(1)}_{11}z_{31} + w^{(1)}_{12}z_{32} + w^{(1)}_{13}z_{33} + b^{(1)}_1) +
 		w^{(2)}_{22}
-			f(w^{(1)}_{21}z_{13} + w^{(1)}_{22}z_{14} + w^{(1)}_{23}z_{34} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{31} + w^{(1)}_{22}z_{32} + w^{(1)}_{23}z_{33} + b^{(1)}_2) + 
 		b^{(2)}_2
 	\right)w^{(3)}_{12} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{11}
-			f(w^{(1)}_{11}z_{23} + w^{(1)}_{12}z_{24} + w^{(1)}_{13}z_{34} + b^{(1)}_1) +
+			\sigma(w^{(1)}_{11}z_{41} + w^{(1)}_{12}z_{42} + w^{(1)}_{13}z_{43} + b^{(1)}_1) +
 		w^{(2)}_{12}
-			f(w^{(1)}_{21}z_{23} + w^{(1)}_{22}z_{24} + w^{(1)}_{23}z_{34} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{41} + w^{(1)}_{22}z_{42} + w^{(1)}_{23}z_{43} + b^{(1)}_2) + 
 		b^{(2)}_1
 	\right)w^{(3)}_{11} \\
-	f\left(
+	\sigma\left(
 		w^{(2)}_{21}
-			f(w^{(1)}_{11}z_{23} + w^{(1)}_{12}z_{24} + w^{(1)}_{13}z_{34} + b^{(1)}_1) + 
+			\sigma(w^{(1)}_{11}z_{41} + w^{(1)}_{12}z_{42} + w^{(1)}_{13}z_{43} + b^{(1)}_1) + 
 		w^{(2)}_{22}
-			f(w^{(1)}_{21}z_{23} + w^{(1)}_{22}z_{24} + w^{(1)}_{23}z_{34} + b^{(1)}_2) + 
+			\sigma(w^{(1)}_{21}z_{41} + w^{(1)}_{22}z_{42} + w^{(1)}_{23}z_{43} + b^{(1)}_2) + 
 		b^{(2)}_2
 	\right)w^{(3)}_{12}
 \end{array}
@@ -743,191 +811,439 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 Hence, the derivative of $E$ with respect to $z_{ab}$ can be easily calculated:
 
 \begin{eqnarray}
-\frac{\partial{E}}{\partial{z_{12}}} 
+\frac{\partial{E}}{\partial{z_{11}}} 
 & = &
-w^{(3)}_{11}\frac{\partial{f(z_{11}^{(3)}})}{\partial{z_{11}^{(2)}}} \left(
-	w_{11}^{(2)}\frac{\partial{f(z_{11}^{(1))}}}{\partial{z_{11}^{(1)}}}w^{(1)}_{11} +
-	w_{12}^{(2)}\frac{\partial{f(z_{12}^{(1))}}}{\partial{z_{12}^{(1)}}}w^{(1)}_{21}  
+\sum_{i=1}^8{
+	\frac{\partial{Y_i}}{\partial{z_{11}}}
+} \nonumber \\
+& = &
+\frac{\partial{Y_1}}{\partial{z_{11}}} + \frac{\partial{Y_2}}{\partial{z_{11}}} \\
+& = & 
+w^{(3)}_{11}\frac{\partial{\sigma(a_{11}^{(2)}})}{\partial{a_{11}^{(2)}}} 
+\left(
+	w_{11}^{(2)}\frac{\partial{\sigma(a_{11}^{(1)}})}{\partial{a_{11}^{(1)}}}w^{(1)}_{11} +
+	w_{12}^{(2)}\frac{\partial{\sigma(a_{12}^{(1)}})}{\partial{a_{12}^{(1)}}}w^{(1)}_{21}  
 \right) + \nonumber \\
-&& w^{(3)}_{12}\frac{\partial{f(z_{12}^{(3)}})}{\partial{z_{12}^{(2)}}} \left(
-	w_{21}^{(2)}\frac{\partial{f(z_{11}^{(1))}}}{\partial{z_{11}^{(1)}}}w^{(1)}_{11} +
-	w_{22}^{(2)}\frac{\partial{f(z_{12}^{(1))}}}{\partial{z_{12}^{(1)}}}w^{(1)}_{21}  
-\right) + \nonumber \\
-&& w^{(3)}_{11}\frac{\partial{f(z_{21}^{(3)}})}{\partial{z_{21}^{(2)}}} \left(
-	w_{11}^{(2)}\frac{\partial{f(z_{21}^{(1))}}}{\partial{z_{21}^{(1)}}}w^{(1)}_{11} +
-	w_{12}^{(2)}\frac{\partial{f(z_{22}^{(1))}}}{\partial{z_{22}^{(1)}}}w^{(1)}_{21}  
-\right) + \nonumber \\
-&& w^{(3)}_{12}\frac{\partial{f(z_{22}^{(3)}})}{\partial{z_{22}^{(2)}}} \left(
-	w_{21}^{(2)}\frac{\partial{f(z_{21}^{(1))}}}{\partial{z_{21}^{(1)}}}w^{(1)}_{11} +
-	w_{22}^{(2)}\frac{\partial{f(z_{22}^{(1))}}}{\partial{z_{22}^{(1)}}}w^{(1)}_{21}  
+&& 
+w^{(3)}_{12}\frac{\partial{\sigma(a_{12}^{(2)}})}{\partial{a_{12}^{(2)}}} 
+\left(
+	w_{21}^{(2)}\frac{\partial{\sigma(a_{11}^{(1)}})}{\partial{a_{11}^{(1)}}}w^{(1)}_{11} +
+	w_{22}^{(2)}\frac{\partial{\sigma(a_{12}^{(1)}})}{\partial{a_{12}^{(1)}}}w^{(1)}_{21}  
 \right)
 \end{eqnarray} 
 
-\noindent Since $z_{12} = e^{-r_{12} / L_{12}}$ and 
-$r_{12} = \sqrt{(x_1 - x_2)^2 + (y_1 - y_2)^2 + (z_1 - z_2)^2}$, the derivative of $y$ 
-with respect to $x_1$ can be calculated:
+\noindent Similarly, we can compute the derivatives of $E$ with respect to all entries of 
+$\mathbf{Z}^{(0)}_{k=3}$. Then we can calculate the derivative of $E$ with respect to an 
+arbitrary force component, e.g. $x_1$:
+
+\begin{eqnarray}
+\frac{\partial{E}}{\partial{x_1}} = \sum_{i=1}^{8}{
+	\frac{\partial{Y_{i}}}{\partial{x_1}}
+}
+\end{eqnarray}
+
+\noindent Remember that:
+
+\begin{eqnarray}
+\left[\begin{array}{ccc}
+	z_{11} & z_{12}   & z_{13}   \\
+	z_{21} & z_{22}   & z_{23}   \\
+	z_{31} & z_{32}   & z_{33}   \\
+	z_{41} & z_{42}   & z_{43}   \\
+\end{array}\right] =
+f(\left[\begin{array}{ccc}
+	r_{12} & r_{13}   & r_{23}   \\
+	r_{12} & r_{14}   & r_{24}   \\
+	r_{13} & r_{14}   & r_{34}   \\
+	r_{23} & r_{24}   & r_{34}   \\
+\end{array}
+\right]) = f(\mathbf{R})
+\end{eqnarray}
+
+\noindent and:
+
+\begin{eqnarray}
+r_{ij} = \sqrt{(x_i - x_j)^2 + (y_i - y_j)^2 + (z_i - z_j)^2}
+\end{eqnarray}
+
+\noindent Only $\partial{z_{11}} / \partial{x_1}$, 
+$\partial{z_{12}} / \partial{x_1}$, $\partial{z_{21}} / \partial{x_1}$,
+$\partial{z_{22}} / \partial{x_1}$, $\partial{z_{31}} / \partial{x_1}$ and
+$\partial{z_{32}} / \partial{x_1}$ has non-zero values. Thus, we can obtain a more 
+simplified form:
+
+\begin{eqnarray}
+\frac{\partial{E}}{\partial{x_1}} & = & \sum_{i=1}^{8}{
+	\frac{\partial{Y_{i}}}{\partial{x_1}}
+} \nonumber \\
+& = & 
+\sum_{i=1}^{8}{\left(
+	\frac{\partial{Y_{i}}}{\partial{z_{11}}}\frac{\partial{z_{11}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{12}}}\frac{\partial{z_{12}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{21}}}\frac{\partial{z_{21}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{22}}}\frac{\partial{z_{22}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{31}}}\frac{\partial{z_{31}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}} +
+\right)
+} \nonumber \\
+& = &
+\left(
+	\frac{\partial{Y_{1}}}{\partial{z_{11}}}\frac{\partial{z_{11}}}{\partial{x_1}} +
+	\frac{\partial{Y_{2}}}{\partial{z_{11}}}\frac{\partial{z_{11}}}{\partial{x_1}} 
+\right) +
+\left(
+	\frac{\partial{Y_{1}}}{\partial{z_{12}}}\frac{\partial{z_{12}}}{\partial{x_1}} +
+	\frac{\partial{Y_{2}}}{\partial{z_{12}}}\frac{\partial{z_{12}}}{\partial{x_1}} 
+\right) + \nonumber \\
+&&
+\left(
+	\frac{\partial{Y_{3}}}{\partial{z_{21}}}\frac{\partial{z_{21}}}{\partial{x_1}} +
+	\frac{\partial{Y_{4}}}{\partial{z_{21}}}\frac{\partial{z_{21}}}{\partial{x_1}} 
+\right) +
+\left(
+	\frac{\partial{Y_{3}}}{\partial{z_{22}}}\frac{\partial{z_{22}}}{\partial{x_1}} +
+	\frac{\partial{Y_{4}}}{\partial{z_{22}}}\frac{\partial{z_{22}}}{\partial{x_1}} 
+\right) + \nonumber \\
+&&
+\left(
+	\frac{\partial{Y_{5}}}{\partial{z_{31}}}\frac{\partial{z_{31}}}{\partial{x_1}} +
+	\frac{\partial{Y_{6}}}{\partial{z_{31}}}\frac{\partial{z_{31}}}{\partial{x_1}} 
+\right) +
+\left(
+	\frac{\partial{Y_{5}}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}} +
+	\frac{\partial{Y_{6}}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}}
+\right) \nonumber \\
+& = &
+\frac{\partial{E}}{\partial{z_{11}}}\frac{\partial{z_{11}}}{\partial{x_1}} +
+\frac{\partial{E}}{\partial{z_{12}}}\frac{\partial{z_{12}}}{\partial{x_1}} +
+\frac{\partial{E}}{\partial{z_{21}}}\frac{\partial{z_{21}}}{\partial{x_1}} +
+\frac{\partial{E}}{\partial{z_{22}}}\frac{\partial{z_{22}}}{\partial{x_1}} +
+\frac{\partial{E}}{\partial{z_{31}}}\frac{\partial{z_{31}}}{\partial{x_1}} +
+\frac{\partial{E}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}} \nonumber \\
+& = &
+\left[\begin{array}{cccccc}
+\partial{E} / \partial{z_{11}} & \partial{E} / \partial{z_{12}} &
+\partial{E} / \partial{z_{21}} & \partial{E} / \partial{z_{22}} &
+\partial{E} / \partial{z_{31}} & \partial{E} / \partial{z_{32}}
+\end{array}
+\right]^T
+\left[\begin{array}{c}
+\partial{z_{11}} / \partial{x_1} \\
+\partial{z_{12}} / \partial{x_1} \\
+\partial{z_{21}} / \partial{x_1} \\
+\partial{z_{22}} / \partial{x_1} \\
+\partial{z_{31}} / \partial{x_1} \\
+\partial{z_{32}} / \partial{x_1} \\
+\end{array}
+\right]
+\end{eqnarray}
+
+If the element-wise matrix multiplication 
+(\href{https://en.wikipedia.org/wiki/Hadamard_product_(matrices)}{Hadamard product}) is 
+denoted as $\circ$:
 
 \begin{equation}
-\frac{\partial{E}}{\partial{x_1}} = 
-\frac{\partial{E}}{\partial{z_{12}}}\frac{\partial{z_{12}}}{\partial{x_{1}}} +
-\frac{\partial{E}}{\partial{z_{13}}}\frac{\partial{z_{13}}}{\partial{x_{1}}} +
-\frac{\partial{E}}{\partial{z_{14}}}\frac{\partial{z_{14}}}{\partial{x_{1}}}
+(A \circ B)_{i,j} = (A)_{i,j}(B)_{i,j}
 \end{equation}
 
-\noindent The equation above can be written in matrix form:
+\noindent for any two matrices A and B of the same dimension and \textbf{grandsum} is the
+sum of all elements of arbitrary matrix A of shape $[m, n]$: 
+
+\begin{equation}
+	\mathrm{grandsum}(A) = \sum_{i}^{m}{\sum_{j}^{n}{(A)_{i, j}}}
+\end{equation}
+
+\noindent Then we can express equation 50 with the following matrix form:
 
 \begin{eqnarray}
-\frac{\partial{E}}{\partial{x_1}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{14}} \\
+\frac{\partial{E}}{\partial{x_1}} 
+& = & 
+\mathrm{grandsum}\left(
+	\left[\begin{array}{ccc}
+		\partial{E} / \partial{z_{11}} & 
+		\partial{E} / \partial{z_{12}} &
+		\partial{E} / \partial{z_{13}} \\ 
+		\partial{E} / \partial{z_{21}} &
+		\partial{E} / \partial{z_{22}} &
+		\partial{E} / \partial{z_{23}} \\
+		\partial{E} / \partial{z_{31}} &
+		\partial{E} / \partial{z_{32}} &
+		\partial{E} / \partial{z_{33}} \\
+		\partial{E} / \partial{z_{41}} &
+		\partial{E} / \partial{z_{42}} &
+		\partial{E} / \partial{z_{43}} \\
+		\end{array}
+	\right] 
+	\circ 
+	\left[\begin{array}{ccc}
+		\partial{z_{11}} / \partial{x_1} & 
+		\partial{z_{12}} / \partial{x_1} &
+		0 \\ 
+		\partial{z_{21}} / \partial{x_1} &
+		\partial{z_{22}} / \partial{x_1} &
+		0 \\
+		\partial{z_{31}} / \partial{x_1} &
+		\partial{z_{32}} / \partial{x_1} &
+		0 \\
+		0 &
+		0 &
+		0 \\	
+		\end{array}
+	\right]
+\right) \\
+& = &
+\mathrm{grandsum}\left(
+	\partial{E} / \partial{\mathbf{Z^{(0)}}} 
+	\circ
+	\partial{Z^{(0)}} / \partial{x_1}
+\right)
+\end{eqnarray}
+
+\noindent TensorFlow can handle the complicated derivative 
+$\partial{E} / \partial{\mathbf{Z^{(0)}}}$ and $\partial{Z^{(0)}} / \partial{x_1}$ can be
+pre-computed because it doesn't depend on kernel weights. However, 
+$\partial{Z^{(0)}} / \partial{x_1}$ in equation 53 has 12 ($C^4_3 \cdot C^3_2$) 
+entries but only 6 ($C^4_3 \cdot C^3_2 \cdot 6 / (4 \cdot 3)$) of them are non-zero values. 
+To avoid unnecessary space waste, 
+
+Each entry of $\partial{E} / \partial{\mathbf{Z^{(0)}}}$ contributes to 
+six force components, so we can tile $\partial{E} / \partial{\mathbf{Z^{(0)}}}$ six times:
+
+\begin{equation}
+\left(\frac{\partial{E}}{\partial{\mathbf{Z^{(0)}}}}\right)_{\mathrm{tiled}} = 
+\left[\begin{array}{cccccc}
+\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} &
+\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} &
+\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} 
 \end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{x_{1}} \\
-	\partial{z_{13}} / \partial{x_{1}} \\
-	\partial{z_{14}} / \partial{x_{1}} \\
+\right]
+\end{equation}
+
+\noindent and then calculate the coefficients matrix 
+$\partial{Z^{(0)}} / \partial{\{x, y, z\}_i}$:
+
+\begin{eqnarray}
+\left(\frac{\partial{\mathbf{Z}^{(0)}}}{\partial{\{x, y, z\}_i}}\right)^T
+& = &
+\left[\begin{array}{cccc}
+\partial{z_{11}} / \partial{x_1} & \partial{z_{21}} / \partial{x_1} &
+\partial{z_{31}} / \partial{x_1} & \partial{z_{41}} / \partial{x_2} \\
+\partial{z_{12}} / \partial{x_1} & \partial{z_{22}} / \partial{x_1} &
+\partial{z_{32}} / \partial{x_1} & \partial{z_{42}} / \partial{x_2} \\
+\partial{z_{13}} / \partial{x_2} & \partial{z_{23}} / \partial{x_2} &
+\partial{z_{33}} / \partial{x_3} & \partial{z_{43}} / \partial{x_3} \\
+\partial{z_{11}} / \partial{y_1} & \partial{z_{21}} / \partial{y_1} &
+\partial{z_{31}} / \partial{y_1} & \partial{z_{41}} / \partial{y_2} \\
+\partial{z_{12}} / \partial{y_1} & \partial{z_{22}} / \partial{y_1} &
+\partial{z_{32}} / \partial{y_1} & \partial{z_{42}} / \partial{y_2} \\
+\partial{z_{13}} / \partial{y_2} & \partial{z_{23}} / \partial{y_2} &
+\partial{z_{33}} / \partial{y_3} & \partial{z_{43}} / \partial{y_3} \\
+\partial{z_{11}} / \partial{z_1} & \partial{z_{21}} / \partial{z_1} &
+\partial{z_{31}} / \partial{z_1} & \partial{z_{41}} / \partial{z_2} \\
+\partial{z_{12}} / \partial{z_1} & \partial{z_{22}} / \partial{z_1} &
+\partial{z_{32}} / \partial{z_1} & \partial{z_{42}} / \partial{z_2} \\
+\partial{z_{13}} / \partial{z_2} & \partial{z_{23}} / \partial{z_2} &
+\partial{z_{33}} / \partial{z_3} & \partial{z_{43}} / \partial{z_3} \\
+\partial{z_{11}} / \partial{x_2} & \partial{z_{21}} / \partial{x_2} &
+\partial{z_{31}} / \partial{x_3} & \partial{z_{41}} / \partial{x_3} \\
+\partial{z_{12}} / \partial{x_3} & \partial{z_{22}} / \partial{x_4} &
+\partial{z_{32}} / \partial{x_4} & \partial{z_{42}} / \partial{x_4} \\
+\partial{z_{13}} / \partial{x_3} & \partial{z_{23}} / \partial{x_4} &
+\partial{z_{33}} / \partial{x_4} & \partial{z_{43}} / \partial{x_4} \\
+\partial{z_{11}} / \partial{y_2} & \partial{z_{21}} / \partial{y_2} &
+\partial{z_{31}} / \partial{y_3} & \partial{z_{41}} / \partial{y_3} \\
+\partial{z_{12}} / \partial{y_3} & \partial{z_{22}} / \partial{y_4} &
+\partial{z_{32}} / \partial{y_4} & \partial{z_{42}} / \partial{y_4} \\
+\partial{z_{13}} / \partial{y_3} & \partial{z_{23}} / \partial{y_4} &
+\partial{z_{33}} / \partial{y_4} & \partial{z_{43}} / \partial{y_4} \\
+\partial{z_{11}} / \partial{z_2} & \partial{z_{21}} / \partial{z_2} &
+\partial{z_{31}} / \partial{z_3} & \partial{z_{41}} / \partial{z_3} \\
+\partial{z_{12}} / \partial{z_3} & \partial{z_{22}} / \partial{z_4} &
+\partial{z_{32}} / \partial{z_4} & \partial{z_{42}} / \partial{z_4} \\
+\partial{z_{13}} / \partial{z_3} & \partial{z_{23}} / \partial{z_4} &
+\partial{z_{33}} / \partial{z_4} & \partial{z_{43}} / \partial{z_4} \\
 \end{array}
 \right]
 \end{eqnarray}
 
-\noindent Similarly, we can construct the matrix forms of the derivatives of E with respect to 
-all force components:
+\noindent Then the force contributions can be simply computed:
 
-\begin{eqnarray}
-\frac{\partial{E}}{\partial{y_1}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{14}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{y_{1}} \\
-	\partial{z_{13}} / \partial{y_{1}} \\
-	\partial{z_{14}} / \partial{y_{1}} \\
-\end{array}
-\right] \\ % y1
-\frac{\partial{E}}{\partial{z_1}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{14}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{z_{1}} \\
-	\partial{z_{13}} / \partial{z_{1}} \\
-	\partial{z_{14}} / \partial{z_{1}} \\
-\end{array}
-\right] \\ % z1
-\frac{\partial{E}}{\partial{x_2}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{24}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{x_{2}} \\
-	\partial{z_{23}} / \partial{x_{2}} \\
-	\partial{z_{24}} / \partial{x_{2}} \\
-\end{array}
-\right] \\ % x2
-\frac{\partial{E}}{\partial{y_2}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{24}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{y_{2}} \\
-	\partial{z_{23}} / \partial{y_{2}} \\
-	\partial{z_{24}} / \partial{y_{2}} \\
-\end{array}
-\right] \\ % y2
-\frac{\partial{E}}{\partial{z_2}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{12}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{24}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{12}} / \partial{z_{2}} \\
-	\partial{z_{23}} / \partial{z_{2}} \\
-	\partial{z_{24}} / \partial{z_{2}} \\
-\end{array}
-\right] \\ % z2
-\frac{\partial{E}}{\partial{x_3}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{13}} / \partial{x_{3}} \\
-	\partial{z_{23}} / \partial{x_{3}} \\
-	\partial{z_{34}} / \partial{x_{3}} \\
-\end{array}
-\right] \\ % x3
-\frac{\partial{E}}{\partial{y_2}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{13}} / \partial{y_{3}} \\
-	\partial{z_{23}} / \partial{y_{3}} \\
-	\partial{z_{34}} / \partial{y_{3}} \\
-\end{array}
-\right] \\ % y3
-\frac{\partial{E}}{\partial{z_3}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{13}} &
-	\partial{E} / \partial{z_{23}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{13}} / \partial{z_{3}} \\
-	\partial{z_{23}} / \partial{z_{3}} \\
-	\partial{z_{34}} / \partial{z_{3}} \\
-\end{array}
-\right] \\ % z3
-\frac{\partial{E}}{\partial{x_4}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{14}} &
-	\partial{E} / \partial{z_{24}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{14}} / \partial{x_{4}} \\
-	\partial{z_{24}} / \partial{x_{4}} \\
-	\partial{z_{34}} / \partial{x_{4}} \\
-\end{array}
-\right] \\ % x4
-\frac{\partial{E}}{\partial{y_4}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{14}} &
-	\partial{E} / \partial{z_{24}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{14}} / \partial{y_{4}} \\
-	\partial{z_{24}} / \partial{y_{4}} \\
-	\partial{z_{34}} / \partial{y_{4}} \\
-\end{array}
-\right] \\ % y4
-\frac{\partial{E}}{\partial{z_4}} = \left[\begin{array}{ccc}
-	\partial{E} / \partial{z_{14}} &
-	\partial{E} / \partial{z_{24}} &
-	\partial{E} / \partial{z_{34}} \\
-\end{array}
-\right]^T
-\left[\begin{array}{c}
-	\partial{z_{14}} / \partial{z_{4}} \\
-	\partial{z_{24}} / \partial{z_{4}} \\
-	\partial{z_{34}} / \partial{z_{4}} \\
+\begin{equation}
+\frac{\partial{E}}{\partial{\{x, y, z\}_i}}
+=
+\frac{\partial{\mathbf{Z}^{(0)}}}{\partial{\{x, y, z\}_i}}
+\circ
+\left(\frac{\partial{E}}{\partial{\mathbf{Z^{(0)}}}}\right)_{\mathrm{tiled}}
+\end{equation}
+
+Now we have the force contributions:
+
+\begin{equation}
+\frac{\partial{E}}{\partial{\{x, y, z\}_i}} = \left[\begin{array}{cccc}
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{x_1} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{x_1} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{x_1} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{x_2} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{x_1} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{x_1} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{x_1} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{x_2} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{x_2} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{x_2} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{x_3} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{x_3} \\
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{y_1} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{y_1} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{y_1} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{y_2} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{y_1} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{y_1} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{y_1} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{y_2} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{y_2} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{y_2} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{y_3} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{y_3} \\
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{z_1} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{z_1} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{z_1} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{z_2} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{z_1} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{z_1} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{z_1} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{z_2} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{z_2} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{z_2} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{z_3} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{z_3} \\
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{x_2} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{x_2} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{x_3} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{x_3} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{x_3} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{x_4} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{x_4} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{x_4} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{x_3} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{x_4} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{x_4} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{x_4} \\
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{y_2} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{y_2} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{y_3} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{y_3} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{y_3} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{y_4} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{y_4} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{y_4} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{y_3} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{y_4} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{y_4} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{y_4} \\
+\partial{E} / \partial{z_{11}} \cdot \partial{z_{11}} / \partial{z_2} & 
+\partial{E} / \partial{z_{21}} \cdot \partial{z_{21}} / \partial{z_2} &
+\partial{E} / \partial{z_{31}} \cdot \partial{z_{31}} / \partial{z_3} & 
+\partial{E} / \partial{z_{41}} \cdot \partial{z_{41}} / \partial{z_3} \\
+\partial{E} / \partial{z_{12}} \cdot \partial{z_{12}} / \partial{z_3} & 
+\partial{E} / \partial{z_{22}} \cdot \partial{z_{22}} / \partial{z_4} &
+\partial{E} / \partial{z_{32}} \cdot \partial{z_{32}} / \partial{z_4} & 
+\partial{E} / \partial{z_{42}} \cdot \partial{z_{42}} / \partial{z_4} \\
+\partial{E} / \partial{z_{13}} \cdot \partial{z_{13}} / \partial{z_3} & 
+\partial{E} / \partial{z_{23}} \cdot \partial{z_{23}} / \partial{z_4} &
+\partial{E} / \partial{z_{33}} \cdot \partial{z_{33}} / \partial{z_4} & 
+\partial{E} / \partial{z_{43}} \cdot \partial{z_{43}} / \partial{z_4} \\
 \end{array}
 \right]
+\end{equation}
+
+The one last thing is to build an auxiliary matrix $\mathbf{IND}$ that can 
+\textbf{re-order} the matrix $\left(\partial{E} / \partial{\{x, y, z\}_i}\right)$ 
+to the shape of $[12, 6]$ so that each row represents a force component:
+
+\begin{eqnarray}
+&& \left(
+	\frac{\partial{E}}{\partial{\{x, y, z\}_i}}
+\right)_{\mathrm{ordered}} \nonumber \\
+& = &
+\mathbf{Reorder}\left(
+	\frac{\partial{E}}{\partial{\{x, y, z\}_i}}, \mathbf{IND}
+\right) \nonumber \\
+& = & \begin{blockarray}{ccccccc}
+component & & & & & & \\
+\begin{block}{c(cccccc)}
+f^x_1 &
+\partial{E^{11}} / \partial{x_1} & \partial{E^{12}} / \partial{x_1} &
+\partial{E^{21}} / \partial{x_1} & \partial{E^{22}} / \partial{x_1} &
+\partial{E^{31}} / \partial{x_1} & \partial{E^{32}} / \partial{x_1} \\
+f^y_1 &
+\partial{E^{11}} / \partial{y_1} & \partial{E^{12}} / \partial{y_1} &
+\partial{E^{21}} / \partial{y_1} & \partial{E^{22}} / \partial{y_1} &
+\partial{E^{31}} / \partial{y_1} & \partial{E^{32}} / \partial{y_1} \\
+f^z_1 &
+\partial{E^{11}} / \partial{z_1} & \partial{E^{12}} / \partial{z_1} &
+\partial{E^{21}} / \partial{z_1} & \partial{E^{22}} / \partial{z_1} &
+\partial{E^{31}} / \partial{z_1} & \partial{E^{32}} / \partial{z_1} \\
+%
+f^x_2 &
+\partial{E^{13}} / \partial{x_2} & \partial{E^{11}} / \partial{x_2} &
+\partial{E^{23}} / \partial{x_2} & \partial{E^{21}} / \partial{x_2} &
+\partial{E^{41}} / \partial{x_2} & \partial{E^{42}} / \partial{x_2} \\
+f^y_2 &
+\partial{E^{13}} / \partial{y_2} & \partial{E^{11}} / \partial{y_2} &
+\partial{E^{23}} / \partial{y_2} & \partial{E^{21}} / \partial{y_2} &
+\partial{E^{41}} / \partial{y_2} & \partial{E^{42}} / \partial{y_2} \\
+f^z_2 &
+\partial{E^{13}} / \partial{z_2} & \partial{E^{11}} / \partial{z_2} &
+\partial{E^{23}} / \partial{z_2} & \partial{E^{21}} / \partial{z_2} &
+\partial{E^{41}} / \partial{z_2} & \partial{E^{42}} / \partial{z_2} \\
+%
+f^x_3 &
+\partial{E^{12}} / \partial{x_3} & \partial{E^{13}} / \partial{x_3} &
+\partial{E^{33}} / \partial{x_3} & \partial{E^{31}} / \partial{x_3} &
+\partial{E^{43}} / \partial{x_3} & \partial{E^{41}} / \partial{x_3} \\
+f^y_3 &
+\partial{E^{12}} / \partial{y_3} & \partial{E^{13}} / \partial{y_3} &
+\partial{E^{33}} / \partial{y_3} & \partial{E^{31}} / \partial{y_3} &
+\partial{E^{43}} / \partial{y_3} & \partial{E^{41}} / \partial{y_3} \\
+f^z_3 &
+\partial{E^{12}} / \partial{z_3} & \partial{E^{13}} / \partial{z_3} &
+\partial{E^{33}} / \partial{z_3} & \partial{E^{31}} / \partial{z_3} &
+\partial{E^{43}} / \partial{z_3} & \partial{E^{41}} / \partial{z_3} \\
+%
+f^x_4 &
+\partial{E^{22}} / \partial{x_4} & \partial{E^{23}} / \partial{x_4} &
+\partial{E^{32}} / \partial{x_4} & \partial{E^{33}} / \partial{x_4} &
+\partial{E^{42}} / \partial{x_4} & \partial{E^{43}} / \partial{x_4} \\
+f^y_4 &
+\partial{E^{22}} / \partial{y_4} & \partial{E^{23}} / \partial{y_4} &
+\partial{E^{32}} / \partial{y_4} & \partial{E^{33}} / \partial{y_4} &
+\partial{E^{42}} / \partial{y_4} & \partial{E^{43}} / \partial{y_4} \\
+f^z_4 &
+\partial{E^{22}} / \partial{z_4} & \partial{E^{23}} / \partial{z_4} &
+\partial{E^{32}} / \partial{z_4} & \partial{E^{33}} / \partial{z_4} &
+\partial{E^{42}} / \partial{z_4} & \partial{E^{43}} / \partial{z_4} \\
+\end{block}
+\end{blockarray}
 \end{eqnarray}
 
+\noindent where:
+
+\begin{equation}
+\frac{\partial{E^{ab}}}{\partial{\{x, y, z\}_i}} = 
+\frac{\partial{E}}{\partial{z_{ab}}}
+\cdot
+\frac{\partial{z_{ab}}}{\partial{\{x, y, z\}_3}}
+\end{equation}
+
+\noindent Finally we can get the force component by summing up each row:
+
+\begin{equation}
+\vec{F}(\mathrm{B}_{4}) = 
+\mathbf{Sum}\left(
+\left(
+	\frac{\partial{E}}{\partial{\{x, y, z\}_i}}
+\right)_{\mathrm{ordered}}, \quad \mathrm{axis}=1
+\right)
+\end{equation}
 
 \end{document}
