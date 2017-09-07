@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
 tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """The maximum number of training steps.""")
+tf.app.flags.DEFINE_boolean('forces_only', False,
+                            """Only train on forces if True.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
@@ -97,7 +99,8 @@ def train_model():
                                             y_nn,
                                             f_true,
                                             f_nn,
-                                            y_weights=y_weights)
+                                            y_weights=y_weights,
+                                            forces_only=FLAGS.forces_only)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.

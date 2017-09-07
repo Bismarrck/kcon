@@ -36,7 +36,7 @@ tf.app.flags.DEFINE_float('alpha', 0.01,
                           """Set the parameter `alpha` for `lrelu`.""")
 tf.app.flags.DEFINE_boolean('batch_norm', False,
                             """Use batch normalization if True.""")
-tf.app.flags.DEFINE_float('floss_weight', 1.0 / 3.0,
+tf.app.flags.DEFINE_float('floss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
 
 
@@ -287,12 +287,13 @@ def get_y_loss(y_true, y_nn, weights=None):
   Return the total loss tensor of energy only.
 
   Args:
-    y_true: the true energies.
-    y_nn: the neural network predicted energies.
+    y_true: a `float32` tensor of shape `[-1, ]` the true energies.
+    y_nn: a `float32` tensor of shape `[-1, ]` as the neural network predicted
+      energies.
     weights: the weights for the energies.
 
   Returns:
-    loss: the total loss tensor.
+    loss: a `float32` scalar tensor as the total loss.
 
   """
   with tf.name_scope("yRMSE"):
@@ -305,38 +306,29 @@ def get_y_loss(y_true, y_nn, weights=None):
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
 
-def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
+def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
   """
   Return the total loss tensor that also includes forces.
 
   Args:
-    y_true: the true energies.
-    y_nn: the neural network predicted energies.
-    f_true: the true forces.
-    f_nn: the neural network predicted forces.
+    y_true: a `float32` tensor of shape `[-1, ]` the true energies.
+    y_nn: a `float32` tensor of shape `[-1, ]` as the neural network predicted
+      energies.
+    f_true: a `float32` tensor of shape `[-1, 3N]` as the true forces.
+    f_nn: a `float32` tensor of shape `[-1, 3N]` as the neural network predicted
+      atomic forces.
     y_weights: the weights for the energy losses. If None, all losses have the
       weight of 1.0.
+    forces_only: a `bool` indicating whether we should only use forces to train
+      or not.
 
   Returns:
-    loss: the total loss tensor.
-    y_loss: the energy loss tensor.
-    f_loss: the forces loss tensor.
+    loss: a `float32` scalar tensor as the total loss.
+    y_loss: a `float32` scalar tensor as the energy loss.
+    f_loss: a `float32` scalar tensor as the forces loss.
 
   """
   with tf.name_scope("yfRMSE"):
-
-    with tf.name_scope("energy"):
-      if y_weights is None:
-        y_weights = tf.constant(1.0, name="y_weight")
-
-      y_mse = tf.losses.mean_squared_error(
-        y_true,
-        y_nn,
-        scope="yMSE",
-        loss_collection=None,
-        weights=y_weights
-      )
-      y_rmse = tf.sqrt(y_mse, name="yRMSE")
 
     with tf.name_scope("force"):
       f_mse = tf.losses.mean_squared_error(
@@ -349,10 +341,28 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None):
       tf.summary.scalar("fRMSE", f_rmse)
       f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
-    loss = tf.add(y_rmse, f_loss, "together")
+    with tf.name_scope("energy"):
+      if not forces_only:
+        if y_weights is None:
+          y_weights = tf.constant(1.0, name="y_weight")
+
+        y_mse = tf.losses.mean_squared_error(
+          y_true,
+          y_nn,
+          scope="yMSE",
+          loss_collection=None,
+          weights=y_weights
+        )
+        y_loss = tf.sqrt(y_mse, name="yRMSE")
+      else:
+        y_loss = tf.constant(0.0, dtype=tf.float32, name="yRMSE")
+      tf.summary.scalar("yRMSE", y_loss)
+
+    loss = tf.add(f_loss, y_loss, name="together")
     tf.add_to_collection("losses", loss)
-    total_loss = tf.add_n(tf.get_collection("losses"), name="total_loss")
-    return total_loss, y_rmse, f_loss
+    total_loss = tf.add_n(tf.get_collection("losses"), name="total")
+
+    return total_loss, y_loss, f_loss
 
 
 def _add_loss_summaries(total_loss):
