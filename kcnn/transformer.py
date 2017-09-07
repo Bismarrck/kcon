@@ -123,6 +123,22 @@ def _get_kbody_terms(species, k_max):
       ["".join(sorted(c)) for c in combinations(species, k_max)])))
 
 
+def _get_num_force_entries(n, k_max):
+  """
+  Return the number of entries per force component.
+
+  Args:
+    n: an `int` as the maximum number of 'real' atoms in a structure.
+    k_max: an `int` as the maximum k.
+
+  Returns:
+    num_entries: an `int` as the number of entries per force component.
+
+  """
+  return int(np.array([comb(n, k) * comb(k, 2) * 2 / n
+                       for k in range(2, k_max + 1)]).sum())
+
+
 def normalize(x, l, order=1):
   """
   Normalize the `inputs` with the exponential function:
@@ -240,7 +256,7 @@ class Transformer:
     n = compute_n_from_cnk(self._offsets[-1], self._k_max)
     self._num_real = n - self._num_ghosts
     self._num_f_components = 3 * self._num_real
-    self._num_entries = self._get_num_force_entries()
+    self._num_entries = _get_num_force_entries(self._num_real, self._k_max)
 
   @property
   def species(self):
@@ -337,14 +353,6 @@ class Transformer:
       atoms = get_atoms_from_kbody_term(kbody_term)
       bonds[kbody_term] = ["-".join(ab) for ab in combinations(atoms, r=2)]
     return bonds
-
-  def _get_num_force_entries(self):
-    """
-    Return the number of entries per force component.
-    """
-    n = self._num_real
-    return np.sum([comb(n, k) * comb(k, 2) * 2 / n
-                   for k in range(2, self._k_max + 1)]).astype(int)
 
   @staticmethod
   def _get_num_ghosts(species, many_body_k):
@@ -1333,9 +1341,7 @@ class FixedLenMultiTransformer(MultiTransformer):
 
     max_occurs = {atom: times for atom, times in self._max_occurs.items()
                   if times < self._k_max}
-
-    n = compute_n_from_cnk(self._total_dim, self._k_max)
-    num_entries = int(self._total_dim * comb(self._k_max, 2) * 2) // n
+    num_entries = _get_num_force_entries(max_size, self._k_max)
 
     auxiliary_properties = {
       "kbody_terms": self._kbody_terms,

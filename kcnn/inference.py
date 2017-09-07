@@ -217,7 +217,12 @@ def _inference_forces(y_total, inputs, coefficients, indexing):
         indices = tf.add(indexing, steps, name="indices")
 
       # Do the broadcast
-      g = tf.reshape(g, (-1,), "1D")
+      g = tf.reshape(g, (-1, ), "1D")
+
+      # Pad an zero at the begining of the totally flatten `g` because real
+      # indices in `indexing` start from one and the index of zero suggests the
+      # contribution should also be zero.
+      # g = tf.pad(g, [1, 0], name="pad")
       g = tf.gather(g, indices, name="gather")
 
       # Reshape `g` so that all entries of each row (axis=2) correspond to the
