@@ -354,11 +354,15 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
           weights=y_weights
         )
         y_loss = tf.sqrt(y_mse, name="yRMSE")
+        tf.summary.scalar("yRMSE", y_loss)
       else:
-        y_loss = tf.constant(0.0, dtype=tf.float32, name="yRMSE")
-      tf.summary.scalar("yRMSE", y_loss)
+        y_loss = tf.constant(0.0, dtype=tf.float32, name="zero")
 
-    loss = tf.add(f_loss, y_loss, name="together")
+    if not forces_only:
+      loss = tf.add(f_loss, y_loss, name="together")
+    else:
+      loss = tf.identity(f_loss, "together")
+
     tf.add_to_collection("losses", loss)
     total_loss = tf.add_n(tf.get_collection("losses"), name="total")
 
