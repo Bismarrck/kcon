@@ -222,7 +222,7 @@ def _inference_forces(y_total, inputs, coefficients, indexing):
       # Pad an zero at the begining of the totally flatten `g` because real
       # indices in `indexing` start from one and the index of zero suggests the
       # contribution should also be zero.
-      # g = tf.pad(g, [1, 0], name="pad")
+      # g = tf.pad(g, [[1, 0]], name="pad")
       g = tf.gather(g, indices, name="gather")
 
       # Reshape `g` so that all entries of each row (axis=2) correspond to the
@@ -233,9 +233,9 @@ def _inference_forces(y_total, inputs, coefficients, indexing):
     # component.
     g = tf.reduce_sum(g, axis=2, keep_dims=False, name="sum")
 
-    # Always remember the physics law: f = -dE / dr. So do not forget the minus
-    # sign here!
-    forces = tf.negative(g, "forces")
+    # Always remember the physics law: f = -dE / dr. But the output `y_total`
+    # already took the minus sign.
+    forces = tf.identity(g, "forces")
 
   return forces
 
