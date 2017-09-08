@@ -33,7 +33,7 @@ There some built-in dataset, including:
 - GDB-9
 - Napthalene20k
 - Quinoline (PBE, DFTB)
-- Anatase Titanium Dioxide (DFTB, periodic)
+- Anatase Titanium Dioxide (DFTB)
 
 ### 4. Modules
 
@@ -41,8 +41,8 @@ This project is organized like other projects under [tensorflow/models][2].
 
 #### Model
 
-1. `inference.py`: for the detailed implementation of the **KCNN** model.
-2. `kcnn.py`: for constructing **KCNN** model and building the loss function for CPU/single-GPU training.
+1. `inference.py`: for the detailed implementation of the **kCON** model.
+2. `kcnn.py`: for constructing **kCON** model and building the loss function for CPU/single-GPU training.
 3. `transformer.py`: for transforming [`ase.Atoms`][3] to input features of the model.
 4. `save_model.py`: for freezing and exporting trained model to `pb` files.
 
@@ -83,7 +83,7 @@ Here is an example of using atomic energies to study the stability of molecules.
 
 ![Stability][image-3]
 
-**a)** Configurational DFT and Neural Network (NN) energy spectra of C9H7N within 3.5 eV of the global minimum. The DFT energy of the global minimum is the reference energy. Isomers labeled red are included in the test dataset. **i)** and **j)** are energies of C and H atoms in the global minimum, and their averages are used as reference for other atomic energies, as shown in **h)**. **b)**, **c)**, **d)**, **e)**, **f)** and **g)** are examples of analysis based on relative atomic energies. 
+**a)** Configurational DFT and Neural Network (NN) energy spectra of Quinoline within 3.5 eV of the global minimum. The DFT energy of the global minimum is the reference energy. Isomers labeled red are included in the test dataset. **i)** and **j)** are energies of C and H atoms in the global minimum, and their averages are used as reference for other atomic energies, as shown in **h)**. **b)**, **c)**, **d)**, **e)**, **f)** and **g)** are examples of analysis based on relative atomic energies. 
 
 [1]:	https://git-lfs.github.com
 [2]:	https://github.com/tensorflow/models
