@@ -5,7 +5,7 @@ kCON is a scalable and transferable deep learning framework for chemistry with t
 * Author: Xin Chen
 * Email: Bismarrck@me.com
 
-![kCON](doc/images/figure1.png)
+![kCON][image-1]
 
 ### 1. Related work
 
@@ -26,6 +26,14 @@ All codes are written in Python3.6. Some codes can be executed perfectly under P
 ### 3. Datasets
 
 In order to pull these dataset files from github, **[Git LFS][1]** should be installed.
+
+There some built-in dataset, including:
+
+- QM7
+- GDB-9
+- Napthalene20k
+- Quinoline (PBE, DFTB)
+- Anatase Titanium Dioxide (DFTB, periodic)
 
 ### 4. Modules
 
@@ -56,10 +64,26 @@ This project is organized like other projects under [tensorflow/models][2].
 1. `predictor.py`: for making predictions using trained models.
 2. `calculator.py`: an [`ase.calculator.Calculator`][6] wrapper of `KcnnPredictor`.
 
-#### Auxiliary Files
+#### Auxiliary modules
 
 1. `constants.py`: global constants are defined in this module.
 2. `utils.py`: some helper functions are defined in this module.
+
+### 5. Visualization
+
+One of the advantage of using convolutional neural network in chemistry is that we can visualize how the network learns chemical patterns. Chemical patterns are somehow very similar to the low-level image features like lines or circles. The traditional CNN visualization methods can be applied directly. Here is a demo of kCON applying on the quinoline PBE dataset.
+
+![Visualization][image-2]
+
+### 6. Atomic Energy
+
+The concept of artificial neural network derived atomic contributions to total energies was first proposed in 2007 by [Behler et al][7]. Despite that many later machine learning models include the concept of atomic energy, very little work has been done on interpreting the chemical meaning of these contributions and utilizing them in chemical applications.  We did some qualitative and statistic analysis of the atomic energies learned from kCON and successfully proved that these atomic energies can perfectly agree with our chemical intuitions from valence-bond theory, thus providing us with a new approach to understand the local stabilities of atoms and molecular moieties. 
+
+Here is an example of using atomic energies to study the stability of molecules.
+
+![Stability][image-3]
+
+**a)** Configurational DFT and Neural Network (NN) energy spectra of C9H7N within 3.5 eV of the global minimum. The DFT energy of the global minimum is the reference energy. Isomers labeled red are included in the test dataset. **i)** and **j)** are energies of C and H atoms in the global minimum, and their averages are used as reference for other atomic energies, as shown in **h)**. **b)**, **c)**, **d)**, **e)**, **f)** and **g)** are examples of analysis based on relative atomic energies. 
 
 [1]:	https://git-lfs.github.com
 [2]:	https://github.com/tensorflow/models
@@ -67,5 +91,8 @@ This project is organized like other projects under [tensorflow/models][2].
 [4]:	https://wiki.fysik.dtu.dk/ase/ase/db/db.html#ase-db
 [5]:	https://www.tensorflow.org/versions/r1.1/programmers_guide/reading_data
 [6]:	https://wiki.fysik.dtu.dk/ase/ase/calculators/calculators.html
+[7]:	https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.98.146401
 
 [image-1]:	doc/images/figure1.png
+[image-2]:	./doc/images/figure2.png
+[image-3]:	doc/images/figure4.png
