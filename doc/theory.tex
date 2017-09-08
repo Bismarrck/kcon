@@ -520,13 +520,13 @@ Finally we can compute atomic forces.
 
 Consider a simple example of $\mathrm{B}_{4}$. This molecule has 4 atoms, so the total 
 dimension of the input feature matrix should be $C^{4+1}_3=10$, including $C^4_3$ 3-body 
-features and $C^4_2$ 2-body features.
+features (BBB) and $C^4_2$ 2-body features (BBX).
 Its input feature matrix, $\mathbf{Z}^{(0)}$, can be expressed like this:
 
 \begin{eqnarray}
 \mathbf{Z}^{(0)} & = & \left[\begin{array}{c}
-	\mathbf{Z^{(0)}}_{k=2} \\
-	\mathbf{Z^{(0)}}_{k=3} \\
+	\mathbf{Z^{(0)}}_{\mathrm{BBX}} \\
+	\mathbf{Z^{(0)}}_{\mathrm{BBB}} \\
 \end{array}
 \right]
 \end{eqnarray}
@@ -535,7 +535,7 @@ Its input feature matrix, $\mathbf{Z}^{(0)}$, can be expressed like this:
 
 \begin{eqnarray}
 f(r_{ab}) & = & \exp{\left( -\frac{r_{ab}}{L_{ab}} \right)} \\
-\mathbf{Z}^{(0)}_{k=2} & = & \begin{blockarray}{ccc}
+\mathbf{Z}^{(0)}_{\mathrm{BBX}} & = & \begin{blockarray}{ccc}
   \mathrm{BB} & \mathrm{BX} & \mathrm{BX} \\
 \begin{block}{(ccc)}
 	z_{11} & 0        & 0        \\
@@ -555,7 +555,7 @@ f(\left[\begin{array}{ccc}
 	r_{34} & +\infty  & +\infty  \\
 \end{array}
 \right]) \\
-\mathbf{Z}^{(0)}_{k=3} & = & \begin{blockarray}{ccc}
+\mathbf{Z}^{(0)}_{\mathrm{BBB}} & = & \begin{blockarray}{ccc}
 \mathrm{BB} & \mathrm{BB} & \mathrm{BB} \\ 
 \begin{block}{(ccc)}
 	z_{11} & z_{12}   & z_{13}   \\
@@ -573,21 +573,30 @@ f(\left[\begin{array}{ccc}
 \right])
 \end{eqnarray}
 
-\noindent and $\mathbf{z}^{(0)}_{k=2,3}$ are 2-body and 3-body input features. The analysis 
-will only consider the 3-body part for simplicity.
+\noindent The analysis will only consider the 3-body part for simplicity.
 
-Suppose the convolutional neural network for BBB has two hidden layers and one output layer.
-The convolutional kernels are:
+Suppose the convolutional neural network for BBB has two hidden layers and each hidden 
+layer has two kernels, then we can get the convolutional kernels:
 
 \begin{eqnarray}
-\mathbf{W}^{(1)} & = & \left[\begin{array}{cccc}
-	w^{(1)}_{11} & w^{(1)}_{12} & w^{(1)}_{13} & b^{(1)}_{1} \\
-	w^{(1)}_{21} & w^{(1)}_{22} & w^{(1)}_{23} & b^{(1)}_{2} \\
+\mathbf{W}^{(1)} & = & \left[\begin{array}{ccc}
+	w^{(1)}_{11} & w^{(1)}_{12} & w^{(1)}_{13} \\
+	w^{(1)}_{21} & w^{(1)}_{22} & w^{(1)}_{23} \\
 \end{array}
 \right] \\
-\mathbf{W}^{(2)} & = & \left[\begin{array}{ccc}
-	w^{(2)}_{11} & w^{(2)}_{12} & b^{(2)}_{1} \\
-	w^{(2)}_{21} & w^{(2)}_{22} & b^{(2)}_{2} \\
+\mathbf{b}^{(1)} & = & \left[\begin{array}{c}
+	b^{(1)}_{1} \\
+	b^{(1)}_{2} \\
+\end{array}
+\right] \\
+\mathbf{W}^{(2)} & = & \left[\begin{array}{cc}
+	w^{(2)}_{11} & w^{(2)}_{12} \\
+	w^{(2)}_{21} & w^{(2)}_{22} \\
+\end{array}
+\right] \\
+\mathbf{b}^{(2)} & = & \left[\begin{array}{c}
+	b^{(2)}_{1} \\
+	b^{(2)}_{2} \\
 \end{array}
 \right] \\
 \mathbf{W}^{(3)} & = & \left[\begin{array}{cc}
@@ -596,9 +605,9 @@ The convolutional kernels are:
 \right]
 \end{eqnarray}
 
-\noindent where $\mathbf{W}^{(k)}$ is the kernel matrix for layer $k$. Each row of  
-$\mathbf{W}^{(k)}$ represents a kernel and the last entry of each kernel is the bias unit. 
-One should notice that the last layer (the output layer) does not have a bias unit.
+\noindent where $\mathbf{W}^{(l)}$ is the kernel matrix for layer $l$ and each row of  
+$\mathbf{W}^{(l)}$ represents a kernel. $\mathbf{b}^{(l)}$ are the biases for the kernels of 
+layer $l$. One should notice that the last layer (the output layer) does not have a bias unit.
 The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 
 \begin{eqnarray}
@@ -613,7 +622,8 @@ The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 \alpha & = & 0.2
 \end{eqnarray}
 
-\noindent So the results of the first layer can be calculated:
+\noindent Now we can start the forward propagation. The results of the first layer,
+$\mathbf{Z}^{(1)}$, should be:
 
 \begin{eqnarray}
 \mathbf{Z}^{(1)} 
@@ -644,7 +654,7 @@ The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 \right]
 \end{eqnarray}
 
-\noindent Then we can obtain the results of the second layer:
+\noindent Then we can calculate the results of the second layer, $\mathbf{Z}^{(2)}$:
 
 \begin{eqnarray}
 \mathbf{Z}^{(2)} 
@@ -675,7 +685,7 @@ The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 \right]
 \end{eqnarray}
 
-\noindent The results of output layer should be:
+\noindent The results of output layer, $\mathbf{Z}^{(3)}$, should be:
 
 \begin{equation}
 \mathbf{Z}^{(3)} = \left[\begin{array}{c}
@@ -688,8 +698,9 @@ The activation function $\sigma(\cdot)$ used here is leaky ReLU:
 \end{equation}
 
 \noindent The activation function will not be applied to the output layer.
-Finally we can get the total energy $E$ which is the sum of the k-body energies of 
-the output layer:
+Each entry of $\mathbf{Z}^{(3)}$ represents the k-body energy of its corresponding input 
+chemical pattern (row of the matrix) of $\mathrm{Z}^{(0)}$.
+The total energy $E$ is just the sum of the entries of $\mathbf{Z}^{(3)}$:
 
 \begin{eqnarray}
 E 
@@ -702,7 +713,7 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \left(\begin{array}{cccccccc}
 	1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\
 \end{array}
-\right)^T
+\right)^\mathbf{T}
 \left[\begin{array}{c}
 	z^{(2)}_{11}w^{(3)}_{11} \\
 	z^{(2)}_{12}w^{(3)}_{12} \\
@@ -715,7 +726,7 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \end{array}
 \right] \nonumber \\
 & = &
-\mathbf{I}^T
+\mathbf{I}^\mathbf{T}
 \left[\begin{array}{c}
 	\sigma(w^{(2)}_{11}z^{(1)}_{11} + w^{(2)}_{12}z^{(1)}_{12} + b^{(2)}_1)w^3_{11} \\
 	\sigma(w^{(2)}_{21}z^{(1)}_{11} + w^{(2)}_{22}z^{(1)}_{12} + b^{(2)}_2)w^3_{12} \\
@@ -728,7 +739,7 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \end{array}
 \right] \nonumber \\ 
 & = & 
-\mathbf{I}^T \left[\begin{array}{c}
+\mathbf{I}^\mathbf{T} \left[\begin{array}{c}
 	Y_{1} \\
 	Y_{2} \\
 	Y_{3} \\
@@ -740,7 +751,7 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \end{array}
 \right] \nonumber \\
 & = & 
-\mathbf{I}^T \mathbf{Y}
+\mathbf{I}^\mathbf{T} \mathbf{Y}
 \end{eqnarray}
 
 \noindent where \textbf{Y} is:
@@ -808,7 +819,10 @@ z^{(2)}_{41}w^{(3)}_{11} + z^{(2)}_{42}w^{(3)}_{12} \nonumber \\
 \right]
 \end{equation}
 
-Hence, the derivative of $E$ with respect to $z_{ab}$ can be easily calculated:
+Now the forward propagation is finished and the output (total energy) is obtained. Then we can 
+start the back propagation. The calculation of atomic forces can be done at the same time.
+To compute the atomic forces, we should first resolve the derivative of $E$ with respect to 
+$z_{ab}$. Taking the example of $\partial{E} / \partial{z_{11}}$, we have:
 
 \begin{eqnarray}
 \frac{\partial{E}}{\partial{z_{11}}} 
@@ -833,14 +847,18 @@ w^{(3)}_{12}\frac{\partial{\sigma(a_{12}^{(2)}})}{\partial{a_{12}^{(2)}}}
 \end{eqnarray} 
 
 \noindent Similarly, we can compute the derivatives of $E$ with respect to all entries of 
-$\mathbf{Z}^{(0)}_{k=3}$. Then we can calculate the derivative of $E$ with respect to an 
-arbitrary force component, e.g. $x_1$:
+$\mathbf{Z}^{(0)}_{\mathrm{BBB}}$. Then we can calculate the derivative of $E$ with respect 
+to an arbitrary force component, e.g. $x_1$:
 
-\begin{eqnarray}
+\begin{equation}\label{dE_dYdz_dzdx}
 \frac{\partial{E}}{\partial{x_1}} = \sum_{i=1}^{8}{
-	\frac{\partial{Y_{i}}}{\partial{x_1}}
+	\sum_{a,b}{
+		\frac{\partial{Y_{i}}}{\partial{z_{ab}}} 
+		\cdot 
+		\frac{\partial{z_{ab}}}{\partial{x_{1}}}
+	}
 }
-\end{eqnarray}
+\end{equation}
 
 \noindent Remember that:
 
@@ -869,12 +887,18 @@ r_{ij} = \sqrt{(x_i - x_j)^2 + (y_i - y_j)^2 + (z_i - z_j)^2}
 \noindent Only $\partial{z_{11}} / \partial{x_1}$, 
 $\partial{z_{12}} / \partial{x_1}$, $\partial{z_{21}} / \partial{x_1}$,
 $\partial{z_{22}} / \partial{x_1}$, $\partial{z_{31}} / \partial{x_1}$ and
-$\partial{z_{32}} / \partial{x_1}$ has non-zero values. Thus, we can obtain a more 
-simplified form:
+$\partial{z_{32}} / \partial{x_1}$ are non-zero. Thus, equation \ref{dE_dYdz_dzdx} 
+can be further simplified:
 
 \begin{eqnarray}
-\frac{\partial{E}}{\partial{x_1}} & = & \sum_{i=1}^{8}{
-	\frac{\partial{Y_{i}}}{\partial{x_1}}
+\frac{\partial{E}}{\partial{x_1}} 
+& = & 
+\sum_{i=1}^{8}{
+	\sum_{a,b}{
+		\frac{\partial{Y_{i}}}{\partial{z_{ab}}} 
+		\cdot 
+		\frac{\partial{z_{ab}}}{\partial{x_{1}}}
+	}
 } \nonumber \\
 & = & 
 \sum_{i=1}^{8}{\left(
@@ -883,7 +907,7 @@ simplified form:
 	\frac{\partial{Y_{i}}}{\partial{z_{21}}}\frac{\partial{z_{21}}}{\partial{x_1}} +
 	\frac{\partial{Y_{i}}}{\partial{z_{22}}}\frac{\partial{z_{22}}}{\partial{x_1}} +
 	\frac{\partial{Y_{i}}}{\partial{z_{31}}}\frac{\partial{z_{31}}}{\partial{x_1}} +
-	\frac{\partial{Y_{i}}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}} +
+	\frac{\partial{Y_{i}}}{\partial{z_{32}}}\frac{\partial{z_{32}}}{\partial{x_1}}
 \right)
 } \nonumber \\
 & = &
@@ -953,7 +977,7 @@ sum of all elements of arbitrary matrix A of shape $[m, n]$:
 	\mathrm{grandsum}(A) = \sum_{i}^{m}{\sum_{j}^{n}{(A)_{i, j}}}
 \end{equation}
 
-\noindent Then we can express equation 50 with the following matrix form:
+\noindent Then equation 52 can be converted to the following form:
 
 \begin{eqnarray}
 \frac{\partial{E}}{\partial{x_1}} 
@@ -990,40 +1014,51 @@ sum of all elements of arbitrary matrix A of shape $[m, n]$:
 		0 \\	
 		\end{array}
 	\right]
-\right) \\
+\right) \label{dE_dx1_grandsum_explicit} \\
 & = &
 \mathrm{grandsum}\left(
-	\partial{E} / \partial{\mathbf{Z^{(0)}}} 
+	\partial{E} / \partial{\mathbf{Z^{(0)}_{\mathrm{BBB}}}} 
 	\circ
-	\partial{Z^{(0)}} / \partial{x_1}
+	\partial{\mathbf{Z}^{(0)}_{\mathbf{BBB}}} / \partial{x_1}
 \right)
 \end{eqnarray}
 
 \noindent TensorFlow can handle the complicated derivative 
-$\partial{E} / \partial{\mathbf{Z^{(0)}}}$ and $\partial{Z^{(0)}} / \partial{x_1}$ can be
-pre-computed because it doesn't depend on kernel weights. However, 
-$\partial{Z^{(0)}} / \partial{x_1}$ in equation 53 has 12 ($C^4_3 \cdot C^3_2$) 
-entries but only 6 ($C^4_3 \cdot C^3_2 \cdot 6 / (4 \cdot 3)$) of them are non-zero values. 
-To avoid unnecessary space waste, 
+$\partial{E} / \partial{\mathbf{Z^{(0)}_{\mathrm{BBB}}}}$ and 
+$\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} / \partial{x_1}$ can be pre-computed because it 
+doesn't depend on kernel weights. 
+However, $\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} / \partial{x_1}$ in equation 
+\ref{dE_dx1_grandsum_explicit} has 12 ($C^4_3 \cdot C^3_2$) entries 
+but only 6 ($C^4_3 \cdot C^3_2 \cdot 6 / (4 \cdot 3)$) of them are non-zero. 
+To avoid unnecessary space waste, the coefficients matrix 
+$\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} / \partial{\{x, y, z\}_i}$ should be constructed in
+another way.
 
-Each entry of $\partial{E} / \partial{\mathbf{Z^{(0)}}}$ contributes to 
-six force components, so we can tile $\partial{E} / \partial{\mathbf{Z^{(0)}}}$ six times:
+Since each entry of $\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}$ contributes 
+to six force components, it's natural for us to tile 
+$\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}$ six times so that each entry of the 
+tiled matrix only contributes to one force component:
 
 \begin{equation}
-\left(\frac{\partial{E}}{\partial{\mathbf{Z^{(0)}}}}\right)_{\mathrm{tiled}} = 
+\left(\frac{\partial{E}}{\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}}\right)_{\mathrm{tiled}} = 
 \left[\begin{array}{cccccc}
-\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} &
-\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} &
-\partial{E} / \partial{\mathbf{Z^{(0)}}} & \partial{E} / \partial{\mathbf{Z^{(0)}}} 
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} & 
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} &
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} & 
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} &
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} & 
+\partial{E} / \partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} 
 \end{array}
 \right]
 \end{equation}
 
 \noindent and then calculate the coefficients matrix 
-$\partial{Z^{(0)}} / \partial{\{x, y, z\}_i}$:
+$\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}} / \partial{\{x, y, z\}_i}$:
 
 \begin{eqnarray}
-\left(\frac{\partial{\mathbf{Z}^{(0)}}}{\partial{\{x, y, z\}_i}}\right)^T
+\left(\frac{
+	\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}}{\partial{\{x, y, z\}_i}}
+\right)^\mathbf{T}
 & = &
 \left[\begin{array}{cccc}
 \partial{z_{11}} / \partial{x_1} & \partial{z_{21}} / \partial{x_1} &
@@ -1066,17 +1101,20 @@ $\partial{Z^{(0)}} / \partial{\{x, y, z\}_i}$:
 \right]
 \end{eqnarray}
 
-\noindent Then the force contributions can be simply computed:
+\noindent Then we can obtain the force contributions matrix,
+$\partial{E} / \partial{\{x, y, z\}_i}$, with the following Hadamard product: 
 
 \begin{equation}
 \frac{\partial{E}}{\partial{\{x, y, z\}_i}}
 =
-\frac{\partial{\mathbf{Z}^{(0)}}}{\partial{\{x, y, z\}_i}}
+\frac{\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}}{\partial{\{x, y, z\}_i}}
 \circ
-\left(\frac{\partial{E}}{\partial{\mathbf{Z^{(0)}}}}\right)_{\mathrm{tiled}}
+\left(
+	\frac{\partial{E}}{\partial{\mathbf{Z}^{(0)}_{\mathrm{BBB}}}}
+\right)_{\mathrm{tiled}}
 \end{equation}
 
-Now we have the force contributions:
+\noindent Expand $\partial{E} / \partial{\{x, y, z\}_i}$ we can have:
 
 \begin{equation}
 \frac{\partial{E}}{\partial{\{x, y, z\}_i}} = \left[\begin{array}{cccc}
@@ -1156,9 +1194,10 @@ Now we have the force contributions:
 \right]
 \end{equation}
 
-The one last thing is to build an auxiliary matrix $\mathbf{IND}$ that can 
-\textbf{re-order} the matrix $\left(\partial{E} / \partial{\{x, y, z\}_i}\right)$ 
-to the shape of $[12, 6]$ so that each row represents a force component:
+\noindent Now, the one last thing to do is building an auxiliary matrix $\mathbf{IND}$ that can 
+\textbf{re-order} the entries of $\partial{E} / \partial{\{x, y, z\}_i}$ 
+to build a matrix of shape $[3\mathrm{N}, 6]$ so that all entries of each row corresponds to 
+the same force component. \textbf{IND} can also be pre-computed.
 
 \begin{eqnarray}
 && \left(
@@ -1169,7 +1208,7 @@ to the shape of $[12, 6]$ so that each row represents a force component:
 	\frac{\partial{E}}{\partial{\{x, y, z\}_i}}, \mathbf{IND}
 \right) \nonumber \\
 & = & \begin{blockarray}{ccccccc}
-component & & & & & & \\
+Component & & & & & & \\
 \begin{block}{c(cccccc)}
 f^x_1 &
 \partial{E^{11}} / \partial{x_1} & \partial{E^{12}} / \partial{x_1} &
@@ -1235,14 +1274,14 @@ f^z_4 &
 \frac{\partial{z_{ab}}}{\partial{\{x, y, z\}_3}}
 \end{equation}
 
-\noindent Finally we can get the force component by summing up each row:
+\noindent Finally, we can get all atomic forces by summing up each row:
 
 \begin{equation}
 \vec{F}(\mathrm{B}_{4}) = 
 \mathbf{Sum}\left(
 \left(
 	\frac{\partial{E}}{\partial{\{x, y, z\}_i}}
-\right)_{\mathrm{ordered}}, \quad \mathrm{axis}=1
+\right)_{\mathrm{ordered}}, \quad \mathrm{axis} = 1
 \right)
 \end{equation}
 
