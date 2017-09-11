@@ -1,60 +1,73 @@
 
-\section{Theoretical analysis of the forces}
+\section{Atomic forces}
 
-Atomic force is the negative first-order derivative of energy with respect to 
-displacement:
+\subsection{Overview}
+
+According to equation \ref{eqn:total_energy}, for any specific stoichiometry, the total 
+energy: 
+
+\begin{equation}
+E^{total} =
+\underbrace{\sum_{a}^{N}{E^{A_a}}}_{\text{Constant}} + 
+\underbrace{\sum_{a}^{N}{\sum_{b>a}^{N}{\mathbf{F}^{(k=2)}(z_{ab}, A_a, A_b)}} + 
+\sum_{a}^{N}{\sum_{b>a}^{N}{\sum_{c>b}^{N}{
+	\mathbf{F}^{(k=3)}(z_{ab}, z_{bc}, z_{ac}, A_a, A_b, A_c)}}
+}}_{\mathbf{NN}(R)}
+\end{equation}
+
+\noindent is composed of two parts: the 1-body part which is constant and the 2/3-body part. 
+which only depends on the coordinates of the atoms. So the total energy of kCON is 
+conservative by construction. Thus, the kCON-derived atomic force should be the negative of 
+the first-order derivative of $E^{\mathrm{kCON}}$ with respect to the atomic coordinates $r$:
 
 \begin{eqnarray}
-f(r) = -\frac{\partial E(r)}{\partial r}
+f(r) = -\frac{\partial E^{\mathrm{kCON}}(r)}{\partial r}
 \end{eqnarray}
 
-\noindent So it's straightforward to get kCON atomic forces:
+\noindent So we can get:
 
 \begin{eqnarray}
-f(x_{i}) & = & -\frac{\partial{E^{total}}}{\partial{x_{i}}} \nonumber \\
-& = & -\left(
-	\frac{\partial{E^{(k=1)}}}{\partial{x_i}} 
-	+ \frac{\partial{E^{(k=2)}}}{\partial{x_i}}
-	+ \frac{\partial{E^{(k=3)}}}{\partial{x_i}} 
+f(\{x, y, z\}_{i})
+& = & 
+-\frac{\partial{E^{total}}}{\partial{\{x, y, z\}_{i}}} \nonumber \\
+& = & 
+-\left(
+	\frac{\partial{E^{(k=2)}}}{\partial{\{x, y, z\}_i}} + 
+	\frac{\partial{E^{(k=3)}}}{\partial{\{x, y, z\}_i}} 
 \right) \nonumber \\
-& = & -\left(
+& = & 
+-\left(
 \frac{
-	\partial{\sum_{a,b}^{C^N_2}{
-		\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}}(z_{ab})}
-	}{
-		\partial{x_i}
-	} 
-+ 
+	\partial{\sum_{a}^{N}{\sum_{b>a}^{N}{
+		\mathrm{CNN}^{\mathrm{A}_{a}\mathrm{A}_{b}}}(z_{ab})}}
+	}
+	{\partial{\{x, y, z\}_i}
+} + 
 \frac{
-	\partial{\sum_{a,b,c}^{C^N_3}{
-		\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}}
-		(z_{ab}, z_{ac}, z_{bc})}
-	}{
-		\partial{x_i}
-	} 
+	\partial{\sum_{a}^{N}{\sum_{b>a}^{N}{\sum_{c>b}^{N}{
+		\mathrm{CNN}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}}
+		(z_{ab}, z_{ac}, z_{bc})}}}
+	}
+	{\partial{\{x, y, z\}_i}} 
 \right) \nonumber \\
-& = & -\left(
-\sum_{a,b}^{C^N_2}{
-	\frac{
-		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}}(z_{ab})}
-	}{
-		\partial{x_i}
-	}
-}
-	+
-\sum_{a,b,c}^{C^N_3}{
-	\frac{
-		\partial{\boldmath{\mathrm{CNN}}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}
-		(z_{ab}, z_{ac}, z_{bc})}
-	}{
-		\partial{x_i}
-	}
-}
+& = & 
+-\left(
+\sum_{a}^{N}{\sum_{b>a}^{N}{
+\frac{
+	\partial{\mathrm{CNN}^{\mathrm{A}_{a}\mathrm{A}_{b}}}(z_{ab})}{
+	\partial{\{x, y, z\}_i}
+}}} + 
+\sum_{a}^{N}{\sum_{b>a}^{N}{\sum_{c>b}^{N}{
+\frac{
+	\partial{\mathrm{CNN}^{\mathrm{A}_{a}\mathrm{A}_{b}\mathrm{A}_{c}}}
+		(z_{ab}, z_{ac}, z_{bc})}{
+	\partial{\{x, y, z\}_i}
+}}}}
 \right)
 \end{eqnarray}
 
-\noindent where $f(x_{i})$ is the force component of atom $i$ along the X direction. We 
-also have:
+\noindent where $f(\{x, y, z\}_{i})$ is the force component of atom $i$ along the X/Y/Z 
+direction. We also have:
 
 \begin{eqnarray}
 %

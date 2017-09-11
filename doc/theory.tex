@@ -11,6 +11,13 @@
 \usepackage{blkarray}
 \usepackage{caption}
 
+\usepackage[utf8]{inputenc}
+\usepackage{amssymb, latexsym}
+\usepackage{sidecap}
+\usepackage{tikz}
+\usetikzlibrary{decorations.pathreplacing}
+
+
 
 \title{The theory and implementation of kCON}
 
@@ -29,9 +36,9 @@ provide insight into atomistic structures of varying stoichiometry from small an
 training sets. kCON is built upon convolutional neural networks, or more specifically, 
 1D-convolutional neural networks with 1x1 convolutions.
 
-%\begin{center}
-%  \makebox[\textwidth]{\includegraphics[width=0.8\paperwidth]{images/figure1}}
-%\end{center}
+\begin{center}
+  \makebox[\textwidth]{\includegraphics[width=0.8\paperwidth]{images/figure1}}
+\end{center}
 
 \include{energy}
 \include{forces}
