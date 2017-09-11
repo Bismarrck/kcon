@@ -343,21 +343,18 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
       f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
     with tf.name_scope("energy"):
-      if not forces_only:
-        if y_weights is None:
-          y_weights = tf.constant(1.0, name="y_weight")
+      if y_weights is None:
+        y_weights = tf.constant(1.0, name="y_weight")
 
-        y_mse = tf.losses.mean_squared_error(
-          y_true,
-          y_nn,
-          scope="yMSE",
-          loss_collection=None,
-          weights=y_weights
-        )
-        y_loss = tf.sqrt(y_mse, name="yRMSE")
-        tf.summary.scalar("yRMSE", y_loss)
-      else:
-        y_loss = tf.constant(0.0, dtype=tf.float32, name="zero")
+      y_mse = tf.losses.mean_squared_error(
+        y_true,
+        y_nn,
+        scope="yMSE",
+        loss_collection=None,
+        weights=y_weights
+      )
+      y_loss = tf.sqrt(y_mse, name="yRMSE")
+      tf.summary.scalar("yRMSE", y_loss)
 
     if not forces_only:
       loss = tf.add(f_loss, y_loss, name="together")
