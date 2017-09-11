@@ -102,7 +102,7 @@ def train_model():
                                             f_nn)
 
       # Build a graph that trains the model using both energy and forces.
-      train_op = kcnn.get_ef_train_op(yloss, floss, global_step)
+      train_op = kcnn.get_ef_train_op(loss, yloss, floss, global_step)
 
     # Save the training flags
     save_training_flags()
