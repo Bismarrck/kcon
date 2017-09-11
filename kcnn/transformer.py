@@ -754,8 +754,8 @@ class Transformer:
         the indexing matrix.
 
     Returns:
-      indexing: an `int` array of shape `[3N, C(N, k) * C(k, 2) * 2 / N]` as the
-        indices of the entries for each atomic force component.
+      positions: an `int` array of shape `[3N, C(N, k) * C(k, 2) * 2 / N]` as
+        the positions of the entries for each atomic force component.
 
     """
     if not self._atomic_forces:
@@ -763,12 +763,16 @@ class Transformer:
 
     cnk = indexing.shape[0]
     ck2 = indexing.shape[1]
-    matrix = np.zeros((self._num_f_components, self._num_entries), dtype=int)
+    positions = np.zeros((self._num_f_components, self._num_entries), dtype=int)
     loc = np.zeros((self._num_real, ), dtype=int)
     position = 0
     half = ck2 * 3
     zero = 0
     imax = len(self.species)
+
+    # The index should start from 1. 0 will be used as the virtual index
+    # corresponding to zero contribution.
+    start = 1
 
     for i in range(cnk):
       if indexing[i].min() >= 0:
@@ -783,18 +787,18 @@ class Transformer:
           bx = b * 3 + 0
           by = b * 3 + 1
           bz = b * 3 + 2
-          matrix[ax, loc[a]] = position + 0 * ck2 + j + zero
-          matrix[ay, loc[a]] = position + 1 * ck2 + j + zero
-          matrix[az, loc[a]] = position + 2 * ck2 + j + zero
+          positions[ax, loc[a]] = position + 0 * ck2 + j + zero + start
+          positions[ay, loc[a]] = position + 1 * ck2 + j + zero + start
+          positions[az, loc[a]] = position + 2 * ck2 + j + zero + start
           loc[a] += 1
-          matrix[bx, loc[b]] = position + 0 * ck2 + j + half
-          matrix[by, loc[b]] = position + 1 * ck2 + j + half
-          matrix[bz, loc[b]] = position + 2 * ck2 + j + half
+          positions[bx, loc[b]] = position + 0 * ck2 + j + half + start
+          positions[by, loc[b]] = position + 1 * ck2 + j + half + start
+          positions[bz, loc[b]] = position + 2 * ck2 + j + half + start
           loc[b] += 1
 
       position += 6 * ck2
 
-    return matrix
+    return positions
 
   def transform(self, atoms, features=None):
     """
@@ -1553,9 +1557,9 @@ def debug():
         if i >= len(atoms) or j >= len(atoms):
           continue
         r = atoms.get_distance(i, j)
-        l = pyykko[symbols[i]] + pyykko[symbols[j]]
-        v = np.exp(-r / l)
-        g = 1.0 / l**2 * v * (positions[j] - positions[i]) / np.log(v)
+        radius = pyykko[symbols[i]] + pyykko[symbols[j]]
+        v = np.exp(-r / radius)
+        g = (1.0 / radius**2) * v * (positions[j] - positions[i]) / np.log(v)
         assert isinstance(g, np.ndarray)
 
         vlist[k] = v
@@ -1587,7 +1591,7 @@ def debug():
   print(array2string(matrix))
 
   directions = ("x", "y", "z")
-  calculated = coef.flatten()[indexing]
+  calculated = np.pad(coef.flatten(), [[1, 0]], mode='constant')[indexing]
   print("Differences: ")
   for i in range(len(matrix)):
     diff = np.abs(np.sort(calculated[i]) - np.sort(matrix[i])).sum()
