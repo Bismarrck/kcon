@@ -30,8 +30,8 @@ MODEL_VARIABLES = '_model_variables_'
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
-                         use_batch_norm=False, activation_fn=lrelu, alpha=0.2,
-                         num_kernels=None):
+                         use_batch_norm=False, use_biases=True,
+                         activation_fn=lrelu, alpha=0.2, num_kernels=None):
   """
   Infer the k-body term of `KCNN`.
 
@@ -43,6 +43,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
       inference is for training or not.
     use_batch_norm: a `bool` indicating whether we should use batch
       normalization or not.
+    use_biases: a `bool` indicating whether we should use biases or not.
     activation_fn: a `Callable` as the activation function for each conv layer.
     num_kernels: a `List[int]` as the number of kernels.
     verbose: a `bool`. If Ture, the shapes of the layers will be printed.
@@ -69,6 +70,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   # Setup the initializers and normalization function.
   weights_initializer = initializers.xavier_initializer(
     seed=WEIGHT_INIT_SEED, dtype=dtype)
+  biases_initializer = init_ops.zeros_initializer() if use_biases else None
+  normalizer_fn = batch_norm if use_batch_norm else None
   batch_norm_params = {
     "is_training": is_training,
     "decay": BATCH_NORM_DECAY_FACTOR,
@@ -80,14 +83,11 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   # Build the convolution neural network for this k-body atomic interaction.
   with arg_scope([conv2d],
                  weights_initializer=weights_initializer,
+                 biases_initializer=biases_initializer,
                  normalizer_params=batch_norm_params,
                  variables_collections=[MODEL_VARIABLES]):
     with arg_scope([lrelu], alpha=alpha):
       for i, num_kernels in enumerate(num_kernels):
-        if i > 0 and use_batch_norm:
-          normalizer_fn = batch_norm
-        else:
-          normalizer_fn = None
         inputs = conv2d(inputs,
                         kernel_size=kernel_size,
                         num_outputs=num_kernels,
@@ -253,7 +253,7 @@ def _split_inputs(inputs, split_dims):
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, verbose=True, num_kernels=None,
               activation_fn=lrelu, alpha=0.2, use_batch_norm=False,
-              one_body_weights=None, trainable_one_body=True,
+              use_biases=True, one_body_weights=None, trainable_one_body=True,
               atomic_forces=False, coefficients=None, indexing=None):
   """
   The general inference function.
@@ -278,6 +278,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     alpha: a `float` as the parameter alpha for Leaky ReLU.
     use_batch_norm: a `bool` indicating whether the batch normalization should
       be used or not.
+    use_biases: a `bool` indicating whether we should use biases or not.
     one_body_weights: a `float32` array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
@@ -311,6 +312,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
                                              activation_fn=activation_fn,
                                              alpha=alpha,
                                              use_batch_norm=use_batch_norm,
+                                             use_biases=use_biases,
                                              is_training=is_training,
                                              num_kernels=num_kernels,
                                              verbose=verbose))

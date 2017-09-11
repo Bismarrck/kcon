@@ -30,6 +30,8 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
+tf.app.flags.DEFINE_boolean('disable_biases', False,
+                            """Disable all biases if True.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.01,
@@ -167,10 +169,8 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
-  if FLAGS.batch_norm:
-    use_batch_norm = True
-  else:
-    use_batch_norm = False
+  use_batch_norm = FLAGS.batch_norm
+  use_biases = not FLAGS.disable_biases
 
   y_total, _, f_calc = inference(
     inputs,
@@ -185,6 +185,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     activation_fn=activation_fn,
     alpha=alpha,
     use_batch_norm=use_batch_norm,
+    use_biases=use_biases,
     one_body_weights=one_body_weights,
     verbose=verbose,
     trainable_one_body=trainable,
