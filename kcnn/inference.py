@@ -83,45 +83,31 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
 
   if use_biases:
     if use_batch_norm:
-
-      def _batch_norm_params(_i):
-        return {
-          "is_training": is_training,
-          "decay": BATCH_NORM_DECAY_FACTOR,
-          "scale": True,
-          "center": True,
-          "epsilon": 0.0001,
-          "scope": "Hidden{:d}".format(_i),
-          "variables_collections": [KcnnGraphKeys.FORCES_VARIABLES],
-          "reuse": reuse
-        }
-
       activation_fn = activation
       normalizer_fn = batch_norm
-      get_normalizer_params = _batch_norm_params
+      normalizer_params = {
+        "is_training": is_training,
+        "decay": BATCH_NORM_DECAY_FACTOR,
+        "scale": True,
+        "center": True,
+        "epsilon": 0.0001,
+        "variables_collections": [KcnnGraphKeys.FORCES_VARIABLES],
+        "reuse": reuse
+      }
 
     else:
-
-      def _bias_add_params(_i):
-        return {
-          "activation_fn": activation,
-          "reuse": reuse,
-          "variables_collections": [KcnnGraphKeys.ENERGY_VARIABLES],
-          "scope": "Hidden{:d}".format(_i)
-        }
-
       activation_fn = None
       normalizer_fn = bias_add
-      get_normalizer_params = _bias_add_params
+      normalizer_params = {
+        "activation_fn": activation,
+        "reuse": reuse,
+        "variables_collections": [KcnnGraphKeys.ENERGY_VARIABLES],
+      }
 
   else:
-
-    def _void(_):
-      return {}
-
     activation_fn = activation
     normalizer_fn = None
-    get_normalizer_params = _void
+    normalizer_params = {}
 
   # Build the convolution neural network for this k-body atomic interaction.
   with arg_scope([conv2d],
@@ -139,7 +125,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                         num_outputs=num_kernels,
                         activation_fn=activation_fn,
                         normalizer_fn=normalizer_fn,
-                        normalizer_params=get_normalizer_params(i + 1),
+                        normalizer_params=normalizer_params,
                         scope="Hidden{:d}".format(i + 1))
         if verbose:
           print_activations(inputs)
