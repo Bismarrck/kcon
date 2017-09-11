@@ -9,7 +9,7 @@ import numpy as np
 
 from scipy.misc import comb
 from tensorflow.contrib.framework import arg_scope
-from tensorflow.contrib.layers import batch_norm, conv2d, flatten
+from tensorflow.contrib.layers import batch_norm, conv2d, flatten, bias_add
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from utils import lrelu
@@ -25,13 +25,22 @@ WEIGHT_INIT_SEED = 218
 # The decay for batch normalization
 BATCH_NORM_DECAY_FACTOR = 0.999
 
-# Collection containing all the variables.
-MODEL_VARIABLES = '_model_variables_'
+
+class KcnnGraphKeys:
+  """
+  Custom graph collections for kCON.
+
+  * `ENERGY_VARIABLES`: variables that should be updated during energy training.
+  * `FORCES_VARIABLES`: variables that should be updated during forces training.
+
+  """
+  ENERGY_VARIABLES = 'energy'
+  FORCES_VARIABLES = 'forces'
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
-                         use_batch_norm=False, use_biases=True,
-                         activation_fn=lrelu, alpha=0.2, num_kernels=None):
+                         reuse=False, use_batch_norm=False, use_biases=True,
+                         activation=lrelu, alpha=0.2, num_kernels=None):
   """
   Infer the k-body term of `KCNN`.
 
@@ -41,10 +50,11 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
     ck2: a `int` as the value of C(k,2).
     is_training: a `bool` type placeholder tensor indicating whether this
       inference is for training or not.
+    reuse: a `bool` indicating whether we should reuse the variables or not.
     use_batch_norm: a `bool` indicating whether we should use batch
       normalization or not.
     use_biases: a `bool` indicating whether we should use biases or not.
-    activation_fn: a `Callable` as the activation function for each conv layer.
+    activation: a `Callable` as the activation function for each conv layer.
     num_kernels: a `List[int]` as the number of kernels.
     verbose: a `bool`. If Ture, the shapes of the layers will be printed.
     alpha: a `float` as the parameter alpha for Leaky ReLU.
@@ -70,46 +80,83 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   # Setup the initializers and normalization function.
   weights_initializer = initializers.xavier_initializer(
     seed=WEIGHT_INIT_SEED, dtype=dtype)
-  biases_initializer = init_ops.zeros_initializer() if use_biases else None
-  normalizer_fn = batch_norm if use_batch_norm else None
-  batch_norm_params = {
-    "is_training": is_training,
-    "decay": BATCH_NORM_DECAY_FACTOR,
-    "scale": True,
-    "center": True,
-    "epsilon": 0.0001,
-  }
+
+  if use_biases:
+    if use_batch_norm:
+
+      def _batch_norm_params(_i):
+        return {
+          "is_training": is_training,
+          "decay": BATCH_NORM_DECAY_FACTOR,
+          "scale": True,
+          "center": True,
+          "epsilon": 0.0001,
+          "scope": "Hidden{:d}".format(_i),
+          "variables_collections": [KcnnGraphKeys.FORCES_VARIABLES],
+          "reuse": reuse
+        }
+
+      activation_fn = activation
+      normalizer_fn = batch_norm
+      get_normalizer_params = _batch_norm_params
+
+    else:
+
+      def _bias_add_params(_i):
+        return {
+          "activation_fn": activation,
+          "reuse": reuse,
+          "variables_collections": [KcnnGraphKeys.ENERGY_VARIABLES],
+          "scope": "Hidden{:d}".format(_i)
+        }
+
+      activation_fn = None
+      normalizer_fn = bias_add
+      get_normalizer_params = _bias_add_params
+
+  else:
+
+    def _void(_):
+      return {}
+
+    activation_fn = activation
+    normalizer_fn = None
+    get_normalizer_params = _void
 
   # Build the convolution neural network for this k-body atomic interaction.
   with arg_scope([conv2d],
                  weights_initializer=weights_initializer,
-                 biases_initializer=biases_initializer,
-                 normalizer_params=batch_norm_params,
-                 variables_collections=[MODEL_VARIABLES]):
+                 # Disable biases here and use `bias_add` as the normalizer
+                 biases_initializer=None,
+                 reuse=reuse,
+                 variables_collections=[KcnnGraphKeys.FORCES_VARIABLES]):
+                 # variables_collections = [KcnnGraphKeys.FORCES_VARIABLES,
+                 #                          KcnnGraphKeys.ENERGY_VARIABLES]):
     with arg_scope([lrelu], alpha=alpha):
       for i, num_kernels in enumerate(num_kernels):
         inputs = conv2d(inputs,
                         kernel_size=kernel_size,
                         num_outputs=num_kernels,
                         activation_fn=activation_fn,
-                        scope="Hidden{:d}".format(i + 1),
-                        normalizer_fn=normalizer_fn)
+                        normalizer_fn=normalizer_fn,
+                        normalizer_params=get_normalizer_params(i + 1),
+                        scope="Hidden{:d}".format(i + 1))
         if verbose:
           print_activations(inputs)
 
-    inputs = conv2d(inputs,
-                    kernel_size=kernel_size,
-                    num_outputs=1,
-                    activation_fn=None,
-                    biases_initializer=None, scope="k-Body")
+    outputs = conv2d(inputs,
+                     kernel_size=kernel_size,
+                     num_outputs=1,
+                     activation_fn=None,
+                     scope="k-Body")
     if verbose:
-      print_activations(inputs)
+      print_activations(outputs)
       tf.logging.info("")
-    return inputs
+    return outputs
 
 
 def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
-                        trainable=True):
+                        reuse=False, trainable=True):
   """
   Inference the one-body part.
 
@@ -119,6 +166,7 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
     num_atom_types: a `int` as the number of atom types.
     initial_one_body_weights: an array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
+    reuse: a `bool` indicating whether we should reuse the variables or not.
     trainable: a `bool` indicating whether the one-body parameters are trainable
       or not.
 
@@ -145,7 +193,8 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
     weights_initializer=weights_initializer,
     biases_initializer=None,
     scope='one-body',
-    variables_collections=[MODEL_VARIABLES],
+    reuse=reuse,
+    variables_collections=[KcnnGraphKeys.ENERGY_VARIABLES],
     trainable=trainable,
   )
 
@@ -309,7 +358,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   for i, conv in enumerate(splited_inputs):
     with tf.variable_scope(kbody_terms[i]):
       y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
-                                             activation_fn=activation_fn,
+                                             activation=activation_fn,
                                              alpha=alpha,
                                              use_batch_norm=use_batch_norm,
                                              use_biases=use_biases,

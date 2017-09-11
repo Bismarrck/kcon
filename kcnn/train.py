@@ -26,8 +26,6 @@ tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
 tf.app.flags.DEFINE_integer('max_steps', 1000000,
                             """The maximum number of training steps.""")
-tf.app.flags.DEFINE_boolean('forces_only', False,
-                            """Only train on forces if True.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
@@ -94,17 +92,17 @@ def train_model():
       yloss = None
       floss = None
 
+      # Build a Graph that trains the model with respect to energy only.
+      train_op = kcnn.get_train_op(loss, global_step)
+
     else:
       loss, yloss, floss = kcnn.get_yf_loss(y_true,
                                             y_nn,
                                             f_true,
-                                            f_nn,
-                                            y_weights=y_weights,
-                                            forces_only=FLAGS.forces_only)
+                                            f_nn)
 
-    # Build a Graph that trains the model with one batch of examples and
-    # updates the model parameters.
-    train_op = kcnn.get_train_op(loss, global_step)
+      # Build a graph that trains the model using both energy and forces.
+      train_op = kcnn.get_ef_train_op(yloss, floss, global_step)
 
     # Save the training flags
     save_training_flags()

@@ -8,7 +8,7 @@ import numpy as np
 import tensorflow as tf
 import reader
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from inference import inference
+from inference import inference, KcnnGraphKeys
 from utils import lrelu
 
 __author__ = 'Xin Chen'
@@ -307,7 +307,7 @@ def get_y_loss(y_true, y_nn, weights=None):
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
 
-def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
+def get_yf_loss(y_true, y_nn, f_true, f_nn):
   """
   Return the total loss tensor that also includes forces.
 
@@ -318,10 +318,6 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
     f_true: a `float32` tensor of shape `[-1, 3N]` as the true forces.
     f_nn: a `float32` tensor of shape `[-1, 3N]` as the neural network predicted
       atomic forces.
-    y_weights: the weights for the energy losses. If None, all losses have the
-      weight of 1.0.
-    forces_only: a `bool` indicating whether we should only use forces to train
-      or not.
 
   Returns:
     loss: a `float32` scalar tensor as the total loss.
@@ -331,7 +327,7 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
   """
   with tf.name_scope("yfRMSE"):
 
-    with tf.name_scope("force"):
+    with tf.name_scope("forces"):
       f_mse = tf.losses.mean_squared_error(
         f_true,
         f_nn,
@@ -343,24 +339,16 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn, y_weights=None, forces_only=False):
       f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
     with tf.name_scope("energy"):
-      if y_weights is None:
-        y_weights = tf.constant(1.0, name="y_weight")
-
       y_mse = tf.losses.mean_squared_error(
         y_true,
         y_nn,
         scope="yMSE",
         loss_collection=None,
-        weights=y_weights
       )
       y_loss = tf.sqrt(y_mse, name="yRMSE")
       tf.summary.scalar("yRMSE", y_loss)
 
-    if not forces_only:
-      loss = tf.add(f_loss, y_loss, name="together")
-    else:
-      loss = tf.identity(f_loss, "together")
-
+    loss = tf.add(f_loss, y_loss, name="together")
     tf.add_to_collection("losses", loss)
     total_loss = tf.add_n(tf.get_collection("losses"), name="total")
 
@@ -400,7 +388,7 @@ def _add_loss_summaries(total_loss):
 
 def get_train_op(total_loss, global_step):
   """
-  Train the Behler model.
+  Train the model.
 
   Create an optimizer and apply to all trainable variables. Add moving
   average for all trainable variables.
@@ -411,7 +399,7 @@ def get_train_op(total_loss, global_step):
       processed.
 
   Returns:
-    train_op: op for training.
+    train_op: the op for training.
 
   """
 
@@ -456,6 +444,55 @@ def get_train_op(total_loss, global_step):
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
   with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
+    train_op = tf.no_op(name='train')
+
+  return train_op
+
+
+def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
+  """
+  Train the model.
+
+  Args:
+    total_loss: a `float32` tensor as the total loss.
+    y_loss: a `float32` tensor as the loss of the total energy.
+    f_loss: a `float32` tensor as the loss of the atomic forces.
+    global_step: Integer Variable counting the number of training steps
+      processed.
+
+  Returns:
+    train_op: the op for training.
+
+  """
+  loss_averages_op = _add_loss_summaries(total_loss)
+
+  dependencies = [loss_averages_op]
+  if FLAGS.batch_norm:
+    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
+
+  # Train the model using atomic forces
+  with tf.control_dependencies(dependencies):
+    f_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
+      f_loss, var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
+    )
+
+  # The train the model using total energy.
+  with tf.control_dependencies([f_opt]):
+    y_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
+      y_loss, var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
+    )
+
+  # Add histograms for trainable variables.
+  for var in tf.trainable_variables():
+    tf.summary.histogram(var.op.name, var)
+
+  # Track the moving averages of all trainable variables.
+  with tf.name_scope("average"):
+    variable_averages = tf.train.ExponentialMovingAverage(
+      VARIABLE_MOVING_AVERAGE_DECAY, global_step)
+    variables_averages_op = variable_averages.apply(tf.trainable_variables())
+
+  with tf.control_dependencies([y_opt, variables_averages_op]):
     train_op = tf.no_op(name='train')
 
   return train_op
