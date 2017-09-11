@@ -434,6 +434,8 @@ def get_train_op(total_loss, global_step):
   # Add histograms for grandients
   with tf.name_scope("gnorms") as scope:
     for grad, var in grads:
+      if grad is None:
+        continue
       norm = tf.norm(grad, name=var.op.name + "/gnorm")
       tf.add_to_collection('gnorms', norm)
       tf.summary.scalar(var.op.name + "/grad_norm", norm)
