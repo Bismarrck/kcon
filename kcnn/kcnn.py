@@ -8,7 +8,8 @@ import numpy as np
 import tensorflow as tf
 import reader
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from inference import inference, KcnnGraphKeys
+from constants import KcnnGraphKeys
+from inference import inference
 from utils import lrelu
 
 __author__ = 'Xin Chen'

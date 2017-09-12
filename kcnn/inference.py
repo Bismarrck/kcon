@@ -4,16 +4,15 @@ This module is used to inference the model of `KCNN`.
 """
 from __future__ import print_function, absolute_import
 
-import tensorflow as tf
 import numpy as np
-
+import tensorflow as tf
 from scipy.misc import comb
 from tensorflow.contrib.framework import arg_scope
 from tensorflow.contrib.layers import batch_norm, conv2d, flatten, bias_add
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
+from constants import KcnnGraphKeys
 from utils import lrelu
-
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -24,18 +23,6 @@ WEIGHT_INIT_SEED = 218
 
 # The decay for batch normalization
 BATCH_NORM_DECAY_FACTOR = 0.999
-
-
-class KcnnGraphKeys:
-  """
-  Custom graph collections for kCON.
-
-  * `ENERGY_VARIABLES`: variables that should be updated during energy training.
-  * `FORCES_VARIABLES`: variables that should be updated during forces training.
-
-  """
-  ENERGY_VARIABLES = 'energy'
-  FORCES_VARIABLES = 'forces'
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
