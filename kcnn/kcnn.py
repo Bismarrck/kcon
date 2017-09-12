@@ -465,9 +465,8 @@ def _add_total_norm_summaries(grads_and_vars, collection,
       norm = tf.norm(grad, name=var.op.name + "/norm")
       tf.add_to_collection(collection, norm)
       if not only_summary_total:
-        with tf.name_scope("norms"):
-          with tf.name_scope(collection):
-            tf.summary.scalar(var.op.name, norm)
+        with tf.name_scope("norms/{}/".format(collection)):
+          tf.summary.scalar(var.op.name, norm)
 
   with tf.name_scope("total_norm/"):
     total_norm = tf.add_n(tf.get_collection(collection))
@@ -504,7 +503,11 @@ def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
       y_loss,
       var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
     )
-    y_grads_norm_op = _add_total_norm_summaries(grads, "y_norms")
+    y_grads_norm_op = _add_total_norm_summaries(
+      grads,
+      collection="y_norms",
+      only_summary_total=False,
+    )
     apply_y_grads_op = opt.apply_gradients(
       grads,
       global_step=global_step,
@@ -518,7 +521,11 @@ def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
       f_loss,
       var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
     )
-    f_grads_norm_op = _add_total_norm_summaries(grads, "f_norms")
+    f_grads_norm_op = _add_total_norm_summaries(
+      grads,
+      collection="f_norms",
+      only_summary_total=False
+    )
     apply_f_grads_op = opt.apply_gradients(
       grads,
       global_step=global_step,
@@ -527,7 +534,13 @@ def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
 
   # Add histograms for trainable variables.
   for var in tf.trainable_variables():
-    tf.summary.histogram(var.op.name, var)
+    name = var.op.name
+    absvar = tf.abs(var, name=name + "/abs")
+    tf.summary.histogram(name, var)
+    tf.add_to_collection('varsum', tf.reduce_sum(absvar, name=name + "/abssum"))
+  with tf.name_scope("Vars"):
+    total_sum = tf.add_n(tf.get_collection('varsum'), name="add_n")
+    tf.summary.scalar("abs_sum", total_sum)
 
   # Track the moving averages of all trainable variables.
   with tf.name_scope("average"):
