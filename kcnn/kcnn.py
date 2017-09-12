@@ -21,8 +21,10 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_float('learning_rate', 0.001,
-                          """The initial learning rate.""")
+tf.app.flags.DEFINE_float('learning_rate', 0.0001,
+                          """The learning rate for minimizing energy.""")
+tf.app.flags.DEFINE_float('f_learning_rate', 0.0001,
+                          """The learning rate for minimizing forces.""")
 tf.app.flags.DEFINE_string('conv_sizes', '40,50,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
@@ -387,9 +389,9 @@ def _add_loss_summaries(total_loss):
   return loss_averages_op
 
 
-def get_train_op(total_loss, global_step):
+def get_y_train_op(total_loss, global_step):
   """
-  Train the model.
+  Train the model by minimizing the energy differences.
 
   Create an optimizer and apply to all trainable variables. Add moving
   average for all trainable variables.
@@ -474,9 +476,9 @@ def _add_total_norm_summaries(grads_and_vars, collection,
   return total_norm
 
 
-def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
+def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
   """
-  Train the model.
+  Train the model by miniming both the energy and forces differences.
 
   Args:
     total_loss: a `float32` tensor as the total loss.
@@ -511,7 +513,7 @@ def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
 
   # The train the model using total energy.
   with tf.control_dependencies([y_grads_norm_op, apply_y_grads_op]):
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate, name='AdamF')
+    opt = tf.train.AdamOptimizer(FLAGS.f_learning_rate, name='AdamF')
     grads = opt.compute_gradients(
       f_loss,
       var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
