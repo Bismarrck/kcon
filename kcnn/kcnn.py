@@ -420,15 +420,7 @@ def get_train_op(total_loss, global_step):
     grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
-  with tf.name_scope("gnorms") as scope:
-    for grad, var in grads:
-      if grad is None:
-        continue
-      norm = tf.norm(grad, name=var.op.name + "/gnorm")
-      tf.add_to_collection('gnorms', norm)
-      tf.summary.scalar(var.op.name + "/grad_norm", norm)
-    total_norm = tf.add_n(tf.get_collection('gnorms', scope), "total_norms")
-    tf.summary.scalar("total_grad_norm", total_norm)
+  _add_total_norm_summaries(grads, "y_norms", only_summary_total=True)
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
@@ -447,6 +439,38 @@ def get_train_op(total_loss, global_step):
     train_op = tf.no_op(name='train')
 
   return train_op
+
+
+def _add_total_norm_summaries(grads_and_vars, collection,
+                              only_summary_total=True):
+  """
+  Add summaries for the 2-norms of the gradients.
+
+  Args:
+    grads_and_vars: a list of (gradient, variable) returned by an optimizer.
+    collection: a `str` as the collection to add the computed norms.
+    only_summary_total: a `bool` indicating whether we should summarize the
+      individual norms or not.
+
+  Returns:
+    total_norm: a `float32` tensor that computes the sum of all norms of the
+      gradients.
+
+  """
+  for grad, var in grads_and_vars:
+    if grad is not None:
+      norm = tf.norm(grad, name=var.op.name + "/norm")
+      tf.add_to_collection(collection, norm)
+      if not only_summary_total:
+        with tf.name_scope("norms"):
+          with tf.name_scope(collection):
+            tf.summary.scalar(var.op.name, norm)
+
+  with tf.name_scope("total_norm/"):
+    total_norm = tf.add_n(tf.get_collection(collection))
+    tf.summary.scalar(collection, total_norm)
+
+  return total_norm
 
 
 def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
@@ -472,18 +496,30 @@ def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
 
   # Train the model using atomic forces
   with tf.control_dependencies(dependencies):
-    f_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
-      f_loss,
-      var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES),
-      global_step=global_step
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate, name="AdamY")
+    grads = opt.compute_gradients(
+      y_loss,
+      var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
+    )
+    y_grads_norm_op = _add_total_norm_summaries(grads, "y_norms")
+    apply_y_grads_op = opt.apply_gradients(
+      grads,
+      global_step=global_step,
+      name="apply_y_grads"
     )
 
   # The train the model using total energy.
-  with tf.control_dependencies([f_opt]):
-    y_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
-      y_loss,
-      var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES),
+  with tf.control_dependencies([y_grads_norm_op, apply_y_grads_op]):
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate, name='AdamF')
+    grads = opt.compute_gradients(
+      f_loss,
+      var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
+    )
+    f_grads_norm_op = _add_total_norm_summaries(grads, "f_norms")
+    apply_f_grads_op = opt.apply_gradients(
+      grads,
       global_step=global_step,
+      name="apply_f_grads"
     )
 
   # Add histograms for trainable variables.
@@ -496,7 +532,9 @@ def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
       VARIABLE_MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
-  with tf.control_dependencies([y_opt, variables_averages_op]):
+  with tf.control_dependencies([f_grads_norm_op,
+                                apply_f_grads_op,
+                                variables_averages_op]):
     train_op = tf.no_op(name='train')
 
   return train_op
