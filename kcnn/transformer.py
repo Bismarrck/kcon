@@ -1228,12 +1228,6 @@ class FixedLenMultiTransformer(MultiTransformer):
       split_dims.append(np.prod(dims))
     return [int(x) for x in split_dims]
 
-  def _get_shape_of_indexing_matrix(self):
-    """
-    Return the shape of the indexing matrix returned by this transformer.
-    """
-    pass
-
   def _transform_and_save(self, filename, examples, num_examples, max_size,
                           loss_fn=None, verbose=True):
     """
