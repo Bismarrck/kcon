@@ -473,13 +473,17 @@ def get_ef_train_op(total_loss, y_loss, f_loss, global_step):
   # Train the model using atomic forces
   with tf.control_dependencies(dependencies):
     f_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
-      f_loss, var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
+      f_loss,
+      var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES),
+      global_step=global_step
     )
 
   # The train the model using total energy.
   with tf.control_dependencies([f_opt]):
     y_opt = tf.train.AdamOptimizer(FLAGS.learning_rate).minimize(
-      y_loss, var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
+      y_loss,
+      var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES),
+      global_step=global_step,
     )
 
   # Add histograms for trainable variables.
