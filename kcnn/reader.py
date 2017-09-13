@@ -14,6 +14,7 @@ from os import makedirs
 from os.path import join, isfile, isdir
 from database import Database
 from collections import namedtuple
+from constants import SEED
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -64,30 +65,29 @@ def exp_rmse_loss_fn(x, x0=0.0, beta=1.0):
   return np.float32(np.exp(-(x - x0) * beta))
 
 
-def get_filenames(train=True, dataset=None):
+def get_filenames(train=True, dataset_name=None):
   """
   Return the binary data file and the config file.
 
   Args:
     train: boolean indicating whether the training data file or the testing file
       should be returned.
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
 
   Returns:
     (binfile, jsonfile): the binary file to read data and the json file to read
       configs..
 
   """
-
   binary_dir = FLAGS.binary_dir
   if not isdir(binary_dir):
     makedirs(binary_dir)
 
-  fname = dataset or FLAGS.dataset
-  records = {"train": (join(binary_dir, "%s-train.tfrecords" % fname),
-                       join(binary_dir, "%s-train.json" % fname)),
-             "test": (join(binary_dir, "%s-test.tfrecords" % fname),
-                      join(binary_dir, "%s-test.json" % fname))}
+  name = dataset_name or FLAGS.dataset
+  records = {"train": (join(binary_dir, "{}-train.tfrecords".format(name)),
+                       join(binary_dir, "{}-train.json".format(name))),
+             "test": (join(binary_dir, "{}-test.tfrecords".format(name)),
+                      join(binary_dir, "{}-test.json".format(name)))}
 
   if train:
     return records['train']
@@ -105,8 +105,8 @@ def may_build_dataset(dataset=None, verbose=True):
     dataset: a `str` as the name of the dataset.
 
   """
-  train_file, _ = get_filenames(train=True, dataset=dataset)
-  test_file, _ = get_filenames(train=False, dataset=dataset)
+  train_file, _ = get_filenames(train=True, dataset_name=dataset)
+  test_file, _ = get_filenames(train=False, dataset_name=dataset)
 
   # Check if the xyz file is accessible.
   xyzfile = join("..", "datasets", "{}.xyz".format(FLAGS.dataset))
@@ -300,7 +300,7 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types):
                          num_atom_types=num_atom_types)
 
 
-def inputs(train, batch_size=50, shuffle=True, dataset_name=None):
+def y_inputs(train, batch_size=50, shuffle=True, dataset_name=None):
   """
   Read the input data for training energies only.
 
@@ -325,7 +325,7 @@ def inputs(train, batch_size=50, shuffle=True, dataset_name=None):
 
   """
 
-  filename, _ = get_filenames(train=train, dataset=dataset_name)
+  filename, _ = get_filenames(train=train, dataset_name=dataset_name)
   filenames = [filename]
 
   configs = inputs_configs(train=train, dataset_name=dataset_name)
@@ -379,9 +379,90 @@ def inputs_configs(train=True, dataset_name=None):
     configs: a `dict` of configs.
 
   """
-  _, cfgfile = get_filenames(train=train, dataset=dataset_name)
-  with open(cfgfile) as f:
+  _, json_file = get_filenames(train=train, dataset_name=dataset_name)
+  with open(json_file) as f:
     return dict(json.load(f))
+
+
+def yf_inputs(dataset_name, for_training=True, batch_size=50, shuffle=True):
+  """
+  Provide inputs for kCON energy & forces models.
+
+  Args:
+    dataset_name: a `str` as the name of the dataset.
+    for_training: a `bool` selecting between the training (True) and validation
+      (False) data.
+    batch_size: an `int` as the number of examples per returned batch.
+    shuffle: a `bool` indicating whether the batches shall be shuffled or not.
+
+  """
+  tfrecods_file, _ = get_filenames(
+    train=for_training,
+    dataset_name=dataset_name
+  )
+
+  configs = inputs_configs(train=for_training, dataset_name=dataset_name)
+  shape = configs["shape"]
+  cnk = shape[0]
+  ck2 = shape[1]
+  num_atom_types = configs["num_atom_types"]
+  atomic_forces = configs["atomic_forces_enabled"]
+  if not atomic_forces:
+    raise ValueError()
+  num_f_components, num_entries = configs["indexing_shape"]
+
+  def _build_dataset(filename):
+    """
+    A helper function for building a `tf.contrib.data.Dataset`.
+
+    Args:
+      filename: a `str` as the TFRecords file to read.
+
+    Returns:
+      feed_batch_: a tuple of tensors (see `ForcesExample`).
+      handle_: a placeholder tensor that should be filled.
+      dataset_iterator_: a iterator tensor that should be feeded to `handle`.
+
+    """
+    dataset = tf.contrib.data.TFRecordDataset([filename])
+    dataset = dataset.map(
+      partial(decode_protobuf,
+              cnk=cnk,
+              ck2=ck2,
+              num_atom_types=num_atom_types,
+              atomic_forces=atomic_forces,
+              num_f_components=num_f_components,
+              num_entries=num_entries)
+    )
+    if shuffle:
+      dataset = dataset.shuffle(buffer_size=100000, seed=SEED)
+    dataset = dataset.batch(batch_size)
+
+    handle_ = tf.placeholder(tf.string, shape=[], name="handle")
+    iterator = tf.contrib.data.Iterator.from_string_handle(
+      handle_,
+      dataset.output_types,
+      dataset.output_shapes
+    )
+    feed_batch_ = iterator.get_next()
+    dataset_iterator_ = dataset.make_initializable_iterator()
+    return feed_batch_, handle_, dataset_iterator_
+
+  if for_training:
+    handles = []
+    feed_batches = []
+    dataset_iterators = []
+    with tf.name_scope("inputs"):
+      for scope in ("energy", "forces"):
+        with tf.name_scope(scope):
+          feed_batch, handle, dataset_iterator = _build_dataset(tfrecods_file)
+          handles.append(handle)
+          dataset_iterators.append(dataset_iterator)
+          feed_batches.append(feed_batch)
+      return feed_batches, handles, dataset_iterators
+
+  else:
+    return _build_dataset(tfrecods_file)
 
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
@@ -399,30 +480,55 @@ def test_dataset_api():
   """
   A simple example demonstrating how to use tf.contrib.data.Dataset APIs.
   """
-  dataset = tf.contrib.data.TFRecordDataset(["./binary/qm7-train.tfrecords"])
-  dataset = dataset.map(
-    partial(decode_protobuf,
-            cnk=4495,
-            ck2=3,
-            num_atom_types=6,
-            atomic_forces=False))
-  dataset = tf.contrib.data.Dataset.zip((dataset, dataset))
-  dataset = dataset.batch(5)
 
-  handle = tf.placeholder(tf.string, shape=[])
-  iterator = tf.contrib.data.Iterator.from_string_handle(
-    handle, dataset.output_types, dataset.output_shapes)
-  ((feed_batch_y), (feed_batch_f)) = iterator.get_next()
-  y_true_y = feed_batch_y[1]
-  y_true_f = feed_batch_f[1]
+  datasets = []
+  handles = []
+  feed_batches = []
+  dataset_iterators = []
 
-  training_iterator = dataset.make_one_shot_iterator()
-  y = tf.add(y_true_y, y_true_f, name="y2")
+  for i in range(2):
+    dataset = tf.contrib.data.TFRecordDataset(["./binary/qm7-train.tfrecords"])
+    dataset = dataset.map(
+      partial(decode_protobuf,
+              cnk=4495,
+              ck2=3,
+              num_atom_types=6,
+              atomic_forces=False))
+    dataset = dataset.shuffle(buffer_size=100000, seed=1)
+    dataset = dataset.batch(5)
+
+    handle = tf.placeholder(tf.string, shape=[], name="handle{}".format(i))
+    iterator = tf.contrib.data.Iterator.from_string_handle(
+      handle,
+      dataset.output_types,
+      dataset.output_shapes
+    )
+    feed_batch = iterator.get_next()
+    dataset_iterator = dataset.make_initializable_iterator()
+
+    datasets.append(dataset)
+    handles.append(handle)
+    feed_batches.append(feed_batch)
+    dataset_iterators.append(dataset_iterator)
+
+  y_true_y = feed_batches[0][1]
+  y_true_f = feed_batches[1][1]
 
   with tf.Session() as sess:
-    training_handle = sess.run(training_iterator.string_handle())
-    print(sess.run([y_true_y, y_true_f, y],
-                   feed_dict={handle: training_handle}))
+
+    training_handles = []
+
+    for i in range(2):
+      sess.run(dataset_iterators[i].initializer)
+      training_handle = sess.run(dataset_iterators[i].string_handle())
+      training_handles.append(training_handle)
+
+    for i in range(10):
+      print("Round = {}".format(i))
+      print(sess.run(y_true_y,
+                     feed_dict={handles[0]: training_handles[0]}))
+      print(sess.run(y_true_f,
+                     feed_dict={handles[1]: training_handles[1]}))
 
 
 if __name__ == "__main__":
