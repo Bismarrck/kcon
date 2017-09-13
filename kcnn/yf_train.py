@@ -6,9 +6,9 @@ GPU for both the energy and the atomic forces.
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
-from datetime import datetime
 import json
 import time
+from datetime import datetime
 from constants import KcnnGraphKeys, LOSS_MOVING_AVERAGE_DECAY
 from kcnn import kcnn_yf_from_dataset
 from os.path import join
@@ -149,6 +149,10 @@ def train_model():
       for_training=True
     )
 
+    # Summarize the histograms of the variables.
+    for var in tf.trainable_variables():
+      tf.summary.histogram(var.op.name + "/hist", var)
+
     # Get the tensors
     y_calc = calc_tensors["y"]
     f_calc = calc_tensors["f"]
@@ -164,14 +168,14 @@ def train_model():
       y_calc.set_shape(y_true.get_shape().as_list())
 
       with tf.name_scope("y_loss"):
-        mean_squared_error = tf.losses.mean_squared_error(
+        y_mse = tf.losses.mean_squared_error(
           y_true,
           y_calc,
           scope="MSE",
           loss_collection=None,
           weights=y_weight
         )
-        rmse = tf.sqrt(mean_squared_error, name="RMSE")
+        rmse = tf.sqrt(y_mse, name="RMSE")
         tf.summary.scalar("yRMSE", rmse)
         tf.add_to_collection('y_losses', rmse)
         y_loss = tf.add_n(tf.get_collection('y_losses'), name='y_total_loss')
@@ -184,7 +188,7 @@ def train_model():
           loss_collection=None,
         )
         f_rmse = tf.sqrt(f_mse, name="RMSE")
-        # tf.summary.scalar("fRMSE", f_rmse)
+        tf.summary.scalar("fRMSE", f_rmse)
         f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="sRMSE")
         tf.add_to_collection('f_losses', f_loss)
         f_loss = tf.add_n(tf.get_collection('f_losses'), name='f_total_loss')

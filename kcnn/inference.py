@@ -278,7 +278,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               activation_fn=lrelu, alpha=0.2, use_batch_norm=False,
               use_biases=True, one_body_weights=None, trainable_one_body=True,
               atomic_forces=False, coefficients=None, indexing=None,
-              add_summary=False):
+              add_summary=True):
   """
   The general inference function.
 
