@@ -49,6 +49,8 @@ tf.app.flags.DEFINE_float('weighted_loss', None,
                           """The kT (eV) for computing the weighted loss. """)
 tf.app.flags.DEFINE_boolean('forces', False,
                             """Set this to True to enable atomic forces.""")
+tf.app.flags.DEFINE_boolean('run_test', False,
+                            """Run the test.""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -157,9 +159,17 @@ def may_build_dataset(dataset=None, verbose=True):
 
 
 """
-This is just used to manage the decoded example.
+These namedtuples are just used to manage the decoded example.
 """
-TFExample = namedtuple("TFExample", (
+EnergyExample = namedtuple("EnergyExample", (
+  "features",
+  "energy",
+  "occurs",
+  "weights",
+  "y_weight",
+))
+
+ForcesExample = namedtuple("ForcesExample", (
   "features",
   "energy",
   "occurs",
@@ -167,20 +177,19 @@ TFExample = namedtuple("TFExample", (
   "y_weight",
   "forces",
   "coef",
-  "indexing",
-  # the number of valid entries in each sample
-  "length"
+  "indexing"
 ))
 
 
-def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
+def decode_protobuf(example_proto, cnk=None, ck2=None, num_atom_types=None,
                     atomic_forces=False, num_f_components=None,
                     num_entries=None):
   """
-  Read and decode a single example from the TFRecords file.
+  Decode the protobuf into a tuple of tensors.
 
   Args:
-    filename_queue: an input queue.
+    example_proto: A scalar string Tensor, a single serialized Example.
+      See `_parse_single_example_raw` documentation for more details.
     cnk: an `int` as the value of C(N,k).
     ck2: an `int` as the value of C(k,2).
     num_atom_types: an `int` as the number of atom types.
@@ -195,12 +204,9 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
     example: a decoded `TFExample` from the TFRecord file.
 
   """
-  reader = tf.TFRecordReader()
-  _, serialized_example = reader.read(filename_queue)
-
   if not atomic_forces:
     example = tf.parse_single_example(
-      serialized_example,
+      example_proto,
       # Defaults are not specified since both keys are required.
       features={
         'features': tf.FixedLenFeature([], tf.string),
@@ -211,7 +217,7 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
       })
   else:
     example = tf.parse_single_example(
-      serialized_example,
+      example_proto,
       features={
         'features': tf.FixedLenFeature([], tf.string),
         'energy': tf.FixedLenFeature([], tf.string),
@@ -254,22 +260,49 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types,
     forces = tf.decode_raw(example['forces'], tf.float64)
     forces.set_shape([num_f_components])
 
-    length = 8
+    return ForcesExample(features=features,
+                         energy=energy,
+                         occurs=occurs,
+                         weights=weights,
+                         y_weight=y_weight,
+                         forces=forces,
+                         coef=coef,
+                         indexing=indexing)
 
   else:
-    coef = None
-    indexing = None
-    forces = None
-    length = 5
+    return EnergyExample(features=features,
+                         energy=energy,
+                         occurs=occurs,
+                         weights=weights,
+                         y_weight=y_weight)
 
-  return TFExample(features=features, energy=energy, occurs=occurs,
-                   weights=weights, y_weight=y_weight, forces=forces,
-                   coef=coef, indexing=indexing, length=length)
+
+def read_and_decode(filename_queue, cnk, ck2, num_atom_types):
+  """
+  Read and decode a single example from the TFRecords file for training energies
+  only.
+
+  Args:
+    filename_queue: an input queue.
+    cnk: an `int` as the value of C(N,k).
+    ck2: an `int` as the value of C(k,2).
+    num_atom_types: an `int` as the number of atom types.
+
+  Returns:
+    example: a decoded `TFExample` from the TFRecord file.
+
+  """
+  reader = tf.TFRecordReader()
+  _, serialized_example = reader.read(filename_queue)
+  return decode_protobuf(serialized_example,
+                         cnk=cnk,
+                         ck2=ck2,
+                         num_atom_types=num_atom_types)
 
 
 def inputs(train, batch_size=50, shuffle=True, dataset=None):
   """
-  Reads mixed input data.
+  Read the input data for training energies only.
 
   Args:
     train: Selects between the training (True) and validation (False) data.
@@ -299,8 +332,6 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
   cnk = shape[0]
   ck2 = shape[1]
   num_atom_types = configs["num_atom_types"]
-  atomic_forces = configs.get("atomic_forces_enabled", False)
-  num_f_components, num_entries = configs.get("indexing_shape", (None, None))
 
   with tf.name_scope('input'):
     filename_queue = tf.train.string_input_producer(
@@ -312,23 +343,20 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
     example = read_and_decode(filename_queue,
                               cnk,
                               ck2,
-                              num_atom_types=num_atom_types,
-                              atomic_forces=atomic_forces,
-                              num_f_components=num_f_components,
-                              num_entries=num_entries)
+                              num_atom_types=num_atom_types)
 
     # Shuffle the examples and collect them into batch_size batches.
     # (Internally uses a RandomShuffleQueue.)
     # We run this in two threads to avoid being a bottleneck.
     if not shuffle:
       batches = tf.train.batch(
-        example[0: example.length],
+        example,
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size
       )
     else:
       batches = tf.train.shuffle_batch(
-        example[0: example.length],
+        example,
         batch_size=batch_size,
         capacity=1000 + 3 * batch_size,
         # Ensures a minimum amount of shuffling of examples.
@@ -360,8 +388,40 @@ def main(unused):
   if FLAGS.periodic and (FLAGS.format != 'grendel'):
     tf.logging.error(
       "The xyz format must be `grendel` if `periodic` is True!")
+  elif FLAGS.run_test:
+    test_dataset_api()
   else:
     may_build_dataset(verbose=True)
+
+
+def test_dataset_api():
+  """
+  A simple example demonstrating how to use tf.contrib.data.Dataset APIs.
+  """
+  dataset = tf.contrib.data.TFRecordDataset(["./binary/qm7-train.tfrecords"])
+  dataset = dataset.map(
+    partial(decode_protobuf,
+            cnk=4495,
+            ck2=3,
+            num_atom_types=6,
+            atomic_forces=False))
+  dataset = tf.contrib.data.Dataset.zip((dataset, dataset))
+  dataset = dataset.batch(5)
+
+  handle = tf.placeholder(tf.string, shape=[])
+  iterator = tf.contrib.data.Iterator.from_string_handle(
+    handle, dataset.output_types, dataset.output_shapes)
+  ((feed_batch_y), (feed_batch_f)) = iterator.get_next()
+  y_true_y = feed_batch_y[1]
+  y_true_f = feed_batch_f[1]
+
+  training_iterator = dataset.make_one_shot_iterator()
+  y = tf.add(y_true_y, y_true_f, name="y2")
+
+  with tf.Session() as sess:
+    training_handle = sess.run(training_iterator.string_handle())
+    print(sess.run([y_true_y, y_true_f, y],
+                   feed_dict={handle: training_handle}))
 
 
 if __name__ == "__main__":
