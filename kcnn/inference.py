@@ -273,7 +273,7 @@ def _split_inputs(inputs, split_dims):
 
 
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
-              is_training, max_k=3, verbose=True, num_kernels=None,
+              is_training, max_k=3, reuse=False, verbose=True, num_kernels=None,
               activation_fn=lrelu, alpha=0.2, use_batch_norm=False,
               use_biases=True, one_body_weights=None, trainable_one_body=True,
               atomic_forces=False, coefficients=None, indexing=None):
@@ -293,6 +293,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     is_training: a `bool` type placeholder indicating whether this inference is
       for training or not.
     max_k: a `int` as the
+    reuse: a `bool` indicating whether we should reuse variables or not.
     verbose: boolean indicating whether the layers shall be printed or not.
     num_kernels: a `Tuple[int]` as the number of kernels of the convolution
       layers. This also determines the number of layers in each atomic network.
@@ -333,6 +334,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
                                              activation=activation_fn,
                                              alpha=alpha,
+                                             reuse=reuse,
                                              use_batch_norm=use_batch_norm,
                                              use_biases=use_biases,
                                              is_training=is_training,
@@ -355,6 +357,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   # Inference the one-body expression.
   one_body = _inference_1body_nn(occurs,
                                  num_atom_types,
+                                 reuse=reuse,
                                  initial_one_body_weights=one_body_weights,
                                  trainable=trainable_one_body)
   tf.summary.histogram("1body_contribs", one_body)
