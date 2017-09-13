@@ -104,7 +104,7 @@ def get_batch(train=True, shuffle=True, dataset_name=None):
     energies: the dedired energies. 2D tensor of shape [batch_size, 1].
 
   """
-  return reader.inputs(
+  return reader.y_inputs(
     train=train,
     batch_size=FLAGS.batch_size,
     shuffle=shuffle,
@@ -129,8 +129,9 @@ def get_batch_configs(train=True, dataset_name=None):
 
 
 def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
-         is_training, num_kernels=None, verbose=True, one_body_weights=None,
-         atomic_forces=False, coefficients=None, indexing=None):
+         is_training, reuse=False, num_kernels=None, verbose=True,
+         one_body_weights=None, atomic_forces=False, coefficients=None,
+         indexing=None, add_summary=True):
   """
   Inference the model of `KCNN`.
 
@@ -146,6 +147,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     kbody_terms: a `List[str]` as the names of the k-body terms.
     is_training: a `bool` type placeholder indicating whether this inference is
       for training or not.
+    reuse: a `bool` indicating whether we should reuse variables or not.
     verbose: boolean indicating whether the layers shall be printed or not.
     num_kernels: a `Tuple[int]` as the number of kernels of the convolution
       layers. This also determines the number of layers in each atomic network.
@@ -156,6 +158,8 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
       forces.
     indexing: a 3D Tensor as the indexing matrix for force compoenents.
+    add_summary: a `bool` indicating whether we should add summaries for
+      tensors or not.
 
   Returns:
     y_calc: a Tensor of shape `[-1, ]` as the predicted total energies.
@@ -186,6 +190,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     num_atom_types=num_atom_types,
     kbody_terms=kbody_terms,
     is_training=is_training,
+    reuse=reuse,
     max_k=FLAGS.k_max,
     num_kernels=num_kernels,
     activation_fn=activation_fn,
@@ -197,7 +202,8 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     trainable_one_body=trainable,
     atomic_forces=atomic_forces,
     coefficients=coefficients,
-    indexing=indexing
+    indexing=indexing,
+    add_summary=add_summary,
   )
   return y_calc, f_calc
 
@@ -238,12 +244,12 @@ def extract_configs(configs, for_training=True):
   return params
 
 
-def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
+def kcnn_y_from_dataset(dataset_name, for_training=True, **kwargs):
   """
   Inference a kCON energy model based on the given dataset.
 
   Args:
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
     for_training: a `bool` indicating whether this inference is for training or
       evaluation.
     kwargs: additional key-value parameters.
@@ -257,10 +263,10 @@ def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
   """
   batch = get_batch(
     train=for_training,
-    dataset_name=dataset,
+    dataset_name=dataset_name,
     shuffle=for_training
   )
-  configs = get_batch_configs(train=for_training, dataset_name=dataset)
+  configs = get_batch_configs(train=for_training, dataset_name=dataset_name)
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
@@ -283,21 +289,75 @@ def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
   return y_total, y_true, y_weight
 
 
-def kcnn_yf_from_dataset(dataset, for_training=True, **kwargs):
+def kcnn_yf_from_dataset(dataset_name, for_training=True, **kwargs):
   """
+  Inference a kCON energy & forces model for the given dataset.
 
   Args:
-    dataset:
-    for_training:
-    **kwargs:
-
-  Returns:
+    dataset_name: a `str` as the name of the dataset.
+    for_training: a `bool` indicating whether the model is for training or not.
+    **kwargs: additional key-value pairs.
 
   """
-  tfrecods_file, json_file = reader.get_filenames(
-    train=for_training,
-    dataset=dataset
-  )
+
+  configs = get_batch_configs(train=for_training, dataset_name=dataset_name)
+  params = extract_configs(configs, for_training=for_training)
+  for key, val in kwargs.items():
+    if key in params:
+      params[key] = val
+    else:
+      tf.logging.warning("Unrecognized key={}".format(key))
+  assert params['atomic_forces']
+
+  if for_training:
+    feed_batches, handles, dataset_iterators = reader.yf_inputs(
+      dataset_name=dataset_name,
+      for_training=for_training,
+      batch_size=FLAGS.batch_size,
+      shuffle=True
+    )
+
+    # Inference the energy model
+    y_params = dict(params)
+    y_params['atomic_forces'] = False
+    y_params['reuse'] = False
+    y_calc, _ = kcnn(inputs=feed_batches[0][BatchIndex.inputs],
+                     occurs=feed_batches[0][BatchIndex.occurs],
+                     weights=feed_batches[0][BatchIndex.weights],
+                     **y_params)
+    y_true = feed_batches[0][BatchIndex.y_true]
+    y_weight = feed_batches[0][BatchIndex.loss_weight]
+
+    # Inference the forces model, `reuse` should be set to True.
+    f_params = dict(params)
+    f_params['reuse'] = True
+    f_params['add_summary'] = False
+    _, f_calc = kcnn(inputs=feed_batches[1][BatchIndex.inputs],
+                     occurs=feed_batches[1][BatchIndex.occurs],
+                     weights=feed_batches[1][BatchIndex.weights],
+                     coefficients=feed_batches[1][BatchIndex.coefficients],
+                     indexing=feed_batches[1][BatchIndex.indices],
+                     **f_params)
+    f_true = feed_batches[1][BatchIndex.f_true]
+
+    # Return the tensors
+    calc = {"y": y_calc, "f": f_calc}
+    true = {"y": y_true, "f": f_true}
+    auxiliary_tensors = {
+      "y_weight": y_weight,
+      "handles": {
+        "y": handles[0],
+        "f": handles[1]
+      },
+      "dataset_iterators": {
+        "y": dataset_iterators[0],
+        "f": dataset_iterators[1]
+      }
+    }
+    return calc, true, auxiliary_tensors
+
+  else:
+    raise NotImplementedError()
 
 
 def get_y_loss(y_true, y_nn, weights=None):
