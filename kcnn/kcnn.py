@@ -158,8 +158,8 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     indexing: a 3D Tensor as the indexing matrix for force compoenents.
 
   Returns:
-    y_total: a Tensor of shape `[-1, ]` as the predicted total energies.
-    f_calc: a Tensor as the calculated atomic forces.
+    y_calc: a Tensor of shape `[-1, ]` as the predicted total energies.
+    f_calc: a Tensor of shape `[-1, 3N]` as the calculated atomic forces.
 
   """
 
@@ -178,7 +178,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   use_batch_norm = FLAGS.batch_norm
   use_biases = not FLAGS.disable_biases
 
-  y_total, _, f_calc = inference(
+  y_calc, _, f_calc = inference(
     inputs,
     occurs,
     weights,
@@ -199,7 +199,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     coefficients=coefficients,
     indexing=indexing
   )
-  return y_total, f_calc
+  return y_calc, f_calc
 
 
 def extract_configs(configs, for_training=True):
@@ -238,9 +238,9 @@ def extract_configs(configs, for_training=True):
   return params
 
 
-def kcnn_from_dataset(dataset, for_training=True, **kwargs):
+def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
   """
-  Inference the KCNN based on the given dataset.
+  Inference a kCON energy model based on the given dataset.
 
   Args:
     dataset: a `str` as the name of the dataset.
@@ -253,8 +253,6 @@ def kcnn_from_dataset(dataset, for_training=True, **kwargs):
     y_true: a `float32` Tensor of shape `(-1, )` as the true energy.
     y_weight: a `float32` Tensor of shape `(-1, )` as the weights for computing
       weighted RMSE loss.
-    f_true: a `float32` Tensor as the true atomic forces or None.
-    f_calc: a `float32` Tensor as the calculated atomic forces or None.
 
   """
   batch = get_batch(train=for_training, dataset=dataset, shuffle=for_training)
@@ -274,19 +272,11 @@ def kcnn_from_dataset(dataset, for_training=True, **kwargs):
                       batch[BatchIndex.occurs],
                       batch[BatchIndex.weights],
                       **params)
-    f_calc = None
-    f_true = None
 
   else:
-    y_total, f_calc = kcnn(batch[BatchIndex.inputs],
-                           batch[BatchIndex.occurs],
-                           batch[BatchIndex.weights],
-                           coefficients=batch[BatchIndex.coefficients],
-                           indexing=batch[BatchIndex.indices],
-                           **params)
-    f_true = batch[BatchIndex.f_true]
+    raise ValueError("This function only inference energy models!")
 
-  return y_total, y_true, y_weight, f_calc, f_true
+  return y_total, y_true, y_weight
 
 
 def get_y_loss(y_true, y_nn, weights=None):

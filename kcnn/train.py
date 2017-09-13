@@ -9,7 +9,7 @@ import tensorflow as tf
 import json
 import time
 import kcnn
-from kcnn import kcnn_from_dataset
+from kcnn import kcnn_y_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
@@ -77,8 +77,8 @@ def train_model():
     # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
-    # Inference the KCNN model
-    y_nn, y_true, y_weights, f_nn, f_true = kcnn_from_dataset(
+    # Inference the kCON energy model
+    y_nn, y_true, y_weights, f_nn, f_true = kcnn_y_from_dataset(
       FLAGS.dataset, for_training=True
     )
 
