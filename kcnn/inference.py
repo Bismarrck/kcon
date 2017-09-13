@@ -90,6 +90,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
         "activation_fn": activation,
         "reuse": reuse,
         "variables_collections": [KcnnGraphKeys.ENERGY_VARIABLES],
+        "scope": "Biases",
       }
 
   else:
@@ -276,7 +277,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, reuse=False, verbose=True, num_kernels=None,
               activation_fn=lrelu, alpha=0.2, use_batch_norm=False,
               use_biases=True, one_body_weights=None, trainable_one_body=True,
-              atomic_forces=False, coefficients=None, indexing=None):
+              atomic_forces=False, coefficients=None, indexing=None,
+              add_summary=False):
   """
   The general inference function.
 
@@ -311,6 +313,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
       forces.
     indexing: a 3D Tensor as the indexing matrix for force compoenents.
+    add_summary: a `bool` indicating whether we should add summaries for
+      tensors or not.
 
   Returns:
     y_total: a `float32` Tensor of shape `[-1, ]` as the total energies.
@@ -350,7 +354,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   # kernels have biases so the output may not be zero. To fix this potential
   # problem we multiply the calculated k-body contribs with binary weights.
   contribs = tf.multiply(contribs, weights, name="y_contribs")
-  tf.summary.histogram("kbody_contribs", contribs)
+  if add_summary:
+    tf.summary.histogram("kbody_contribs", contribs)
   if verbose:
     print_activations(contribs)
 
@@ -360,7 +365,8 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
                                  reuse=reuse,
                                  initial_one_body_weights=one_body_weights,
                                  trainable=trainable_one_body)
-  tf.summary.histogram("1body_contribs", one_body)
+  if add_summary:
+    tf.summary.histogram("1body_contribs", one_body)
   if verbose:
     print_activations(one_body)
 
@@ -373,10 +379,12 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       if verbose:
         print_activations(y_total_kbody)
       y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
-      tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
+      if add_summary:
+        tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
     with tf.name_scope("1body"):
       y_total_1body = tf.squeeze(one_body, name="squeeze")
-      tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
+      if add_summary:
+        tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
     y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
 
   # Inference the KCNN forces
