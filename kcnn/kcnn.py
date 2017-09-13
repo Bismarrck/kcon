@@ -89,14 +89,14 @@ class BatchIndex:
   indices = 7
 
 
-def get_batch(train=True, shuffle=True, dataset=None):
+def get_batch(train=True, shuffle=True, dataset_name=None):
   """
   Construct input for k-body evaluation using the Reader ops.
 
   Args:
     train: a `bool` indicating if one should use the train or eval data set.
     shuffle: a `bool` indicating if the batches shall be shuffled or not.
-    dataset: a `str` as the dataset to use.
+    dataset_name: a `str` as the dataset to use.
 
   Returns:
     features: Behler features for the molecules. 4D tensor of shape
@@ -108,24 +108,24 @@ def get_batch(train=True, shuffle=True, dataset=None):
     train=train,
     batch_size=FLAGS.batch_size,
     shuffle=shuffle,
-    dataset=dataset
+    dataset_name=dataset_name
   )
 
 
-def get_batch_configs(train=True, dataset=None):
+def get_batch_configs(train=True, dataset_name=None):
   """
   Return the configs for inputs.
 
   Args:
     train: boolean indicating if one should return the training settings or
       validation settings.
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
 
   Returns:
     configs: a `dict` as the configs for the dataset.
 
   """
-  return reader.inputs_configs(train=train, dataset=dataset)
+  return reader.inputs_configs(train=train, dataset_name=dataset_name)
 
 
 def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
@@ -255,8 +255,12 @@ def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
       weighted RMSE loss.
 
   """
-  batch = get_batch(train=for_training, dataset=dataset, shuffle=for_training)
-  configs = get_batch_configs(train=for_training, dataset=dataset)
+  batch = get_batch(
+    train=for_training,
+    dataset_name=dataset,
+    shuffle=for_training
+  )
+  configs = get_batch_configs(train=for_training, dataset_name=dataset)
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
@@ -277,6 +281,23 @@ def kcnn_y_from_dataset(dataset, for_training=True, **kwargs):
     raise ValueError("This function only inference energy models!")
 
   return y_total, y_true, y_weight
+
+
+def kcnn_yf_from_dataset(dataset, for_training=True, **kwargs):
+  """
+
+  Args:
+    dataset:
+    for_training:
+    **kwargs:
+
+  Returns:
+
+  """
+  tfrecods_file, json_file = reader.get_filenames(
+    train=for_training,
+    dataset=dataset
+  )
 
 
 def get_y_loss(y_true, y_nn, weights=None):

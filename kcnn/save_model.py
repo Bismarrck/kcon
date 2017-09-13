@@ -80,12 +80,12 @@ def get_tensors_to_restore():
           for name in _get_output_node_names().split(",")}
 
 
-def _inference(dataset, conv_sizes):
+def _inference(dataset_name, conv_sizes):
   """
   Inference a model of `KCNN` with inputs feeded from placeholders.
 
   Args:
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
     conv_sizes: a `str` of comma-separated integers as the numbers of kernels.
 
   Returns:
@@ -96,7 +96,7 @@ def _inference(dataset, conv_sizes):
 
   with graph.as_default():
 
-    configs = get_batch_configs(train=True, dataset=dataset)
+    configs = get_batch_configs(train=True, dataset_name=dataset_name)
     split_dims = configs["split_dims"]
     num_atom_types = configs["num_atom_types"]
     kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]

@@ -300,34 +300,35 @@ def read_and_decode(filename_queue, cnk, ck2, num_atom_types):
                          num_atom_types=num_atom_types)
 
 
-def inputs(train, batch_size=50, shuffle=True, dataset=None):
+def inputs(train, batch_size=50, shuffle=True, dataset_name=None):
   """
   Read the input data for training energies only.
 
   Args:
-    train: Selects between the training (True) and validation (False) data.
-    batch_size: Number of examples per returned batch.
-    shuffle: boolean indicating whether the batches shall be shuffled or not.
-    dataset: a `str` as the name of the dataset.
+    train: a `bool` selecting between the training (True) and validation
+      (False) data.
+    batch_size: an `int` as the number of examples per returned batch.
+    shuffle: a `bool` indicating whether the batches shall be shuffled or not.
+    dataset_name: a `str` as the name of the dataset.
 
   Returns:
     batch: a `Batch`.
       * features: a `float` tensor with shape [batch_size, 1, C(N,k), C(k,2)] in
         the range [0.0, 1.0].
-      * energies: a `float` tensor with shape [batch_size, ].
-      * weights: a `float` tensor with shape [batch_size, C(N,k)].
-      * occurs: a `float` tensor with shape [batch_size, num_atom_types].
-      * loss_weight: a `float`.
+      * energies: a `float` tensor with shape `[batch_size, ]`.
+      * weights: a `float` tensor with shape `[batch_size, C(N,k)]`.
+      * occurs: a `float` tensor with shape `[batch_size, num_atom_types]`.
+      * y_weight: a `float` tensor with shape `[batch_size, ]`.
 
     Note that an tf.train.QueueRunner is added to the graph, which
     must be run using e.g. tf.train.start_queue_runners().
 
   """
 
-  filename, _ = get_filenames(train=train, dataset=dataset)
+  filename, _ = get_filenames(train=train, dataset=dataset_name)
   filenames = [filename]
 
-  configs = inputs_configs(train=train, dataset=dataset)
+  configs = inputs_configs(train=train, dataset_name=dataset_name)
   shape = configs["shape"]
   cnk = shape[0]
   ck2 = shape[1]
@@ -365,20 +366,20 @@ def inputs(train, batch_size=50, shuffle=True, dataset=None):
     return batches
 
 
-def inputs_configs(train=True, dataset=None):
+def inputs_configs(train=True, dataset_name=None):
   """
   Return the configs for inputs.
 
   Args:
     train: boolean indicating if one should return settings for training or
       validation.
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
 
   Returns:
     configs: a `dict` of configs.
 
   """
-  _, cfgfile = get_filenames(train=train, dataset=dataset)
+  _, cfgfile = get_filenames(train=train, dataset=dataset_name)
   with open(cfgfile) as f:
     return dict(json.load(f))
 

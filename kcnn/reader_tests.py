@@ -68,7 +68,7 @@ def test_build_dataset():
 
   with tf.Session() as sess:
 
-    batch = inputs(train=True, shuffle=False, batch_size=5, dataset=dataset)
+    batch = inputs(train=True, shuffle=False, batch_size=5, dataset_name=dataset)
     tf.train.start_queue_runners(sess=sess)
 
     # --------
@@ -124,7 +124,7 @@ def test_compute_loss_weight():
   y_true = [atoms.get_total_energy() for atoms in objects]
 
   with tf.Session() as sess:
-    batch = inputs(train=True, shuffle=False, batch_size=5, dataset=dataset)
+    batch = inputs(train=True, shuffle=False, batch_size=5, dataset_name=dataset)
     tf.train.start_queue_runners(sess=sess)
     y_weights = sess.run(batch[4])
     for i in range(5):
