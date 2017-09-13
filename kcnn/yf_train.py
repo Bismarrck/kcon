@@ -303,11 +303,12 @@ def train_model():
         num_examples_per_step = FLAGS.batch_size
         examples_per_sec = num_examples_per_step / duration
         epoch = step * num_examples_per_step / (FLAGS.num_examples * 0.8)
-        format_str = "%s: step %6d, epoch=%7.2f, yloss=%10.6f floss=%10.6f" \
-                     " (%8.1f examples/sec; %8.3f sec/batch)"
+        total_loss_val = y_value + f_value
+        format_str = "%s: step %6d, epoch=%7.2f, loss=%10.6f, yloss=%10.6f, " \
+                     "floss=%10.6f, (%8.1f examples/sec; %8.3f sec/batch)"
         tf.logging.info(
-          format_str % (datetime.now(), step, epoch, y_value, f_value,
-                        examples_per_sec, duration))
+          format_str % (datetime.now(), step, epoch, total_loss_val, y_value,
+                        f_value, examples_per_sec, duration))
 
       # Save the model checkpoint periodically.
       if step % (20 * FLAGS.save_frequency) == 0 or \
