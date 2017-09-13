@@ -78,7 +78,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
         "scale": True,
         "center": True,
         "epsilon": 0.0001,
-        "variables_collections": [KcnnGraphKeys.FORCES_VARIABLES],
+        "variables_collections": [KcnnGraphKeys.FORCES_VARIABLES,
+                                  KcnnGraphKeys.ENERGY_VARIABLES],
         "reuse": reuse
       }
 
@@ -102,9 +103,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                  # Disable biases here and use `bias_add` as the normalizer
                  biases_initializer=None,
                  reuse=reuse,
-                 variables_collections=[KcnnGraphKeys.FORCES_VARIABLES]):
-                 # variables_collections = [KcnnGraphKeys.FORCES_VARIABLES,
-                 #                          KcnnGraphKeys.ENERGY_VARIABLES]):
+                 variables_collections=[KcnnGraphKeys.FORCES_VARIABLES,
+                                        KcnnGraphKeys.ENERGY_VARIABLES]):
     with arg_scope([lrelu], alpha=alpha):
       for i, num_kernels in enumerate(num_kernels):
         inputs = conv2d(inputs,
