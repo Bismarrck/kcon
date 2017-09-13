@@ -15,6 +15,7 @@ from os.path import join, isfile, isdir
 from database import Database
 from collections import namedtuple
 from constants import SEED
+from tensorflow.contrib.data.python.ops.dataset_ops import TFRecordDataset
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -424,8 +425,7 @@ def yf_inputs(dataset_name, for_training=True, batch_size=50, shuffle=True):
       dataset_iterator_: a iterator tensor that should be feeded to `handle`.
 
     """
-    dataset = tf.contrib.data.TFRecordDataset([filename])
-    dataset = dataset.map(
+    dataset = TFRecordDataset([filename]).map(
       partial(decode_protobuf,
               cnk=cnk,
               ck2=ck2,
@@ -434,6 +434,7 @@ def yf_inputs(dataset_name, for_training=True, batch_size=50, shuffle=True):
               num_f_components=num_f_components,
               num_entries=num_entries)
     )
+    dataset = dataset.repeat()
     if shuffle:
       dataset = dataset.shuffle(buffer_size=100000, seed=SEED)
     dataset = dataset.batch(batch_size)
