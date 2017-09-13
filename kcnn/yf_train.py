@@ -194,49 +194,51 @@ def train_model():
         f_loss = tf.add_n(tf.get_collection('f_losses'), name='f_total_loss')
 
     # Build the optimizers
-    with tf.name_scope("Optimizers"):
+    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
 
-      with tf.name_scope("y"):
-        y_opt = tf.train.AdamOptimizer(
-          FLAGS.learning_rate,
-          name="AdamY",
-          beta1=FLAGS.beta1
-        )
-        y_grads = y_opt.compute_gradients(
-          y_loss,
-          var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
-        )
-        _add_total_norm_summaries(
-          y_grads,
-          collection="y_norms",
-          only_summary_total=False,
-        )
-        apply_y_grads_op = y_opt.apply_gradients(
-          y_grads,
-          global_step=global_step,
-          name="apply_y_grads"
-        )
+      with tf.name_scope("Optimizers"):
 
-      with tf.name_scope("f"):
-        f_opt = tf.train.AdamOptimizer(
-          FLAGS.f_learning_rate,
-          name='AdamF',
-          beta1=FLAGS.beta1
-        )
-        f_grads = f_opt.compute_gradients(
-          f_loss,
-          var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
-        )
-        # _add_total_norm_summaries(
-        #   f_grads,
-        #   collection="f_norms",
-        #   only_summary_total=False
-        # )
-        apply_f_grads_op = f_opt.apply_gradients(
-          f_grads,
-          global_step=global_step,
-          name="apply_f_grads"
-        )
+        with tf.name_scope("y"):
+          y_opt = tf.train.AdamOptimizer(
+            FLAGS.learning_rate,
+            name="AdamY",
+            beta1=FLAGS.beta1
+          )
+          y_grads = y_opt.compute_gradients(
+            y_loss,
+            var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
+          )
+          _add_total_norm_summaries(
+            y_grads,
+            collection="y_norms",
+            only_summary_total=False,
+          )
+          apply_y_grads_op = y_opt.apply_gradients(
+            y_grads,
+            global_step=global_step,
+            name="apply_y_grads"
+          )
+
+        with tf.name_scope("f"):
+          f_opt = tf.train.AdamOptimizer(
+            FLAGS.f_learning_rate,
+            name='AdamF',
+            beta1=FLAGS.beta1
+          )
+          f_grads = f_opt.compute_gradients(
+            f_loss,
+            var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
+          )
+          # _add_total_norm_summaries(
+          #   f_grads,
+          #   collection="f_norms",
+          #   only_summary_total=False
+          # )
+          apply_f_grads_op = f_opt.apply_gradients(
+            f_grads,
+            global_step=global_step,
+            name="apply_f_grads"
+          )
 
     # Get the summary op
     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
