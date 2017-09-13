@@ -1,7 +1,7 @@
 # coding=utf-8
 """
-This script is used to train the KCNN network on a single node with CPUs or a
-single GPU.
+This script is used to train the kCON model for energy only on a single node
+with CPUs or a single GPU.
 """
 from __future__ import print_function, absolute_import
 
@@ -87,22 +87,10 @@ def train_model():
     y_nn.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    if not FLAGS.forces:
-      loss = kcnn.get_y_loss(y_true, y_nn, y_weights)
-      yloss = None
-      floss = None
+    loss = kcnn.get_y_loss(y_true, y_nn, y_weights)
 
-      # Build a Graph that trains the model with respect to energy only.
-      train_op = kcnn.get_y_train_op(loss, global_step)
-
-    else:
-      loss, yloss, floss = kcnn.get_yf_loss(y_true,
-                                            y_nn,
-                                            f_true,
-                                            f_nn)
-
-      # Build a graph that trains the model using both energy and forces.
-      train_op = kcnn.get_yf_train_op(loss, yloss, floss, global_step)
+    # Build a Graph that trains the model with respect to energy only.
+    train_op = kcnn.get_y_train_op(loss, global_step)
 
     # Save the training flags
     save_training_flags()
@@ -145,15 +133,8 @@ def train_model():
         self._step += 1
         self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
         self._start_time = time.time()
-
-        if not self._atomic_forces:
-          return tf.train.SessionRunArgs({"loss": loss,
-                                          "global_step": global_step})
-        else:
-          return tf.train.SessionRunArgs({"loss": loss,
-                                          "yloss": yloss,
-                                          "floss": floss,
-                                          "global_step": global_step})
+        return tf.train.SessionRunArgs({"loss": loss,
+                                        "global_step": global_step})
 
       def should_log(self):
         """
@@ -188,23 +169,12 @@ def train_model():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
 
-          if not self._atomic_forces:
-            format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
-                         "(%6.1f examples/sec; %7.3f sec/batch)"
-            tf.logging.info(
-              format_str % (self._step, self._epoch, loss_value,
-                            examples_per_sec, sec_per_batch)
-            )
-          else:
-            yloss_value = run_values.results['yloss']
-            floss_value = run_values.results['floss']
-            format_str = "step %6d, epoch=%7.2f, loss = %10.6f, " \
-                         "yloss = %10.6f, floss = %10.6f, " \
-                         "(%6.1f examples/sec; %7.3f sec/batch)"
-            tf.logging.info(
-              format_str % (self._step, self._epoch, loss_value, yloss_value,
-                            floss_value, examples_per_sec, sec_per_batch)
-            )
+          format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
+                       "(%6.1f examples/sec; %7.3f sec/batch)"
+          tf.logging.info(
+            format_str % (self._step, self._epoch, loss_value,
+                          examples_per_sec, sec_per_batch)
+          )
 
         if self.should_freeze():
           save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
@@ -246,7 +216,7 @@ def train_model():
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
-               RunHook(atomic_forces=FLAGS.forces, should_freeze=export_graph),
+               RunHook(should_freeze=export_graph),
                TimelineHook()],
         scaffold=scaffold,
         config=tf.ConfigProto(
@@ -267,11 +237,18 @@ def train_model():
     save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-def main(unused):
-  if not tf.gfile.Exists(FLAGS.train_dir):
-    tf.gfile.MkDir(FLAGS.train_dir)
-  train_model()
+def main(_):
+  """
+  The main function.
+  """
+  if FLAGS.forces:
+    print("This module is only designed for training energy. To train the "
+          "forces please run `yf_train.py`.")
+
+  else:
+    if not tf.gfile.Exists(FLAGS.train_dir):
+      tf.gfile.MkDir(FLAGS.train_dir)
+    train_model()
 
 
 if __name__ == "__main__":
