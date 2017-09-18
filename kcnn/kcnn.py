@@ -36,14 +36,13 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_boolean('disable_biases', False,
-                            """Disable all biases if True.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.01,
                           """Set the parameter `alpha` for `lrelu`.""")
-tf.app.flags.DEFINE_boolean('batch_norm', False,
-                            """Use batch normalization if True.""")
+tf.app.flags.DEFINE_string('normalizer', None,
+                           """Set the normalizer: 'bias'(default), 'batch_norm', 
+                           'layer_norm' or 'None'. """)
 tf.app.flags.DEFINE_float('floss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
 
@@ -171,6 +170,10 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   activation_fn = get_activation_fn(FLAGS.activation_fn)
   alpha = FLAGS.alpha
   trainable = not FLAGS.fixed_one_body
+  if FLAGS.normalizer.lower() == 'none':
+    normalizer = None
+  else:
+    normalizer = FLAGS.normalizer
 
   if FLAGS.initial_one_body_weights is not None:
     one_body_weights = FLAGS.initial_one_body_weights
@@ -178,9 +181,6 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     if num_atom_types > 1 and len(one_body_weights) == 1:
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
-
-  use_batch_norm = FLAGS.batch_norm
-  use_biases = not FLAGS.disable_biases
 
   y_calc, _, f_calc = inference(
     inputs,
@@ -195,8 +195,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     num_kernels=num_kernels,
     activation_fn=activation_fn,
     alpha=alpha,
-    use_batch_norm=use_batch_norm,
-    use_biases=use_biases,
+    normalizer=normalizer,
     one_body_weights=one_body_weights,
     verbose=verbose,
     trainable_one_body=trainable,
@@ -321,24 +320,26 @@ def kcnn_yf_from_dataset(dataset_name, for_training=True, **kwargs):
     y_params = dict(params)
     y_params['atomic_forces'] = False
     y_params['reuse'] = False
-    y_calc, _ = kcnn(inputs=feed_batches[0][BatchIndex.inputs],
-                     occurs=feed_batches[0][BatchIndex.occurs],
-                     weights=feed_batches[0][BatchIndex.weights],
-                     **y_params)
-    y_true = feed_batches[0][BatchIndex.y_true]
-    y_weight = feed_batches[0][BatchIndex.loss_weight]
+    with tf.name_scope("Energy"):
+      y_calc, _ = kcnn(inputs=feed_batches[0][BatchIndex.inputs],
+                       occurs=feed_batches[0][BatchIndex.occurs],
+                       weights=feed_batches[0][BatchIndex.weights],
+                       **y_params)
+      y_true = feed_batches[0][BatchIndex.y_true]
+      y_weight = feed_batches[0][BatchIndex.loss_weight]
 
     # Inference the forces model, `reuse` should be set to True.
     f_params = dict(params)
     f_params['reuse'] = True
     f_params['add_summary'] = False
-    _, f_calc = kcnn(inputs=feed_batches[1][BatchIndex.inputs],
-                     occurs=feed_batches[1][BatchIndex.occurs],
-                     weights=feed_batches[1][BatchIndex.weights],
-                     coefficients=feed_batches[1][BatchIndex.coefficients],
-                     indexing=feed_batches[1][BatchIndex.indices],
-                     **f_params)
-    f_true = feed_batches[1][BatchIndex.f_true]
+    with tf.name_scope("Forces"):
+      _, f_calc = kcnn(inputs=feed_batches[1][BatchIndex.inputs],
+                       occurs=feed_batches[1][BatchIndex.occurs],
+                       weights=feed_batches[1][BatchIndex.weights],
+                       coefficients=feed_batches[1][BatchIndex.coefficients],
+                       indexing=feed_batches[1][BatchIndex.indices],
+                       **f_params)
+      f_true = feed_batches[1][BatchIndex.f_true]
 
     # Return the tensors
     calc = {"y": y_calc, "f": f_calc}

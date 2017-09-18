@@ -286,11 +286,10 @@ def train_model():
       start_time = time.time()
 
       if step % FLAGS.save_frequency == 0:
-        y_value, _, summary_str = sess.run(
-          [y_loss, apply_y_grads_op, summary_op],
+        y_value, _ = sess.run(
+          [y_loss, apply_y_grads_op],
           feed_dict={handles['y']: dataset_handles['y']}
         )
-        summary_writer.add_summary(summary_str, step)
 
       else:
         y_value, _ = sess.run(
