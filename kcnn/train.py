@@ -1,7 +1,7 @@
 # coding=utf-8
 """
-This script is used to train the kCON model for energy only on a single node
-with CPUs or a single GPU.
+This script is used to train the kCON model using a single node with CPUs or
+a single GPU.
 """
 from __future__ import print_function, absolute_import
 
@@ -9,7 +9,7 @@ import tensorflow as tf
 import json
 import time
 import kcnn
-from kcnn import kcnn_y_from_dataset
+from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
@@ -24,8 +24,8 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 1000000,
-                            """The maximum number of training steps.""")
+tf.app.flags.DEFINE_integer('num_epochs', 1000,
+                            """The maximum number of training epochs.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
@@ -78,19 +78,30 @@ def train_model():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Inference the kCON energy model
-    y_nn, y_true, y_weights = kcnn_y_from_dataset(
-      FLAGS.dataset, for_training=True
+    y_calc, y_true, y_weights, f_calc, f_true = kcnn_from_dataset(
+      FLAGS.dataset,
+      for_training=True,
+      num_epochs=FLAGS.num_epochs
     )
 
     # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
     y_true = tf.cast(y_true, tf.float32)
-    y_nn.set_shape(y_true.get_shape().as_list())
+    y_calc.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kcnn.get_y_loss(y_true, y_nn, y_weights)
+    y_loss = None
+    f_loss = None
+
+    if not FLAGS.forces:
+      total_loss = kcnn.get_y_loss(y_true, y_calc, y_weights)
+
+    else:
+      total_loss, y_loss, f_loss = kcnn.get_yf_joint_loss(
+        y_true, y_calc, f_true, f_calc
+      )
 
     # Build a Graph that trains the model with respect to energy only.
-    train_op = kcnn.get_joint_loss_train_op(loss, global_step)
+    train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
     # Save the training flags
     save_training_flags()
@@ -133,8 +144,15 @@ def train_model():
         self._step += 1
         self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
         self._start_time = time.time()
-        return tf.train.SessionRunArgs({"loss": loss,
-                                        "global_step": global_step})
+
+        if not self._atomic_forces:
+          return tf.train.SessionRunArgs({"loss": total_loss,
+                                          "global_step": global_step})
+        else:
+          return tf.train.SessionRunArgs({"loss": total_loss,
+                                          "y_loss": y_loss,
+                                          "f_loss": f_loss,
+                                          "global_step": global_step})
 
       def should_log(self):
         """
@@ -169,12 +187,23 @@ def train_model():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
 
-          format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
+          if not self._atomic_forces:
+            format_str = "step %6d, epoch=%7.2f, loss=%10.6f " \
                        "(%6.1f examples/sec; %7.3f sec/batch)"
-          tf.logging.info(
-            format_str % (self._step, self._epoch, loss_value,
-                          examples_per_sec, sec_per_batch)
-          )
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value,
+                            examples_per_sec, sec_per_batch)
+            )
+          else:
+            y_val = run_values.results['y_loss']
+            f_val = run_values.results['f_loss']
+
+            format_str = "step %6d, epoch=%7.2f, loss=%10.6f, y_loss=%10.6f, " \
+                         "f_loss = %10.6f (%6.1f examples/sec; %7.3f sec/batch)"
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value, y_val, f_val,
+                            examples_per_sec, sec_per_batch)
+            )
 
         if self.should_freeze():
           save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
@@ -215,8 +244,9 @@ def train_model():
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
-               tf.train.NanTensorHook(loss),
-               RunHook(should_freeze=export_graph),
+               tf.train.NanTensorHook(total_loss),
+               RunHook(should_freeze=export_graph,
+                       atomic_forces=FLAGS.forces),
                TimelineHook()],
         scaffold=scaffold,
         config=tf.ConfigProto(
