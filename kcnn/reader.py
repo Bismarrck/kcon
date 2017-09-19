@@ -6,16 +6,13 @@ This script is used to building training and validation datasets.
 from __future__ import print_function, absolute_import
 
 import json
-import numpy as np
 import tensorflow as tf
-import transformer
+from collections import namedtuple
 from functools import partial
 from os import makedirs
-from os.path import join, isfile, isdir
-from database import Database
-from collections import namedtuple
-from constants import SEED
+from os.path import join, isdir
 from tensorflow.contrib.data.python.ops.dataset_ops import TFRecordDataset
+from constants import SEED
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -26,44 +23,19 @@ tf.app.flags.DEFINE_string("binary_dir", "./binary",
 tf.app.flags.DEFINE_string('dataset', 'C9H7N.PBE',
                            """Define the dataset to use. This is also the name
                            of the xyz file to load.""")
-tf.app.flags.DEFINE_string('format', 'xyz',
-                           """The format of the xyz file.""")
-tf.app.flags.DEFINE_integer('num_examples', 5000,
-                            """The total number of examples to use.""")
 tf.app.flags.DEFINE_integer('k_max', 3,
                             """The maximum k under the many-body-expansion 
                             scheme.""")
 tf.app.flags.DEFINE_boolean('include_all_k', True,
                             """Include all k-body terms from k = 1 to k_max.""")
-tf.app.flags.DEFINE_float('test_size', 0.2,
-                          """The proportion of the dataset to include in the 
-                          test split""")
-tf.app.flags.DEFINE_integer("norm_order", 1,
-                            """The exponential order for normalizing 
-                            distances.""")
 tf.app.flags.DEFINE_boolean('run_input_test', False,
                             """Run the input unit test if True.""")
-tf.app.flags.DEFINE_float('unit', None,
-                          """Override the default unit if this is not None.""")
-tf.app.flags.DEFINE_boolean('periodic', False,
-                            """The isomers are periodic structures.""")
 tf.app.flags.DEFINE_float('weighted_loss', None,
                           """The kT (eV) for computing the weighted loss. """)
 tf.app.flags.DEFINE_boolean('forces', False,
                             """Set this to True to enable atomic forces.""")
-tf.app.flags.DEFINE_boolean('run_test', False,
-                            """Run the test.""")
 
 FLAGS = tf.app.flags.FLAGS
-
-
-def exp_rmse_loss_fn(x, x0=0.0, beta=1.0):
-  """
-  An exponential function for computing the weighted loss.
-
-  I.e. \\(y = \e^{-\beta \cdot (x - x_0)}\\).
-  """
-  return np.float32(np.exp(-(x - x0) * beta))
 
 
 def get_filenames(train=True, dataset_name=None):
@@ -94,69 +66,6 @@ def get_filenames(train=True, dataset_name=None):
     return records['train']
   else:
     return records['test']
-
-
-def may_build_dataset(dataset=None, verbose=True):
-  """
-  Build the dataset if needed.
-
-  Args:
-    verbose: boolean indicating whether the building progress shall be printed
-      or not.
-    dataset: a `str` as the name of the dataset.
-
-  """
-  train_file, _ = get_filenames(train=True, dataset_name=dataset)
-  test_file, _ = get_filenames(train=False, dataset_name=dataset)
-
-  # Check if the xyz file is accessible.
-  xyzfile = join("..", "datasets", "{}.xyz".format(FLAGS.dataset))
-  if not isfile(xyzfile):
-    raise IOError("The dataset file %s can not be accessed!" % xyzfile)
-
-  # Extract the xyz file and split it into two sets: a training set and a
-  # testing set.
-  if FLAGS.forces and FLAGS.format != 'ase':
-    raise ValueError("Currently only ASE-generated xyz files are supported if "
-                     "forces training is enabled.")
-
-  database = Database.from_xyz(xyzfile,
-                               num_examples=FLAGS.num_examples,
-                               verbose=verbose,
-                               xyz_format=FLAGS.format)
-  database.split(test_size=FLAGS.test_size)
-
-  # The maximum supported `k` is 5.
-  k_max = min(5, FLAGS.k_max)
-
-  # Determine the maximum occurances of each atom type.
-  max_occurs = database.max_occurs
-
-  # Setup the exponential-scaled RMSE.
-  if FLAGS.weighted_loss is None:
-    exp_rmse_fn = None
-  else:
-    min_ener, _ = database.energy_range
-    beta = 1.0 / FLAGS.weighted_loss
-    exp_rmse_fn = partial(exp_rmse_loss_fn, x0=min_ener, beta=beta)
-
-  # Use a `FixedLenMultiTransformer` to generate features because it will be
-  # much easier if the all input samples are fixed-length.
-  clf = transformer.FixedLenMultiTransformer(
-    max_occurs=max_occurs,
-    k_max=k_max,
-    periodic=FLAGS.periodic,
-    norm_order=FLAGS.norm_order,
-    include_all_k=FLAGS.include_all_k,
-    atomic_forces=FLAGS.forces
-  )
-  clf.transform_and_save(
-    database,
-    train_file=train_file,
-    test_file=test_file,
-    verbose=True,
-    loss_fn=exp_rmse_fn
-  )
 
 
 """
@@ -468,13 +377,7 @@ def yf_inputs(dataset_name, for_training=True, batch_size=50, shuffle=True):
 
 # noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def main(unused):
-  if FLAGS.periodic and (FLAGS.format != 'grendel'):
-    tf.logging.error(
-      "The xyz format must be `grendel` if `periodic` is True!")
-  elif FLAGS.run_test:
-    test_dataset_api()
-  else:
-    may_build_dataset(verbose=True)
+  test_dataset_api()
 
 
 def test_dataset_api():

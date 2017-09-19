@@ -14,7 +14,8 @@ from os.path import join, isfile, dirname
 from os import remove
 from functools import partial
 from sklearn.metrics import pairwise_distances
-from reader import y_inputs, exp_rmse_loss_fn
+from reader import y_inputs
+from build_dataset import exp_rmse_loss_fn
 from reader import FLAGS
 from database import Database
 from constants import hartree_to_ev, au_to_angstrom
