@@ -202,7 +202,7 @@ def evaluate():
   with tf.Graph().as_default() as graph:
 
     # Inference the KCNN model for evaluation
-    y_nn, y_true, _, f_nn, f_true = kcnn_y_from_dataset(
+    y_nn, y_true, _ = kcnn_y_from_dataset(
       FLAGS.dataset, for_training=False
     )
 
@@ -221,7 +221,7 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_nn, f_true, f_nn, summary_op)
+      eval_once(saver, summary_writer, y_true, y_nn, None, None, summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)

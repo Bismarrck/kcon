@@ -78,7 +78,7 @@ def train_model():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Inference the kCON energy model
-    y_nn, y_true, y_weights, f_nn, f_true = kcnn_y_from_dataset(
+    y_nn, y_true, y_weights = kcnn_y_from_dataset(
       FLAGS.dataset, for_training=True
     )
 
