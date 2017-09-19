@@ -9,7 +9,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from datetime import datetime
-from kcnn import kcnn_y_from_dataset
+from kcnn import kcnn_from_dataset
 from constants import VARIABLE_MOVING_AVERAGE_DECAY
 from utils import set_logging_configs
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
@@ -17,8 +17,7 @@ from os.path import join
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('eval_data', 'test',
-                           """Either 'test' or 'train_eval'.""")
+
 tf.app.flags.DEFINE_string('checkpoint_dir', './events',
                            """Directory where to read model checkpoints.""")
 tf.app.flags.DEFINE_integer('eval_interval_secs', 300,
@@ -200,13 +199,14 @@ def evaluate():
   with tf.Graph().as_default() as graph:
 
     # Inference the KCNN model for evaluation
-    y_nn, y_true, _ = kcnn_y_from_dataset(
-      FLAGS.dataset, for_training=False
+    y_calc, y_true, _, f_calc, f_true = kcnn_from_dataset(
+      FLAGS.dataset,
+      for_training=False
     )
 
     # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
     y_true = tf.cast(y_true, tf.float32)
-    y_nn.set_shape(y_true.get_shape().as_list())
+    y_calc.set_shape(y_true.get_shape().as_list())
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
@@ -219,15 +219,18 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
 
     while True:
-      eval_once(saver, summary_writer, y_true, y_nn, None, None, summary_op)
+      eval_once(
+        saver, summary_writer, y_true, y_calc, f_true, f_calc, summary_op
+      )
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)
 
 
-# pylint: disable=unused-argument
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-def main(argv=None):
+def main(_):
+  """
+  The main function.
+  """
   if not tf.gfile.Exists(FLAGS.eval_dir):
     tf.gfile.MakeDirs(FLAGS.eval_dir)
   evaluate()
