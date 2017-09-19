@@ -413,7 +413,6 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn):
         loss_collection=None,
       )
       f_rmse = tf.sqrt(f_mse, name="fRMSE")
-      tf.summary.scalar("fRMSE", f_rmse)
       f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
 
     with tf.name_scope("energy"):
@@ -424,7 +423,10 @@ def get_yf_loss(y_true, y_nn, f_true, f_nn):
         loss_collection=None,
       )
       y_loss = tf.sqrt(y_mse, name="yRMSE")
-      tf.summary.scalar("yRMSE", y_loss)
+
+    with tf.name_scope("losses"):
+      tf.summary.scalar("y", y_loss)
+      tf.summary.scalar("f", f_loss)
 
     loss = tf.add(f_loss, y_loss, name="together")
     tf.add_to_collection("losses", loss)
@@ -489,7 +491,7 @@ def get_y_train_op(total_loss, global_step):
   # batch_normalization layers won't update their population statistics, which
   # will cause the model to fail at inference time.
   dependencies = [loss_averages_op]
-  if FLAGS.batch_norm:
+  if FLAGS.normalizer == 'batch_norm':
     dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 
   # Compute gradients.
@@ -550,7 +552,7 @@ def _add_total_norm_summaries(grads_and_vars, collection,
   return total_norm
 
 
-def get_yf_train_op(y_true, y_nn, f_true, f_nn, global_step):
+def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
   """
   Train the model by miniming both the energy and forces differences.
 
@@ -570,16 +572,7 @@ def get_yf_train_op(y_true, y_nn, f_true, f_nn, global_step):
       and 'f_loss'.
 
   """
-  with tf.name_scope("yfRMSE"):
-    with tf.name_scope("energy"):
-      y_mse = tf.losses.mean_squared_error(
-        y_true,
-        y_nn,
-        scope="yMSE",
-        loss_collection=None,
-      )
-      y_loss = tf.sqrt(y_mse, name="yRMSE")
-      tf.summary.scalar("yRMSE", y_loss)
+  _add_loss_summaries(total_loss)
 
   # Train the model using atomic forces
   with tf.control_dependencies([]):
@@ -598,24 +591,6 @@ def get_yf_train_op(y_true, y_nn, f_true, f_nn, global_step):
       global_step=global_step,
       name="apply_y_grads"
     )
-
-  with tf.name_scope("yfRMSE/"):
-    with tf.name_scope("forces"):
-      f_mse = tf.losses.mean_squared_error(
-        f_true,
-        f_nn,
-        scope="fMSE",
-        loss_collection=None,
-      )
-      f_rmse = tf.sqrt(f_mse, name="fRMSE")
-      tf.summary.scalar("fRMSE", f_rmse)
-      f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
-
-    loss = tf.add(f_loss, y_loss, name="together")
-    tf.add_to_collection("losses", loss)
-    total_loss = tf.add_n(tf.get_collection("losses"), name="total")
-
-  _add_loss_summaries(total_loss)
 
   # The train the model using total energy.
   with tf.control_dependencies([y_grads_norm_op, apply_y_grads_op]):
