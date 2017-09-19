@@ -500,7 +500,7 @@ def get_y_train_op(total_loss, global_step):
   # batch_normalization layers won't update their population statistics, which
   # will cause the model to fail at inference time.
   dependencies = [loss_averages_op]
-  if FLAGS.normalizer == 'batch_norm':
+  if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
     dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 
   # Compute gradients.
