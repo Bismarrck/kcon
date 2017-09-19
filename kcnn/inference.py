@@ -12,7 +12,7 @@ from tensorflow.contrib.layers import batch_norm, layer_norm
 from tensorflow.contrib.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
-from constants import KcnnGraphKeys
+from constants import KcnnGraphKeys, SEED
 from utils import lrelu
 from functools import partial
 
@@ -20,16 +20,14 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-# The constant seed for initializing weights.
-WEIGHT_INIT_SEED = 218
-
 # The decay for batch normalization
 BATCH_NORM_DECAY_FACTOR = 0.999
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                          reuse=False, normalizer='bias', activation_fn=lrelu,
-                         activation_params=(), num_kernels=None):
+                         activation_params=(), weights_initializer=None,
+                         num_kernels=None):
   """
   Infer the k-body term of `KCNN`.
 
@@ -43,6 +41,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
     normalizer: a `str` as the normalizer to use. Supported normalizers include:
       'bias' (default), 'batch_norm', 'layer_norm' and None.
     activation_fn: a `Callable` as the activation function for each conv layer.
+    weights_initializer: a `Callable` as the function to intialize weights.
     num_kernels: a `List[int]` as the number of kernels.
     verbose: a `bool`. If Ture, the shapes of the layers will be printed.
 
@@ -65,8 +64,8 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   inputs.set_shape([None, 1, None, ck2])
 
   # Setup the initializers and normalization function.
-  weights_initializer = initializers.xavier_initializer(
-    seed=WEIGHT_INIT_SEED, dtype=dtype)
+  weights_initializer = weights_initializer or initializers.xavier_initializer(
+    seed=SEED, dtype=dtype)
   biases_initializer = None
   normalizer_fn = None
   normalizer_params = {}
@@ -273,9 +272,9 @@ def _split_inputs(inputs, split_dims):
 def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
               is_training, max_k=3, reuse=False, verbose=True, num_kernels=None,
               activation_fn=lrelu, alpha=0.2, normalizer='bias',
-              one_body_weights=None, trainable_one_body=True,
-              atomic_forces=False, coefficients=None, indexing=None,
-              add_summary=True):
+              weights_initializer=None, one_body_weights=None,
+              trainable_one_body=True, atomic_forces=False, coefficients=None,
+              indexing=None, add_summary=True):
   """
   The general inference function.
 
@@ -300,6 +299,7 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     alpha: a `float` as the parameter alpha for Leaky ReLU.
     normalizer: a `str` as the normalizer to use. Supported normalizers include:
       'bias' (default), 'batch_norm', 'layer_norm' and None.
+    weights_initializer: a `Callable` as the function to initialize weights.
     one_body_weights: a `float32` array of shape `[num_atom_types, ]` as the
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
@@ -331,14 +331,20 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   y_contribs = []
   for i, conv in enumerate(splited_inputs):
     with tf.variable_scope(kbody_terms[i]):
-      y_contribs.append(_inference_kbody_cnn(conv, kbody_terms[i], num_cols,
-                                             activation_fn=activation_fn,
-                                             activation_params=(alpha, ),
-                                             reuse=reuse,
-                                             normalizer=normalizer,
-                                             is_training=is_training,
-                                             num_kernels=num_kernels,
-                                             verbose=verbose))
+      y_contribs.append(
+        _inference_kbody_cnn(
+          inputs=conv,
+          kbody_term=kbody_terms[i],
+          ck2=num_cols,
+          activation_fn=activation_fn,
+          activation_params=(alpha, ),
+          reuse=reuse,
+          normalizer=normalizer,
+          weights_initializer=weights_initializer,
+          is_training=is_training,
+          num_kernels=num_kernels,
+          verbose=verbose)
+      )
 
   # Concat the k-body contribs from all k-body terms. The new tensor has the
   # shape of `[-1, 1, D, 1]`.

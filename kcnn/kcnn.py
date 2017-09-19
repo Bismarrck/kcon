@@ -8,9 +8,9 @@ import numpy as np
 import tensorflow as tf
 import reader
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from constants import KcnnGraphKeys
+from constants import KcnnGraphKeys, SEED
 from inference import inference
-from utils import lrelu
+from utils import lrelu, selu, selu_initializer
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -70,6 +70,8 @@ def get_activation_fn(name='lrelu'):
     return tf.nn.sigmoid
   elif name.lower() == 'elu':
     return tf.nn.elu
+  elif name.lower() == 'selu':
+    return selu
   else:
     raise ValueError("The %s activation is not supported!".format(name))
 
@@ -167,8 +169,14 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
   """
 
   num_kernels = num_kernels or (40, 50, 60, 40)
+
   activation_fn = get_activation_fn(FLAGS.activation_fn)
   alpha = FLAGS.alpha
+  if FLAGS.activation_fn == 'selu':
+    weights_initializer = selu_initializer(seed=SEED)
+  else:
+    weights_initializer = None
+
   trainable = not FLAGS.fixed_one_body
   if FLAGS.normalizer.lower() == 'none':
     normalizer = None
@@ -196,6 +204,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
     activation_fn=activation_fn,
     alpha=alpha,
     normalizer=normalizer,
+    weights_initializer=weights_initializer,
     one_body_weights=one_body_weights,
     verbose=verbose,
     trainable_one_body=trainable,
