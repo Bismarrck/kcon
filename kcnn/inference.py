@@ -169,9 +169,9 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
   )
 
 
-def _inference_forces(y_total, inputs, coefficients, indexing):
+def inference_forces(y_total, inputs, coefficients, indexing):
   """
-  Inference the KCNN forces.
+  Inference the kCON forces.
 
   Args:
     y_total: a `float32` Tensor of shape `[-1, ]` as the output.
@@ -269,14 +269,14 @@ def _split_inputs(inputs, split_dims):
     return tf.split(inputs, split_dims, axis=axis)
 
 
-def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
-              is_training, max_k=3, reuse=False, verbose=True, num_kernels=None,
-              activation_fn=lrelu, alpha=0.2, normalizer='bias',
-              weights_initializer=None, one_body_weights=None,
-              trainable_one_body=True, atomic_forces=False, coefficients=None,
-              indexing=None, add_summary=True):
+def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
+                     kbody_terms, is_training, max_k=3, reuse=False,
+                     verbose=True, num_kernels=None, activation_fn=lrelu,
+                     alpha=0.2, normalizer='bias', weights_initializer=None,
+                     one_body_weights=None, trainable_one_body=True,
+                     add_summary=True):
   """
-  The general inference function.
+  Inference the kCON energy model.
 
   Args:
     inputs: a Tensor of shape `[-1, 1, -1, D]` as the inputs.
@@ -304,11 +304,6 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
       trainable or not.
-    atomic_forces: a `bool` indicating whether the atomic forces should be
-      trained or not.
-    coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
-      forces.
-    indexing: a 3D Tensor as the indexing matrix for force compoenents.
     add_summary: a `bool` indicating whether we should add summaries for
       tensors or not.
 
@@ -388,15 +383,9 @@ def inference(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
         tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
     y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
 
-  # Inference the KCNN forces
-  if atomic_forces:
-    forces = _inference_forces(y_total, inputs, coefficients, indexing)
-  else:
-    forces = None
-
   if verbose:
     get_number_of_trainable_parameters(verbose=verbose)
-  return y_total, contribs, forces
+  return y_total, contribs
 
 
 def print_activations(tensor):
@@ -407,9 +396,9 @@ def print_activations(tensor):
     tensor: a Tensor.
 
   """
-  dims = ",".join(["{:7d}".format(dim if dim is not None else -1)
+  dims = ",".join(["{:16d}".format(dim if dim is not None else -1)
                    for dim in tensor.get_shape().as_list()])
-  tf.logging.info("%-25s : [%s]" % (tensor.op.name, dims))
+  tf.logging.info("%-36s : [%s]" % (tensor.op.name, dims))
 
 
 def get_number_of_trainable_parameters(verbose=False):
@@ -492,7 +481,7 @@ def debug():
       tf.int32, shape=[50, None, None], name="indexing"
     )
 
-    y_total, y_contribs, f_calc = inference(
+    y_total, y_contribs = inference_energy(
       inputs=inputs,
       occurs=occurs,
       weights=binary_weights,
@@ -502,7 +491,11 @@ def debug():
       is_training=True,
       verbose=True,
       one_body_weights=properties['one_body_weights'],
-      atomic_forces=properties['atomic_forces'],
+    )
+
+    f_calc = inference_forces(
+      y_total=y_total,
+      inputs=inputs,
       coefficients=coefficients,
       indexing=indexing
     )

@@ -9,7 +9,7 @@ import tensorflow as tf
 import reader
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
-from inference import inference
+from inference import inference_energy
 from utils import lrelu, selu, selu_initializer
 
 __author__ = 'Xin Chen'
@@ -185,7 +185,7 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
-  y_calc, _, f_calc = inference(
+  y_calc, _, f_calc = inference_energy(
     inputs,
     occurs,
     weights,
