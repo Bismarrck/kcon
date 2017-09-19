@@ -95,7 +95,7 @@ def lrelu(x, alpha=0.2, name=None):
     x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
       `int16`, or `int8`.
     alpha: a `Tensor` with type `float`, `double`.
-    name: a
+    name: a `str` as the name of this op.
 
   Returns:
     y: a `Tensor` with the same type as `x`.
@@ -105,6 +105,28 @@ def lrelu(x, alpha=0.2, name=None):
     alpha = ops.convert_to_tensor(alpha, dtype=tf.float32, name="alpha")
     z = math_ops.multiply(alpha, x, "z")
     return math_ops.maximum(z, x, name=name)
+
+
+def selu(x, name=None):
+  """
+  The Scaled Exponential Linear Units.
+
+  Args:
+    x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
+      `int16`, or `int8`.
+    name: a `str` as the name of this op.
+
+  Returns:
+    y: a `Tensor` with the same type as `x`.
+
+  References:
+    https://arxiv.org/pdf/1706.02515.pdf
+
+  """
+  with ops.name_scope(name, "selu", [x]):
+    alpha = 1.6732632423543772848170429916717
+    scale = 1.0507009873554804934193349852946
+    return scale * tf.where(x >= 0.0, x, alpha * tf.nn.elu(x))
 
 
 def get_xargs(pid=None):
