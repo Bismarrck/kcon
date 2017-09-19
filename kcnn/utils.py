@@ -13,6 +13,7 @@ from logging.config import dictConfig
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.contrib.framework import add_arg_scope
+from tensorflow.contrib.layers import variance_scaling_initializer
 from os import getpid
 from sys import platform
 from subprocess import Popen, PIPE
@@ -127,6 +128,24 @@ def selu(x, name=None):
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
     return scale * tf.where(x >= 0.0, x, alpha * tf.nn.elu(x))
+
+
+def selu_initializer(dtype=tf.float32, seed=None):
+  """
+  The weights initializer for selu activations.
+
+  Args:
+    seed: A Python integer. Used to create random seeds. See
+          @{tf.set_random_seed} for behavior.
+    dtype: The data type. Only floating point types are supported.
+
+  Returns:
+    An initializer for a weight matrix.
+
+  """
+  mode = 'FAN_IN'
+  return variance_scaling_initializer(
+    factor=1.0, mode=mode, dtype=dtype, seed=seed)
 
 
 def get_xargs(pid=None):
