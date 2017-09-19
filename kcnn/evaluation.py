@@ -17,8 +17,6 @@ from os.path import join
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('eval_dir', './events/eval',
-                           """Directory where to write event logs.""")
 tf.app.flags.DEFINE_string('eval_data', 'test',
                            """Either 'test' or 'train_eval'.""")
 tf.app.flags.DEFINE_string('checkpoint_dir', './events',
@@ -196,7 +194,7 @@ def evaluate():
 
   set_logging_configs(
     debug=False,
-    logfile=join(FLAGS.eval_dir, FLAGS.logfile)
+    logfile=join(FLAGS.checkpoint_dir, "eval", FLAGS.logfile)
   )
 
   with tf.Graph().as_default() as graph:
