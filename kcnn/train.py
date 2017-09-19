@@ -90,7 +90,7 @@ def train_model():
     loss = kcnn.get_y_loss(y_true, y_nn, y_weights)
 
     # Build a Graph that trains the model with respect to energy only.
-    train_op = kcnn.get_y_train_op(loss, global_step)
+    train_op = kcnn.get_joint_loss_train_op(loss, global_step)
 
     # Save the training flags
     save_training_flags()

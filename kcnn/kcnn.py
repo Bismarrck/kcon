@@ -8,15 +8,12 @@ import numpy as np
 import tensorflow as tf
 import reader
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
-from constants import KcnnGraphKeys, SEED
+from constants import SEED
 from inference import inference
 from utils import lrelu, selu, selu_initializer
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
-
-
-# TODO: the model must be inferenced twice (similar to DCGAN)
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -26,8 +23,6 @@ tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.0001,
                           """The learning rate for minimizing energy.""")
-tf.app.flags.DEFINE_float('f_learning_rate', 0.0001,
-                          """The learning rate for minimizing forces.""")
 tf.app.flags.DEFINE_string('conv_sizes', '40,50,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
@@ -394,9 +389,9 @@ def get_y_loss(y_true, y_nn, weights=None):
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
 
-def get_yf_loss(y_true, y_nn, f_true, f_nn):
+def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
   """
-  Return the total loss tensor that also includes forces.
+  Return the joint total loss tensor.
 
   Args:
     y_true: a `float32` tensor of shape `[-1, ]` the true energies.
@@ -475,61 +470,6 @@ def _add_loss_summaries(total_loss):
   return loss_averages_op
 
 
-def get_y_train_op(total_loss, global_step):
-  """
-  Train the model by minimizing the energy differences.
-
-  Create an optimizer and apply to all trainable variables. Add moving
-  average for all trainable variables.
-
-  Args:
-    total_loss: the total loss Tensor.
-    global_step: Integer Variable counting the number of training steps
-      processed.
-
-  Returns:
-    train_op: the op for training.
-
-  """
-
-  # Generate moving averages of all losses and associated summaries.
-  loss_averages_op = _add_loss_summaries(total_loss)
-
-  # Add the update ops if batch_norm is True.
-  # If we don't include the update ops as dependencies on the train step, the
-  # batch_normalization layers won't update their population statistics, which
-  # will cause the model to fail at inference time.
-  dependencies = [loss_averages_op]
-  if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
-    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
-
-  # Compute gradients.
-  with tf.control_dependencies(dependencies):
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-    grads = opt.compute_gradients(total_loss)
-
-  # Add histograms for grandients
-  _add_total_norm_summaries(grads, "y_norms", only_summary_total=True)
-
-  # Apply gradients.
-  apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
-
-  # Add histograms for trainable variables.
-  for var in tf.trainable_variables():
-    tf.summary.histogram(var.op.name, var)
-
-  # Track the moving averages of all trainable variables.
-  with tf.name_scope("average"):
-    variable_averages = tf.train.ExponentialMovingAverage(
-      VARIABLE_MOVING_AVERAGE_DECAY, global_step)
-    variables_averages_op = variable_averages.apply(tf.trainable_variables())
-
-  with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
-    train_op = tf.no_op(name='train')
-
-  return train_op
-
-
 def _add_total_norm_summaries(grads_and_vars, collection,
                               only_summary_total=True):
   """
@@ -561,73 +501,52 @@ def _add_total_norm_summaries(grads_and_vars, collection,
   return total_norm
 
 
-def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
+def get_joint_loss_train_op(total_loss, global_step):
   """
-  Train the model by miniming both the energy and forces differences.
+  Train the model by minimizing the joint total loss.
+
+  Create an optimizer and apply to all trainable variables. Add moving
+  average for all trainable variables.
 
   Args:
-    y_true: a `float32` tensor of shape `[-1, ]` the true energies.
-    y_nn: a `float32` tensor of shape `[-1, ]` as the neural network predicted
-      energies.
-    f_true: a `float32` tensor of shape `[-1, 3N]` as the true forces.
-    f_nn: a `float32` tensor of shape `[-1, 3N]` as the neural network predicted
-      atomic forces.
+    total_loss: a `float32` Tensor as the joint total loss.
     global_step: Integer Variable counting the number of training steps
       processed.
 
   Returns:
     train_op: the op for training.
-    losses: a `dict` of `float32` loss tensors, including 'total_loss', 'y_loss'
-      and 'f_loss'.
 
   """
-  _add_loss_summaries(total_loss)
 
-  # Train the model using atomic forces
-  with tf.control_dependencies([]):
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate, name="AdamY")
-    grads = opt.compute_gradients(
-      y_loss,
-      var_list=tf.get_collection(KcnnGraphKeys.ENERGY_VARIABLES)
-    )
-    y_grads_norm_op = _add_total_norm_summaries(
-      grads,
-      collection="y_norms",
-      only_summary_total=False,
-    )
-    apply_y_grads_op = opt.apply_gradients(
-      grads,
-      global_step=global_step,
-      name="apply_y_grads"
-    )
+  # Generate moving averages of all losses and associated summaries.
+  loss_averages_op = _add_loss_summaries(total_loss)
 
-  # The train the model using total energy.
-  with tf.control_dependencies([y_grads_norm_op, apply_y_grads_op]):
-    opt = tf.train.AdamOptimizer(FLAGS.f_learning_rate, name='AdamF')
-    grads = opt.compute_gradients(
-      f_loss,
-      var_list=tf.get_collection(KcnnGraphKeys.FORCES_VARIABLES)
-    )
-    f_grads_norm_op = _add_total_norm_summaries(
-      grads,
-      collection="f_norms",
-      only_summary_total=False
-    )
-    apply_f_grads_op = opt.apply_gradients(
-      grads,
-      global_step=global_step,
-      name="apply_f_grads"
-    )
+  # Add the update ops if batch_norm is True.
+  # If we don't include the update ops as dependencies on the train step, the
+  # batch_normalization layers won't update their population statistics, which
+  # will cause the model to fail at inference time.
+  dependencies = [loss_averages_op]
+  if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
+    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
+
+  # Compute gradients.
+  with tf.control_dependencies(dependencies):
+    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+    grads = opt.compute_gradients(total_loss)
+
+  # Add histograms for grandients
+  _add_total_norm_summaries(grads, "norms", only_summary_total=False)
+
+  # Apply gradients.
+  apply_gradient_op = opt.apply_gradients(
+    grads,
+    global_step=global_step,
+    name="apply_grads"
+  )
 
   # Add histograms for trainable variables.
   for var in tf.trainable_variables():
-    name = var.op.name
-    absvar = tf.abs(var, name=name + "/abs")
-    tf.summary.histogram(name, var)
-    tf.add_to_collection('varsum', tf.reduce_sum(absvar, name=name + "/abssum"))
-  with tf.name_scope("Vars"):
-    total_sum = tf.add_n(tf.get_collection('varsum'), name="add_n")
-    tf.summary.scalar("abs_sum", total_sum)
+    tf.summary.histogram(var.op.name, var)
 
   # Track the moving averages of all trainable variables.
   with tf.name_scope("average"):
@@ -635,11 +554,7 @@ def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
       VARIABLE_MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
-  with tf.control_dependencies([f_grads_norm_op,
-                                apply_f_grads_op,
-                                variables_averages_op]):
+  with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
     train_op = tf.no_op(name='train')
 
-  return train_op, {"total_loss": total_loss,
-                    "y_loss": y_loss,
-                    "f_loss": f_loss}
+  return train_op
