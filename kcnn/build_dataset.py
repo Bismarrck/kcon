@@ -11,7 +11,7 @@ import transformer
 from functools import partial
 from os.path import join, isfile
 from database import Database
-from reader import get_filenames
+from pipeline import get_filenames
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -31,11 +31,13 @@ tf.app.flags.DEFINE_float('test_size', 0.2,
 tf.app.flags.DEFINE_integer("norm_order", 1,
                             """The exponential order for normalizing 
                             distances.""")
+tf.app.flags.DEFINE_float('weighted_loss', None,
+                          """The kT (eV) for computing the weighted loss. """)
 
 FLAGS = tf.app.flags.FLAGS
 
 
-def exp_rmse_loss_fn(x, x0=0.0, beta=1.0):
+def exponentially_weighted_loss(x, x0=0.0, beta=1.0):
   """
   An exponential function for computing the weighted loss.
 
@@ -86,7 +88,7 @@ def may_build_dataset(dataset=None, verbose=True):
   else:
     min_ener, _ = database.energy_range
     beta = 1.0 / FLAGS.weighted_loss
-    exp_rmse_fn = partial(exp_rmse_loss_fn, x0=min_ener, beta=beta)
+    exp_rmse_fn = partial(exponentially_weighted_loss, x0=min_ener, beta=beta)
 
   # Use a `FixedLenMultiTransformer` to generate features because it will be
   # much easier if the all input samples are fixed-length.
