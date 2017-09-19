@@ -6,10 +6,10 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import tensorflow as tf
-import reader
+import pipeline
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
-from inference import inference_energy
+from inference import inference_energy, inference_forces
 from utils import lrelu, selu, selu_initializer
 
 __author__ = 'Xin Chen'
@@ -85,7 +85,7 @@ class BatchIndex:
   indices = 7
 
 
-def get_batch(train=True, shuffle=True, dataset_name=None):
+def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None):
   """
   Construct input for k-body evaluation using the Reader ops.
 
@@ -93,22 +93,22 @@ def get_batch(train=True, shuffle=True, dataset_name=None):
     train: a `bool` indicating if one should use the train or eval data set.
     shuffle: a `bool` indicating if the batches shall be shuffled or not.
     dataset_name: a `str` as the dataset to use.
+    num_epochs: an `int` as the maximum number of epochs to run.
 
   Returns:
-    features: Behler features for the molecules. 4D tensor of shape
-      [batch_size, 1, NATOMS, NDIMS].
-    energies: the dedired energies. 2D tensor of shape [batch_size, 1].
+    next_element: a tuple of Tensors.
 
   """
-  return reader.y_inputs(
-    train=train,
+  return pipeline.next_batch(
+    for_training=train,
     batch_size=FLAGS.batch_size,
     shuffle=shuffle,
-    dataset_name=dataset_name
+    dataset_name=dataset_name,
+    num_epochs=num_epochs,
   )
 
 
-def get_batch_configs(train=True, dataset_name=None):
+def get_configs(train=True, dataset_name=None):
   """
   Return the configs for inputs.
 
@@ -121,13 +121,13 @@ def get_batch_configs(train=True, dataset_name=None):
     configs: a `dict` as the configs for the dataset.
 
   """
-  return reader.inputs_configs(train=train, dataset_name=dataset_name)
+  return pipeline.get_configs(train=train, dataset_name=dataset_name)
 
 
-def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
-         is_training, reuse=False, num_kernels=None, verbose=True,
-         one_body_weights=None, atomic_forces=False, coefficients=None,
-         indexing=None, add_summary=True):
+def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
+         kbody_terms=(), is_training=True, reuse=False, num_kernels=None,
+         verbose=True, one_body_weights=None, atomic_forces=False,
+         coefficients=None, indexing=None, add_summary=True):
   """
   Inference the model of `KCNN`.
 
@@ -185,29 +185,39 @@ def kcnn(inputs, occurs, weights, split_dims, num_atom_types, kbody_terms,
       one_body_weights = np.ones(
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
-  y_calc, _, f_calc = inference_energy(
-    inputs,
-    occurs,
-    weights,
-    split_dims,
-    num_atom_types=num_atom_types,
-    kbody_terms=kbody_terms,
-    is_training=is_training,
-    reuse=reuse,
-    max_k=FLAGS.k_max,
-    num_kernels=num_kernels,
-    activation_fn=activation_fn,
-    alpha=alpha,
-    normalizer=normalizer,
-    weights_initializer=weights_initializer,
-    one_body_weights=one_body_weights,
-    verbose=verbose,
-    trainable_one_body=trainable,
-    atomic_forces=atomic_forces,
-    coefficients=coefficients,
-    indexing=indexing,
-    add_summary=add_summary,
-  )
+  with tf.name_scope("Energy"):
+    y_calc, _ = inference_energy(
+      inputs,
+      occurs,
+      weights,
+      split_dims,
+      num_atom_types=num_atom_types,
+      kbody_terms=kbody_terms,
+      is_training=is_training,
+      reuse=reuse,
+      max_k=FLAGS.k_max,
+      num_kernels=num_kernels,
+      activation_fn=activation_fn,
+      alpha=alpha,
+      normalizer=normalizer,
+      weights_initializer=weights_initializer,
+      one_body_weights=one_body_weights,
+      verbose=verbose,
+      trainable_one_body=trainable,
+      add_summary=add_summary,
+    )
+
+  if atomic_forces:
+    with tf.name_scope("Forces"):
+      f_calc = inference_forces(
+        y_total=y_calc,
+        inputs=inputs,
+        coefficients=coefficients,
+        indexing=indexing
+      )
+  else:
+    f_calc = None
+
   return y_calc, f_calc
 
 
@@ -247,14 +257,16 @@ def extract_configs(configs, for_training=True):
   return params
 
 
-def kcnn_y_from_dataset(dataset_name, for_training=True, **kwargs):
+def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
+                      **kwargs):
   """
-  Inference a kCON energy model based on the given dataset.
+  Inference a kCON model for the given dataset.
 
   Args:
     dataset_name: a `str` as the name of the dataset.
     for_training: a `bool` indicating whether this inference is for training or
       evaluation.
+    num_epochs: an `int` as the maximum number of epochs to run.
     kwargs: additional key-value parameters.
 
   Returns:
@@ -264,12 +276,13 @@ def kcnn_y_from_dataset(dataset_name, for_training=True, **kwargs):
       weighted RMSE loss.
 
   """
-  batch = get_batch(
+  batch = next_batch(
     train=for_training,
     dataset_name=dataset_name,
-    shuffle=for_training
+    shuffle=for_training,
+    num_epochs=num_epochs
   )
-  configs = get_batch_configs(train=for_training, dataset_name=dataset_name)
+  configs = get_configs(train=for_training, dataset_name=dataset_name)
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
@@ -279,90 +292,29 @@ def kcnn_y_from_dataset(dataset_name, for_training=True, **kwargs):
 
   y_true = batch[BatchIndex.y_true]
   y_weight = batch[BatchIndex.loss_weight]
+  f_calc = None
+  f_true = None
 
   if not params["atomic_forces"]:
-    y_total, _ = kcnn(batch[BatchIndex.inputs],
-                      batch[BatchIndex.occurs],
-                      batch[BatchIndex.weights],
-                      **params)
-
-  else:
-    raise ValueError("This function only inference energy models!")
-
-  return y_total, y_true, y_weight
-
-
-def kcnn_yf_from_dataset(dataset_name, for_training=True, **kwargs):
-  """
-  Inference a kCON energy & forces model for the given dataset.
-
-  Args:
-    dataset_name: a `str` as the name of the dataset.
-    for_training: a `bool` indicating whether the model is for training or not.
-    **kwargs: additional key-value pairs.
-
-  """
-
-  configs = get_batch_configs(train=for_training, dataset_name=dataset_name)
-  params = extract_configs(configs, for_training=for_training)
-  for key, val in kwargs.items():
-    if key in params:
-      params[key] = val
-    else:
-      tf.logging.warning("Unrecognized key={}".format(key))
-  assert params['atomic_forces']
-
-  if for_training:
-    feed_batches, handles, dataset_iterators = reader.yf_inputs(
-      dataset_name=dataset_name,
-      for_training=for_training,
-      batch_size=FLAGS.batch_size,
-      shuffle=True
+    y_calc, _ = kcnn(
+      batch[BatchIndex.inputs],
+      batch[BatchIndex.occurs],
+      batch[BatchIndex.weights],
+      **params
     )
-
-    # Inference the energy model
-    y_params = dict(params)
-    y_params['atomic_forces'] = False
-    y_params['reuse'] = False
-    with tf.name_scope("Energy"):
-      y_calc, _ = kcnn(inputs=feed_batches[0][BatchIndex.inputs],
-                       occurs=feed_batches[0][BatchIndex.occurs],
-                       weights=feed_batches[0][BatchIndex.weights],
-                       **y_params)
-      y_true = feed_batches[0][BatchIndex.y_true]
-      y_weight = feed_batches[0][BatchIndex.loss_weight]
-
-    # Inference the forces model, `reuse` should be set to True.
-    f_params = dict(params)
-    f_params['reuse'] = True
-    f_params['add_summary'] = False
-    with tf.name_scope("Forces"):
-      _, f_calc = kcnn(inputs=feed_batches[1][BatchIndex.inputs],
-                       occurs=feed_batches[1][BatchIndex.occurs],
-                       weights=feed_batches[1][BatchIndex.weights],
-                       coefficients=feed_batches[1][BatchIndex.coefficients],
-                       indexing=feed_batches[1][BatchIndex.indices],
-                       **f_params)
-      f_true = feed_batches[1][BatchIndex.f_true]
-
-    # Return the tensors
-    calc = {"y": y_calc, "f": f_calc}
-    true = {"y": y_true, "f": f_true}
-    auxiliary_tensors = {
-      "y_weight": y_weight,
-      "handles": {
-        "y": handles[0],
-        "f": handles[1]
-      },
-      "dataset_iterators": {
-        "y": dataset_iterators[0],
-        "f": dataset_iterators[1]
-      }
-    }
-    return calc, true, auxiliary_tensors
-
   else:
-    raise NotImplementedError()
+    y_calc, f_calc = kcnn(
+      batch[BatchIndex.inputs],
+      batch[BatchIndex.occurs],
+      batch[BatchIndex.occurs],
+      atomic_forces=True,
+      coefficients=batch[BatchIndex.coefficients],
+      indexing=batch[BatchIndex.indices],
+      **params,
+    )
+    f_true = batch[BatchIndex.f_true]
+
+  return y_calc, y_true, y_weight, f_calc, f_true
 
 
 def get_y_loss(y_true, y_nn, weights=None):
