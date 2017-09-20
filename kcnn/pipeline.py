@@ -234,42 +234,44 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     next_batch: a tuple of Tensors.
 
   """
-  tfrecods_file, _ = get_filenames(
-    train=for_training,
-    dataset_name=dataset_name
-  )
 
-  configs = get_configs(for_training=for_training, dataset_name=dataset_name)
-  shape = configs["shape"]
-  cnk = shape[0]
-  ck2 = shape[1]
-  num_atom_types = configs["num_atom_types"]
-  atomic_forces = configs["atomic_forces_enabled"]
-  if atomic_forces:
-    num_f_components, num_entries = configs["indexing_shape"]
-  else:
-    num_f_components, num_entries = None, None
+  with tf.device('/cpu:0'):
+    tfrecods_file, _ = get_filenames(
+      train=for_training,
+      dataset_name=dataset_name
+    )
 
-  # Initialize a basic dataset
-  dataset = TFRecordDataset([tfrecods_file]).map(
-    partial(decode_protobuf,
-            cnk=cnk,
-            ck2=ck2,
-            num_atom_types=num_atom_types,
-            atomic_forces=atomic_forces,
-            num_f_components=num_f_components,
-            num_entries=num_entries)
-  )
+    configs = get_configs(for_training=for_training, dataset_name=dataset_name)
+    shape = configs["shape"]
+    cnk = shape[0]
+    ck2 = shape[1]
+    num_atom_types = configs["num_atom_types"]
+    atomic_forces = configs["atomic_forces_enabled"]
+    if atomic_forces:
+      num_f_components, num_entries = configs["indexing_shape"]
+    else:
+      num_f_components, num_entries = None, None
 
-  # Repeat the dataset
-  dataset = dataset.repeat(count=num_epochs)
+    # Initialize a basic dataset
+    dataset = TFRecordDataset([tfrecods_file]).map(
+      partial(decode_protobuf,
+              cnk=cnk,
+              ck2=ck2,
+              num_atom_types=num_atom_types,
+              atomic_forces=atomic_forces,
+              num_f_components=num_f_components,
+              num_entries=num_entries)
+    )
 
-  # Shuffle it if needed
-  if shuffle:
-    dataset = dataset.shuffle(buffer_size=100000, seed=SEED)
+    # Repeat the dataset
+    dataset = dataset.repeat(count=num_epochs)
 
-  # Setup the batch
-  dataset = dataset.batch(batch_size)
+    # Shuffle it if needed
+    if shuffle:
+      dataset = dataset.shuffle(buffer_size=10000, seed=SEED)
 
-  iterator = dataset.make_one_shot_iterator()
-  return iterator.get_next()
+    # Setup the batch
+    dataset = dataset.batch(batch_size)
+
+    iterator = dataset.make_one_shot_iterator()
+    return iterator.get_next()
