@@ -245,7 +245,9 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
     num_epochs=num_epochs,
     batch_size=FLAGS.batch_size,
   )
-  configs = pipeline.get_configs(for_training=for_training, dataset_name=dataset_name)
+  configs = pipeline.get_configs(
+    for_training=for_training, dataset_name=dataset_name
+  )
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
@@ -269,8 +271,7 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
     y_calc, f_calc = kcnn(
       batch[BatchIndex.inputs],
       batch[BatchIndex.occurs],
-      batch[BatchIndex.occurs],
-      atomic_forces=True,
+      batch[BatchIndex.weights],
       coefficients=batch[BatchIndex.coefficients],
       indexing=batch[BatchIndex.indices],
       **params,
