@@ -36,7 +36,7 @@ tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.01,
                           """Set the parameter `alpha` for `lrelu`.""")
-tf.app.flags.DEFINE_string('normalizer', None,
+tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
 tf.app.flags.DEFINE_float('floss_weight', 1.0,
