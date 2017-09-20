@@ -255,5 +255,5 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
   # Setup the batch
   dataset = dataset.batch(batch_size)
 
-  iterator = dataset.make_one_shot_initializer()
+  iterator = dataset.make_one_shot_iterator()
   return iterator.get_next()
