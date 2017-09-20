@@ -232,6 +232,7 @@ def train_with_multiple_gpus():
     tower_grads = []
     summaries = []
     loss = None
+    batchnorm_updates = []
     reuse_variables = False
 
     for i in range(FLAGS.num_gpus):
@@ -248,6 +249,14 @@ def train_with_multiple_gpus():
 
           # Retain the summaries from the final tower.
           summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+
+          # Retain the Batch Normalization updates operations only from the
+          # final tower. Ideally, we should grab the updates from all towers
+          # but these stats accumulate extremely fast so we can ignore the
+          # other stats from the other towers without significant detriment.
+          if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
+            batchnorm_updates = tf.get_collection(
+              tf.GraphKeys.UPDATE_OPS, scope)
 
           # Calculate the gradients for the batch of data on this CIFAR tower.
           grads = opt.compute_gradients(loss)
@@ -277,7 +286,12 @@ def train_with_multiple_gpus():
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.
-    train_op = tf.group(apply_gradient_op, variables_averages_op)
+    if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
+      batchnorm_updates_op = tf.group(*batchnorm_updates)
+      train_op = tf.group(
+        batchnorm_updates_op, apply_gradient_op, variables_averages_op)
+    else:
+      train_op = tf.group(apply_gradient_op, variables_averages_op)
 
     # Save the training flags
     save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))

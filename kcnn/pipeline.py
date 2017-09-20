@@ -268,7 +268,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
 
     # Shuffle it if needed
     if shuffle:
-      dataset = dataset.shuffle(buffer_size=10000, seed=SEED)
+      dataset = dataset.shuffle(buffer_size=1000 + 3 * batch_size, seed=SEED)
 
     # Setup the batch
     dataset = dataset.batch(batch_size)
