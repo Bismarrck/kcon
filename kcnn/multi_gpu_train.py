@@ -10,10 +10,11 @@ import re
 import time
 import constants
 import kcnn
+import pipeline
 from datetime import datetime
 from os.path import join
 from constants import LOSS_MOVING_AVERAGE_DECAY
-from kcnn import extract_configs, next_batch, get_configs, BatchIndex
+from kcnn import extract_configs, BatchIndex
 from kcnn import kcnn as inference
 from save_model import save_model
 from utils import set_logging_configs, save_training_flags
@@ -214,12 +215,12 @@ def train_with_multiple_gpus():
 
     # Initialize the input pipeline.
     total_batch_size = FLAGS.batch_size * FLAGS.num_gpus
-    batch = next_batch(train=True,
-                       shuffle=True,
-                       dataset_name=FLAGS.dataset,
-                       num_epochs=FLAGS.num_epochs,
-                       batch_size=total_batch_size)
-    configs = get_configs(train=True)
+    batch = pipeline.next_batch(for_training=True,
+                                shuffle=True,
+                                dataset_name=FLAGS.dataset,
+                                num_epochs=FLAGS.num_epochs,
+                                batch_size=total_batch_size)
+    configs = pipeline.get_configs(for_training=True)
     params = extract_configs(configs, for_training=True)
 
     # Split the batch for each tower

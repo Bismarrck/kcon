@@ -8,6 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import time
 import kcnn
+import pipeline
 from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
@@ -98,9 +99,14 @@ def train_model():
         Initialization method.
         """
         super(RunHook, self).__init__()
+
+        # Get the total number of training examples
+        num_examples = pipeline.get_dataset_size(FLAGS.dataset)
+
         self._step = -1
         self._start_time = 0
         self._epoch = 0.0
+        self._epoch_per_step = FLAGS.batch_size / num_examples
         self._log_frequency = FLAGS.log_frequency
         self._should_freeze = should_freeze
         self._freeze_frequency = FLAGS.freeze_frequency
@@ -126,7 +132,7 @@ def train_model():
 
         """
         self._step += 1
-        self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
+        self._epoch = self._step * self._epoch_per_step
         self._start_time = time.time()
 
         if not self._atomic_forces:
@@ -227,9 +233,7 @@ def train_model():
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
-        hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
-               tf.train.NanTensorHook(total_loss),
-               RunHook(should_freeze=export_graph,
+        hooks=[RunHook(should_freeze=export_graph,
                        atomic_forces=FLAGS.forces),
                TimelineHook()],
         scaffold=scaffold,
@@ -237,14 +241,17 @@ def train_model():
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
       while not mon_sess.should_stop():
-        if FLAGS.timeline:
-          mon_sess.run(
-            train_op,
-            options=run_options,
-            run_metadata=run_meta
-          )
-        else:
-          mon_sess.run(train_op)
+        try:
+          if FLAGS.timeline:
+            mon_sess.run(
+              train_op, options=run_options, run_metadata=run_meta
+            )
+          else:
+            mon_sess.run(train_op)
+        except tf.errors.OutOfRangeError:
+          tf.logging.info(
+            "Stop this training after {} epochs.".format(FLAGS.num_epochs))
+          break
 
   # Do not forget to export the final model
   if export_graph:

@@ -86,48 +86,6 @@ class BatchIndex:
   indices = 7
 
 
-def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None,
-               batch_size=None):
-  """
-  Construct input for k-body evaluation using the Reader ops.
-
-  Args:
-    train: a `bool` indicating if one should use the train or eval data set.
-    shuffle: a `bool` indicating if the batches shall be shuffled or not.
-    dataset_name: a `str` as the dataset to use.
-    num_epochs: an `int` as the maximum number of epochs to run.
-    batch_size: an `int` as the size of each batch. If None, FLAGS.batch_size
-      will be used.
-
-  Returns:
-    next_element: a tuple of Tensors.
-
-  """
-  return pipeline.next_batch(
-    for_training=train,
-    batch_size=batch_size or FLAGS.batch_size,
-    shuffle=shuffle,
-    dataset_name=dataset_name,
-    num_epochs=num_epochs,
-  )
-
-
-def get_configs(train=True, dataset_name=None):
-  """
-  Return the configs for inputs.
-
-  Args:
-    train: boolean indicating if one should return the training settings or
-      validation settings.
-    dataset_name: a `str` as the name of the dataset.
-
-  Returns:
-    configs: a `dict` as the configs for the dataset.
-
-  """
-  return pipeline.get_configs(train=train, dataset_name=dataset_name)
-
-
 def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
          kbody_terms=(), is_training=True, reuse=False, num_kernels=None,
          verbose=True, one_body_weights=None, atomic_forces=False,
@@ -280,13 +238,14 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
       weighted RMSE loss.
 
   """
-  batch = next_batch(
-    train=for_training,
+  batch = pipeline.next_batch(
+    for_training=for_training,
     dataset_name=dataset_name,
     shuffle=for_training,
-    num_epochs=num_epochs
+    num_epochs=num_epochs,
+    batch_size=FLAGS.batch_size,
   )
-  configs = get_configs(train=for_training, dataset_name=dataset_name)
+  configs = pipeline.get_configs(for_training=for_training, dataset_name=dataset_name)
   params = extract_configs(configs, for_training=for_training)
   for key, val in kwargs.items():
     if key in params:
