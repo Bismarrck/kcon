@@ -349,6 +349,9 @@ def train_with_multiple_gpus():
         if step % FLAGS.freeze_frequency == 0 or (step + 1) == max_steps:
           save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
+    else:
+      tf.logging.info('The maximum number of epochs already reached!')
+
     # Save the final model
     if FLAGS.freeze_frequency > 0:
       save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)

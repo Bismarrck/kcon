@@ -91,6 +91,10 @@ def train_model():
     # Save the training flags
     save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
 
+    # Get the total number of training examples
+    num_examples = pipeline.get_dataset_size(FLAGS.dataset)
+    max_steps = int(num_examples * FLAGS.num_epochs / FLAGS.batch_size)
+
     class RunHook(tf.train.SessionRunHook):
       """ Log loss and runtime and regularly freeze the model. """
 
@@ -99,10 +103,6 @@ def train_model():
         Initialization method.
         """
         super(RunHook, self).__init__()
-
-        # Get the total number of training examples
-        num_examples = pipeline.get_dataset_size(FLAGS.dataset)
-
         self._step = -1
         self._start_time = 0
         self._epoch = 0.0
@@ -235,7 +235,8 @@ def train_model():
         save_summaries_steps=FLAGS.save_frequency,
         hooks=[RunHook(should_freeze=export_graph,
                        atomic_forces=FLAGS.forces),
-               TimelineHook()],
+               TimelineHook(),
+               tf.train.StopAtStepHook(last_step=max_steps)],
         scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
@@ -262,14 +263,9 @@ def main(_):
   """
   The main function.
   """
-  if FLAGS.forces:
-    print("This module is only designed for training energy. To train the "
-          "forces please run `yf_train.py`.")
-
-  else:
-    if not tf.gfile.Exists(FLAGS.train_dir):
-      tf.gfile.MkDir(FLAGS.train_dir)
-    train_model()
+  if not tf.gfile.Exists(FLAGS.train_dir):
+    tf.gfile.MkDir(FLAGS.train_dir)
+  train_model()
 
 
 if __name__ == "__main__":
