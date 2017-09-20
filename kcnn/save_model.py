@@ -8,7 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import json
 from os.path import join
-from kcnn import kcnn, get_batch_configs
+from kcnn import kcnn, get_configs
 from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
@@ -96,7 +96,7 @@ def _inference(dataset_name, conv_sizes):
 
   with graph.as_default():
 
-    configs = get_batch_configs(train=True, dataset_name=dataset_name)
+    configs = get_configs(train=True, dataset_name=dataset_name)
     split_dims = configs["split_dims"]
     num_atom_types = configs["num_atom_types"]
     kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]

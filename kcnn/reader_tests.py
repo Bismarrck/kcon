@@ -15,7 +15,7 @@ from os import remove
 from functools import partial
 from sklearn.metrics import pairwise_distances
 from reader import y_inputs
-from build_dataset import exp_rmse_loss_fn
+from build_dataset import exponentially_weighted_loss
 from reader import FLAGS
 from database import Database
 from constants import hartree_to_ev, au_to_angstrom
@@ -117,7 +117,7 @@ def test_compute_loss_weight():
   )
 
   beta = 1.0 / 10.0
-  exp_loss_fn = partial(exp_rmse_loss_fn, x0=min_ener, beta=beta)
+  exp_loss_fn = partial(exponentially_weighted_loss, x0=min_ener, beta=beta)
 
   train_file = join(FLAGS.binary_dir, "{}-train.tfrecords".format(dataset))
   clf.transform_and_save(
