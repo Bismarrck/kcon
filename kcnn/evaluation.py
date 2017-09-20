@@ -32,6 +32,9 @@ tf.app.flags.DEFINE_boolean('output_acc_error', False,
                             """Output the accumulative error.""")
 
 
+# TODO: figure out what's wrong when restoring moving averaged variables.
+
+
 def get_eval_dir():
   """
   Return the evaluation dir.
