@@ -37,7 +37,8 @@ tf.app.flags.DEFINE_integer('log_frequency', 100,
                             the training progress wiil be logged.""")
 tf.app.flags.DEFINE_integer('freeze_frequency', 0,
                             """The frequency, in number of global steps, that
-                            the graph will be freezed and exported.""")
+                            the graph will be freezed and exported. Set this to
+                            0 to disable freezing.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
@@ -215,6 +216,7 @@ def train_with_multiple_gpus():
 
     # Initialize the input pipeline.
     total_batch_size = FLAGS.batch_size * FLAGS.num_gpus
+    num_examples = pipeline.get_dataset_size(FLAGS.dataset)
     batch = pipeline.next_batch(for_training=True,
                                 shuffle=True,
                                 dataset_name=FLAGS.dataset,
@@ -304,16 +306,21 @@ def train_with_multiple_gpus():
       if ckpt and ckpt.model_checkpoint_path:
         saver.restore(sess, ckpt.model_checkpoint_path)
         start_step = sess.run(global_step)
-
-    # Start the queue runners.
-    tf.train.start_queue_runners(sess=sess)
+    max_steps = FLAGS.num_epochs * num_examples / total_batch_size
 
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-    for step in range(start_step, FLAGS.max_steps):
+    for step in range(start_step, max_steps):
       start_time = time.time()
-      _, loss_value = sess.run([train_op, loss])
+
+      try:
+        _, loss_value = sess.run([train_op, loss])
+      except tf.errors.OutOfRangeError:
+        tf.logging.info(
+          "Stop this training after {} epochs.".format(FLAGS.max_epochs))
+        break
+
       duration = time.time() - start_time
 
       assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
@@ -322,7 +329,7 @@ def train_with_multiple_gpus():
         num_examples_per_step = FLAGS.batch_size * FLAGS.num_gpus
         examples_per_sec = num_examples_per_step / duration
         sec_per_batch = duration / FLAGS.num_gpus
-        epoch = step * num_examples_per_step / (FLAGS.num_examples * 0.8)
+        epoch = step * total_batch_size / num_examples
         format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
                      "(%8.1f examples/sec; %8.3f sec/batch)"
         tf.logging.info(format_str % (datetime.now(), step, epoch, loss_value,
@@ -338,17 +345,23 @@ def train_with_multiple_gpus():
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
 
-      if step > 0 and (step % FLAGS.freeze_frequency == 0
-                       or (step + 1) == FLAGS.max_steps):
-        save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
+      if FLAGS.freeze_frequency > 0 and step > 0:
+        if step % FLAGS.freeze_frequency == 0 or (step + 1) == max_steps:
+          save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
+
+    # Save the final model
+    if FLAGS.freeze_frequency > 0:
+      save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-def main(argv=None):
+def main(_):
+  """
+  The main function.
+  """
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)
   train_with_multiple_gpus()
 
 
 if __name__ == '__main__':
-  tf.app.run()
+  tf.app.run(main=main)
