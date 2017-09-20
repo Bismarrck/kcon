@@ -4,3 +4,4 @@ C9H7Nv1.xyz filter=lfs diff=lfs merge=lfs -text
 Bx-.xyz filter=lfs diff=lfs merge=lfs -text
 gdb9.xyz filter=lfs diff=lfs merge=lfs -text
 TiO2.xyz filter=lfs diff=lfs merge=lfs -text
+naphthalene20k.xyz filter=lfs diff=lfs merge=lfs -text

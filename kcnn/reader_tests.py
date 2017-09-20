@@ -14,7 +14,8 @@ from os.path import join, isfile, dirname
 from os import remove
 from functools import partial
 from sklearn.metrics import pairwise_distances
-from reader import inputs, exp_rmse_loss_fn
+from reader import y_inputs
+from build_dataset import exponentially_weighted_loss
 from reader import FLAGS
 from database import Database
 from constants import hartree_to_ev, au_to_angstrom
@@ -49,7 +50,7 @@ def test_build_dataset():
   """
   Test building the mixed QM7 dataset.
   """
-  l = 1.5
+  radius = 1.5
   dataset = 'qm7.test'
   xyzfile = join("..", "datasets", "qm7.xyz")
   database = Database.from_xyz(xyzfile, num_examples=7165, verbose=False)
@@ -68,7 +69,12 @@ def test_build_dataset():
 
   with tf.Session() as sess:
 
-    batch = inputs(train=True, shuffle=False, batch_size=5, dataset=dataset)
+    batch = y_inputs(
+      train=True,
+      shuffle=False,
+      batch_size=5,
+      dataset_name=dataset
+    )
     tf.train.start_queue_runners(sess=sess)
 
     # --------
@@ -78,7 +84,7 @@ def test_build_dataset():
     natoms = len(species)
     coords = coords[:natoms]
     dists = pairwise_distances(coords[:3])
-    v = np.sort(np.exp(-dists / l)[[0, 0, 1], [1, 2, 2]])
+    v = np.sort(np.exp(-dists / radius)[[0, 0, 1], [1, 2, 2]])
 
     # 0 is the starting index of `CCC`.
     assert np.linalg.norm(v - features[1, 0, 0]) < 0.001
@@ -111,7 +117,7 @@ def test_compute_loss_weight():
   )
 
   beta = 1.0 / 10.0
-  exp_loss_fn = partial(exp_rmse_loss_fn, x0=min_ener, beta=beta)
+  exp_loss_fn = partial(exponentially_weighted_loss, x0=min_ener, beta=beta)
 
   train_file = join(FLAGS.binary_dir, "{}-train.tfrecords".format(dataset))
   clf.transform_and_save(
@@ -124,7 +130,12 @@ def test_compute_loss_weight():
   y_true = [atoms.get_total_energy() for atoms in objects]
 
   with tf.Session() as sess:
-    batch = inputs(train=True, shuffle=False, batch_size=5, dataset=dataset)
+    batch = y_inputs(
+      train=True,
+      shuffle=False,
+      batch_size=5,
+      dataset_name=dataset
+    )
     tf.train.start_queue_runners(sess=sess)
     y_weights = sess.run(batch[4])
     for i in range(5):

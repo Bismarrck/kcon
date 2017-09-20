@@ -1,0 +1,50 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\hypersetup{
+	linkcolor=blue,
+	colorlinks=true
+}
+\usepackage{blkarray}
+\usepackage{caption}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amssymb, latexsym}
+\usepackage{sidecap}
+\usepackage{tikz}
+\usetikzlibrary{decorations.pathreplacing}
+
+
+
+\title{The theory and implementation of kCON}
+
+\author{Xin Chen}
+\date{\today}
+
+
+\begin{document}
+\maketitle
+
+
+\section{Overview}
+
+kCON is scalable and transferable deep learning framework for chemistry with the ability to 
+provide insight into atomistic structures of varying stoichiometry from small and scrap 
+training sets. kCON is built upon convolutional neural networks, or more specifically, 
+1D-convolutional neural networks with 1x1 convolutions.
+
+\begin{center}
+  \makebox[\textwidth]{\includegraphics[width=0.8\paperwidth]{images/figure1}}
+\end{center}
+
+\include{energy}
+\include{forces}
+
+\newpage
+
+\include{appendix}
+
+\end{document}

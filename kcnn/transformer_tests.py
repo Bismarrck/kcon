@@ -46,7 +46,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(clf.binary_weights.sum(),
                            float(shape[0]), delta=0.0001)
 
-    features = clf.transform(Atoms(species, coords))
+    features, _, _ = clf.transform(Atoms(species, coords))
     self.assertTupleEqual(features.shape, (5985, 6))
     orders = np.argsort(features[0, :]).tolist()
     self.assertListEqual(orders, list(range(6)))
@@ -74,7 +74,7 @@ class TransformerTest(tf.test.TestCase):
       kbody_terms=kbody_terms
     )
 
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     # 4CH + 6HH + 6CHH + 4HHH + (10 - 2) + (6 - 2) = 32
     self.assertTupleEqual(features.shape, (32, 3))
 
@@ -96,7 +96,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertEqual(len(clf.split_dims), num_terms)
     self.assertEqual(len(clf.kbody_terms), num_terms)
 
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     self.assertTupleEqual(features.shape, (18, 3))
     self.assertListEqual(clf.split_dims, [1, 1, 1, 6, 1, 1, 4, 1, 1, 1])
     self.assertAlmostEqual(np.sum(features[0:3, :]), 0.0, delta=epsilon)
@@ -138,7 +138,7 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(clf.binary_weights.sum(), 20.0, delta=0.0001)
 
     coords = get_example(6)
-    features = clf.transform(Atoms(clf.species, coords))
+    features, _, _ = clf.transform(Atoms(clf.species, coords))
     offsets = [0] + np.cumsum(clf.split_dims).tolist()
     selections = clf.kbody_selections
     self.assertEqual(features.shape[0], comb(20, k_max, exact=True))
@@ -171,22 +171,23 @@ class FixedLenMultiTransformerTest(tf.test.TestCase):
     k_max = 3
     clf = transformer.FixedLenMultiTransformer(
       max_occurs,
-      k_max=k_max
+      k_max=k_max,
+      include_all_k=False
     )
 
     species = get_species(max_occurs)
     coords = get_example(len(species))
-    features, split_dims, _, _ = clf.transform(Atoms(species, coords))
+    sample = clf.transform(Atoms(species, coords))
     total_dim = comb(max_natoms, k_max, True)
 
-    self.assertTupleEqual(features.shape, (total_dim, 3))
-    self.assertEqual(len(split_dims), 10)
+    self.assertTupleEqual(sample.features.shape, (total_dim, 3))
+    self.assertEqual(len(sample.split_dims), 10)
 
     species = get_species({"C": 1, "H": 4})
     coords = get_example(len(species))
-    features, split_dims_, _, _ = clf.transform(Atoms(species, coords))
-    self.assertListEqual(list(split_dims), list(split_dims_))
-    self.assertTupleEqual(features.shape, (total_dim, 3))
+    example = clf.transform(Atoms(species, coords))
+    self.assertListEqual(list(sample.split_dims), list(example.split_dims))
+    self.assertTupleEqual(example.features.shape, (total_dim, 3))
 
 
 if __name__ == "__main__":

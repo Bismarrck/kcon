@@ -57,3 +57,15 @@ LOSS_MOVING_AVERAGE_DECAY = 0.9
 # to differentiate the operations. Note that this prefix is removed from the
 # names of the summaries when visualizing a model.
 TOWER_NAME = 'tower'
+
+
+class KcnnGraphKeys:
+  """
+  Custom graph collections for kCON.
+
+  * `ENERGY_VARIABLES`: variables that should be updated during energy training.
+  * `FORCES_VARIABLES`: variables that should be updated during forces training.
+
+  """
+  ENERGY_VARIABLES = 'energy'
+  FORCES_VARIABLES = 'forces'

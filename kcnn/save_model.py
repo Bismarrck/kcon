@@ -7,8 +7,9 @@ from __future__ import print_function, absolute_import
 
 import tensorflow as tf
 import json
+import pipeline
 from os.path import join
-from kcnn import kcnn, get_batch_configs
+from kcnn import kcnn
 from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
@@ -24,6 +25,9 @@ tf.app.flags.DEFINE_string("checkpoint_dir", "./events",
 tf.app.flags.DEFINE_string("aux_nodes", None,
                            """Comma separated string as the names of the 
                            auxiliary nodes to expose.""")
+
+# FIXME: cannot freeze models with batch normalization enabled!
+# FIXME: this module is currently broken!
 
 
 def _get_transformer_repr(configs):
@@ -44,19 +48,24 @@ def _get_transformer_repr(configs):
             "norm_order": configs["norm_order"],
             "include_all_k": configs["include_all_k"],
             "periodic": configs["periodic"],
-            "max_occurs": configs["max_occurs"]}
+            "max_occurs": configs["max_occurs"],
+            "atomic_forces": configs["atomic_forces_enabled"]}
   return json.dumps(params)
 
 
-def _get_output_node_names():
+def _get_output_node_names(forces=False):
   """
   Return the names of the tensors that should be accessed.
   """
-  return ",".join(["Sum/1_and_k", "y_contribs", "one-body/weights",
-                   "one-body/convolution", "transformer/json",
-                   "placeholders/inputs", "placeholders/occurs",
-                   "placeholders/weights", "placeholders/split_dims",
-                   "placeholders/is_training"])
+  tensors = ["Sum/1_and_k", "y_contribs", "one-body/weights",
+             "one-body/convolution", "transformer/json",
+             "placeholders/inputs", "placeholders/occurs",
+             "placeholders/weights", "placeholders/split_dims"]
+
+  if forces:
+    tensors.extend(["placeholders/coefficients", "placeholders/indexing"])
+
+  return ",".join(tensors)
 
 
 def get_tensors_to_restore():
@@ -72,12 +81,12 @@ def get_tensors_to_restore():
           for name in _get_output_node_names().split(",")}
 
 
-def _inference(dataset, conv_sizes):
+def _inference(dataset_name, conv_sizes):
   """
   Inference a model of `KCNN` with inputs feeded from placeholders.
 
   Args:
-    dataset: a `str` as the name of the dataset.
+    dataset_name: a `str` as the name of the dataset.
     conv_sizes: a `str` of comma-separated integers as the numbers of kernels.
 
   Returns:
@@ -88,18 +97,21 @@ def _inference(dataset, conv_sizes):
 
   with graph.as_default():
 
-    configs = get_batch_configs(train=True, dataset=dataset)
+    configs = pipeline.get_configs(for_training=True, dataset_name=dataset_name)
     split_dims = configs["split_dims"]
     num_atom_types = configs["num_atom_types"]
     kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
     num_kernels = [int(units) for units in conv_sizes.split(",")]
+    atomic_forces = FLAGS.forces
+    ck2 = configs["shape"][1]
+    num_f, num_entries = configs["indexing_shape"]
 
     with tf.name_scope("transformer"):
       _ = tf.constant(_get_transformer_repr(configs), name="json")
 
     with tf.name_scope("placeholders"):
       inputs_ = tf.placeholder(
-        tf.float32, shape=(None, 1, None, 3), name="inputs")
+        tf.float32, shape=(None, 1, None, ck2), name="inputs")
       occurs_ = tf.placeholder(
         tf.float32, shape=(None, 1, 1, num_atom_types), name="occurs")
       weights_ = tf.placeholder(
@@ -108,9 +120,19 @@ def _inference(dataset, conv_sizes):
         tf.int64, shape=(len(split_dims, )), name="split_dims")
       is_training_ = tf.placeholder(tf.bool, name="is_training")
 
+      if atomic_forces:
+        coef_ = tf.placeholder(
+          tf.float32, shape=(None, None, ck2 * 6), name="coefficients")
+        indexing_ = tf.placeholder(
+          tf.int32, shape=(None, num_f, num_entries), name="indexing")
+      else:
+        coef_ = None
+        indexing_ = None
+
     kcnn(inputs_, occurs_, weights_, is_training=is_training_,
          split_dims=split_dims_, num_atom_types=num_atom_types,
-         kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False)
+         kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False,
+         atomic_forces=atomic_forces, coefficients=coef_, indexing=indexing_)
 
   return graph
 
@@ -140,6 +162,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
     # Restore the `moving averaged` model variables from the latest checkpoint.
     tf.global_variables_initializer().run()
     ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+
     if ckpt and ckpt.model_checkpoint_path:
       variable_averages = tf.train.ExponentialMovingAverage(
         VARIABLE_MOVING_AVERAGE_DECAY)
@@ -151,6 +174,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
       if verbose:
         print("Restore the latest checkpoint: {}".format(
           ckpt.model_checkpoint_path))
+
     else:
       raise IOError("Failed to restore the latest checkpoint!")
 

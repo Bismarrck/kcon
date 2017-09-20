@@ -6,20 +6,61 @@ Some utility functions.
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
+import numpy as np
+import logging
+import json
+from scipy.misc import factorial, comb
+from logging.config import dictConfig
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.contrib.framework import add_arg_scope
-
-import logging
-from logging.config import dictConfig
-
+from tensorflow.contrib.layers import variance_scaling_initializer
 from os import getpid
+from os.path import join
 from sys import platform
 from subprocess import Popen, PIPE
 from sys import version_info
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
+
+
+def compute_n_from_cnk(cnk, k):
+  """
+  Return the correponding N given C(N, k) and k.
+
+  Args:
+    cnk: an `int` as the value of C(N, k).
+    k: an `int` as the value of k.
+
+  Returns:
+    n: an `int` as the value of N.
+
+  """
+  if k == 2:
+    return int((1 + np.sqrt(1 + 8 * cnk)) * 0.5)
+  else:
+    istart = int(np.floor(np.power(factorial(k) * cnk, 1.0 / k)))
+    for v in range(istart, istart + k):
+      if comb(v, k) == cnk:
+        return v
+    else:
+      raise ValueError(
+        "The N for C(N, {}) = {} cannot be solved!".format(k, cnk))
+
+
+def safe_divide(a, b):
+  """
+  Safe division while ignoring / 0, div0( [-1, 0, 1], 0 ) -> [0, 0, 0].
+
+  References:
+     https://stackoverflow.com/questions/26248654/numpy-return-0-with-divide-by-zero
+
+  """
+  with np.errstate(divide='ignore', invalid='ignore'):
+    c = np.true_divide(a, b)
+    c[~ np.isfinite(c)] = 0  # -inf inf NaN
+  return c
 
 
 def get_atoms_from_kbody_term(kbody_term):
@@ -57,7 +98,7 @@ def lrelu(x, alpha=0.2, name=None):
     x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
       `int16`, or `int8`.
     alpha: a `Tensor` with type `float`, `double`.
-    name: a
+    name: a `str` as the name of this op.
 
   Returns:
     y: a `Tensor` with the same type as `x`.
@@ -67,6 +108,46 @@ def lrelu(x, alpha=0.2, name=None):
     alpha = ops.convert_to_tensor(alpha, dtype=tf.float32, name="alpha")
     z = math_ops.multiply(alpha, x, "z")
     return math_ops.maximum(z, x, name=name)
+
+
+def selu(x, name=None):
+  """
+  The Scaled Exponential Linear Units.
+
+  Args:
+    x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
+      `int16`, or `int8`.
+    name: a `str` as the name of this op.
+
+  Returns:
+    y: a `Tensor` with the same type as `x`.
+
+  References:
+    https://arxiv.org/pdf/1706.02515.pdf
+
+  """
+  with ops.name_scope(name, "selu", [x]):
+    alpha = 1.6732632423543772848170429916717
+    scale = 1.0507009873554804934193349852946
+    return scale * tf.where(x >= 0.0, x, alpha * tf.nn.elu(x))
+
+
+def selu_initializer(dtype=tf.float32, seed=None):
+  """
+  The weights initializer for selu activations.
+
+  Args:
+    seed: A Python integer. Used to create random seeds. See
+          @{tf.set_random_seed} for behavior.
+    dtype: The data type. Only floating point types are supported.
+
+  Returns:
+    An initializer for a weight matrix.
+
+  """
+  mode = 'FAN_IN'
+  return variance_scaling_initializer(
+    factor=1.0, mode=mode, dtype=dtype, seed=seed)
 
 
 def get_xargs(pid=None):
@@ -142,3 +223,17 @@ def set_logging_configs(debug=False, logfile="logfile"):
     "disable_existing_loggers": False
   }
   dictConfig(LOGGING_CONFIG)
+
+
+def save_training_flags(save_dir, args):
+  """
+  Save the training flags to the train_dir.
+  """
+  args["run_flags"] = " ".join(
+    ["--{}={}".format(k, v) for k, v in args.items()]
+  )
+  cmdline = get_xargs()
+  if cmdline:
+    args["cmdline"] = cmdline
+  with open(join(save_dir, "flags.json"), "w+") as f:
+    json.dump(args, f, indent=2)

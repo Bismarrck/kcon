@@ -1,0 +1,7 @@
+# Ignore texpad temporary files
+.texpadtmp/
+
+# Ignore latex auxiliary files
+*.aux
+*.out
+*.gz

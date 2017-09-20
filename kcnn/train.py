@@ -1,18 +1,19 @@
 # coding=utf-8
 """
-This script is used to train the kbody network.
+This script is used to train the kCON model using a single node with CPUs or
+a single GPU.
 """
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
-import json
 import time
 import kcnn
-from kcnn import kcnn_from_dataset as inference
+import pipeline
+from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
-from utils import get_xargs, set_logging_configs
+from utils import set_logging_configs, save_training_flags
 
 __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
@@ -23,15 +24,15 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('max_steps', 1000000,
-                            """The maximum number of training steps.""")
+tf.app.flags.DEFINE_integer('num_epochs', 1000,
+                            """The maximum number of training epochs.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """The frequency, in number of global steps, that
                             the training progress wiil be logged.""")
-tf.app.flags.DEFINE_integer('freeze_frequency', 100000,
+tf.app.flags.DEFINE_integer('freeze_frequency', 0,
                             """The frequency, in number of global steps, that
                             the graph will be freezed and exported.""")
 tf.app.flags.DEFINE_integer('max_to_keep', 50,
@@ -44,21 +45,6 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
-
-
-def save_training_flags():
-  """
-  Save the training flags to the train_dir.
-  """
-  args = dict(FLAGS.__dict__["__flags"])
-  args["run_flags"] = " ".join(
-    ["--{}={}".format(k, v) for k, v in args.items()]
-  )
-  cmdline = get_xargs()
-  if cmdline:
-    args["cmdline"] = cmdline
-  with open(join(FLAGS.train_dir, "flags.json"), "w+") as f:
-    json.dump(args, f, indent=2)
 
 
 def train_model():
@@ -76,39 +62,55 @@ def train_model():
     # Get the global step
     global_step = tf.contrib.framework.get_or_create_global_step()
 
-    # Inference the KCNN model
-    y_nn, y_true, y_weight = inference(
-      FLAGS.dataset, for_training=True
+    # Inference the kCON energy model
+    y_calc, y_true, y_weights, f_calc, f_true = kcnn_from_dataset(
+      FLAGS.dataset,
+      for_training=True,
+      num_epochs=FLAGS.num_epochs
     )
 
-    # Cast the true values to float32 and set the shape of the `y_pred`
-    # explicitly.
+    # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
     y_true = tf.cast(y_true, tf.float32)
-    y_nn.set_shape(y_true.get_shape().as_list())
+    y_calc.set_shape(y_true.get_shape().as_list())
 
     # Setup the loss function
-    loss = kcnn.loss(y_true, y_nn, y_weight)
+    y_loss = None
+    f_loss = None
 
-    # Build a Graph that trains the model with one batch of examples and
-    # updates the model parameters.
-    train_op = kbody.get_train_op(loss, global_step)
+    if not FLAGS.forces:
+      total_loss = kcnn.get_y_loss(y_true, y_calc, y_weights)
+
+    else:
+      total_loss, y_loss, f_loss = kcnn.get_yf_joint_loss(
+        y_true, y_calc, f_true, f_calc
+      )
+
+    # Build a Graph that trains the model with respect to energy only.
+    train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
     # Save the training flags
-    save_training_flags()
+    save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
 
-    class _RunHook(tf.train.SessionRunHook):
+    # Get the total number of training examples
+    num_examples = pipeline.get_dataset_size(FLAGS.dataset)
+    max_steps = int(num_examples * FLAGS.num_epochs / FLAGS.batch_size)
+
+    class RunHook(tf.train.SessionRunHook):
       """ Log loss and runtime and regularly freeze the model. """
 
-      def __init__(self):
+      def __init__(self, atomic_forces=False, should_freeze=True):
         """
         Initialization method.
         """
-        super(_RunHook, self).__init__()
+        super(RunHook, self).__init__()
         self._step = -1
         self._start_time = 0
         self._epoch = 0.0
+        self._epoch_per_step = FLAGS.batch_size / num_examples
         self._log_frequency = FLAGS.log_frequency
+        self._should_freeze = should_freeze
         self._freeze_frequency = FLAGS.freeze_frequency
+        self._atomic_forces = atomic_forces
 
       def begin(self):
         """
@@ -130,10 +132,17 @@ def train_model():
 
         """
         self._step += 1
-        self._epoch = self._step / (FLAGS.num_examples * 0.8 / FLAGS.batch_size)
+        self._epoch = self._step * self._epoch_per_step
         self._start_time = time.time()
-        return tf.train.SessionRunArgs({"loss": loss,
-                                        "global_step": global_step})
+
+        if not self._atomic_forces:
+          return tf.train.SessionRunArgs({"loss": total_loss,
+                                          "global_step": global_step})
+        else:
+          return tf.train.SessionRunArgs({"loss": total_loss,
+                                          "y_loss": y_loss,
+                                          "f_loss": f_loss,
+                                          "global_step": global_step})
 
       def should_log(self):
         """
@@ -145,7 +154,7 @@ def train_model():
         """
         Return True if we should freeze the current graph and values.
         """
-        return self._step % self._freeze_frequency == 0
+        return self._should_freeze and self._step % self._freeze_frequency == 0
 
       def after_run(self, run_context, run_values):
         """
@@ -167,12 +176,24 @@ def train_model():
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
-          format_str = "step %6d, epoch=%7.2f, loss = %10.6f " \
+
+          if not self._atomic_forces:
+            format_str = "step %6d, epoch=%7.2f, loss=%10.6f " \
                        "(%6.1f examples/sec; %7.3f sec/batch)"
-          tf.logging.info(
-            format_str % (self._step, self._epoch, loss_value,
-                          examples_per_sec, sec_per_batch)
-          )
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value,
+                            examples_per_sec, sec_per_batch)
+            )
+          else:
+            y_val = run_values.results['y_loss']
+            f_val = run_values.results['f_loss']
+
+            format_str = "step %6d, epoch=%7.2f, loss=%10.6f, y_loss=%10.6f, " \
+                         "f_loss = %10.6f (%6.1f examples/sec; %7.3f sec/batch)"
+            tf.logging.info(
+              format_str % (self._step, self._epoch, loss_value, y_val, f_val,
+                            examples_per_sec, sec_per_batch)
+            )
 
         if self.should_freeze():
           save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
@@ -183,11 +204,11 @@ def train_model():
       saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
 
     # noinspection PyMissingOrEmptyDocstring
-    class _TimelineHook(tf.train.SessionRunHook):
+    class TimelineHook(tf.train.SessionRunHook):
       """ A hook to output tracing results for further performance analysis. """
 
       def __init__(self):
-        super(_TimelineHook, self).__init__()
+        super(TimelineHook, self).__init__()
         self._counter = -1
 
       def begin(self):
@@ -207,33 +228,41 @@ def train_model():
           with open(self.get_ctf(), "w+") as f:
             f.write(ctf)
 
+    export_graph = True if FLAGS.freeze_frequency else False
+
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_summaries_steps=FLAGS.save_frequency,
-        hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
-               tf.train.NanTensorHook(loss),
-               _RunHook(),
-               _TimelineHook()],
+        hooks=[RunHook(should_freeze=export_graph,
+                       atomic_forces=FLAGS.forces),
+               TimelineHook(),
+               tf.train.StopAtStepHook(last_step=max_steps)],
         scaffold=scaffold,
         config=tf.ConfigProto(
           log_device_placement=FLAGS.log_device_placement)) as mon_sess:
 
       while not mon_sess.should_stop():
-        if FLAGS.timeline:
-          mon_sess.run(
-            train_op,
-            options=run_options,
-            run_metadata=run_meta
-          )
-        else:
-          mon_sess.run(train_op)
+        try:
+          if FLAGS.timeline:
+            mon_sess.run(
+              train_op, options=run_options, run_metadata=run_meta
+            )
+          else:
+            mon_sess.run(train_op)
+        except tf.errors.OutOfRangeError:
+          tf.logging.info(
+            "Stop this training after {} epochs.".format(FLAGS.num_epochs))
+          break
 
   # Do not forget to export the final model
-  save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
+  if export_graph:
+    save_model(FLAGS.train_dir, FLAGS.dataset, FLAGS.conv_sizes)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-def main(unused):
+def main(_):
+  """
+  The main function.
+  """
   if not tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.MkDir(FLAGS.train_dir)
   train_model()
