@@ -8,6 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import logging
+import json
 from scipy.misc import factorial, comb
 from logging.config import dictConfig
 from tensorflow.python.framework import ops
@@ -15,6 +16,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.contrib.framework import add_arg_scope
 from tensorflow.contrib.layers import variance_scaling_initializer
 from os import getpid
+from os.path import join
 from sys import platform
 from subprocess import Popen, PIPE
 from sys import version_info
@@ -221,3 +223,17 @@ def set_logging_configs(debug=False, logfile="logfile"):
     "disable_existing_loggers": False
   }
   dictConfig(LOGGING_CONFIG)
+
+
+def save_training_flags(save_dir, args):
+  """
+  Save the training flags to the train_dir.
+  """
+  args["run_flags"] = " ".join(
+    ["--{}={}".format(k, v) for k, v in args.items()]
+  )
+  cmdline = get_xargs()
+  if cmdline:
+    args["cmdline"] = cmdline
+  with open(join(save_dir, "flags.json"), "w+") as f:
+    json.dump(args, f, indent=2)

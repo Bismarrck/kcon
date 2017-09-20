@@ -6,14 +6,13 @@ a single GPU.
 from __future__ import print_function, absolute_import
 
 import tensorflow as tf
-import json
 import time
 import kcnn
 from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
-from utils import get_xargs, set_logging_configs
+from utils import set_logging_configs, save_training_flags
 
 __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
@@ -45,21 +44,6 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
-
-
-def save_training_flags():
-  """
-  Save the training flags to the train_dir.
-  """
-  args = dict(FLAGS.__dict__["__flags"])
-  args["run_flags"] = " ".join(
-    ["--{}={}".format(k, v) for k, v in args.items()]
-  )
-  cmdline = get_xargs()
-  if cmdline:
-    args["cmdline"] = cmdline
-  with open(join(FLAGS.train_dir, "flags.json"), "w+") as f:
-    json.dump(args, f, indent=2)
 
 
 def train_model():
@@ -104,7 +88,7 @@ def train_model():
     train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
     # Save the training flags
-    save_training_flags()
+    save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
 
     class RunHook(tf.train.SessionRunHook):
       """ Log loss and runtime and regularly freeze the model. """
