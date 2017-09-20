@@ -86,8 +86,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.
-  atomic_forces = params['atomic_forces_enabled']
-  if not atomic_forces:
+  if not FLAGS.forces:
     kcnn.get_y_loss(y_true, y_calc, weights=batch[BatchIndex.loss_weight])
 
   else:
@@ -196,7 +195,7 @@ def get_splits(batch, num_splits):
   tensors_splits = []
   for i in range(num_splits):
     tensors_splits.append((
-      inputs_splits[i], occurs_splits[i], y_true_splits[i], weights_splits[i],
+      inputs_splits[i], y_true_splits[i], occurs_splits[i], weights_splits[i],
       y_weight_splits[i], f_true_splits[i], coef_splits[i], indexing_splits[i]
     ))
   return tensors_splits
@@ -326,7 +325,7 @@ def train_with_multiple_gpus():
       if ckpt and ckpt.model_checkpoint_path:
         saver.restore(sess, ckpt.model_checkpoint_path)
         start_step = sess.run(global_step)
-    max_steps = FLAGS.num_epochs * num_examples / total_batch_size
+    max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size)
 
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
@@ -338,7 +337,7 @@ def train_with_multiple_gpus():
         _, loss_value = sess.run([train_op, loss])
       except tf.errors.OutOfRangeError:
         tf.logging.info(
-          "Stop this training after {} epochs.".format(FLAGS.max_epochs))
+          "Stop this training after {} epochs.".format(FLAGS.num_epochs))
         break
 
       duration = time.time() - start_time
@@ -361,7 +360,7 @@ def train_with_multiple_gpus():
 
       # Save the model checkpoint periodically.
       if step % (20 // FLAGS.num_gpus * FLAGS.save_frequency) == 0 or \
-              (step + 1) == FLAGS.max_steps:
+              (step + 1) == max_steps:
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
 

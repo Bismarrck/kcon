@@ -246,8 +246,8 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     cnk = shape[0]
     ck2 = shape[1]
     num_atom_types = configs["num_atom_types"]
-    atomic_forces = configs["atomic_forces_enabled"]
-    if atomic_forces:
+
+    if FLAGS.forces:
       num_f_components, num_entries = configs["indexing_shape"]
     else:
       num_f_components, num_entries = None, None
@@ -258,7 +258,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
               cnk=cnk,
               ck2=ck2,
               num_atom_types=num_atom_types,
-              atomic_forces=atomic_forces,
+              atomic_forces=FLAGS.forces,
               num_f_components=num_f_components,
               num_entries=num_entries)
     )
