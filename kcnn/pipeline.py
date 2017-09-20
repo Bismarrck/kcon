@@ -183,22 +183,38 @@ def decode_protobuf(example_proto, cnk=None, ck2=None, num_atom_types=None,
                          y_weight=y_weight)
 
 
-def get_configs(train=True, dataset_name=None):
+def get_configs(for_training=True, dataset_name=None):
   """
   Return the configs for inputs.
 
   Args:
-    train: boolean indicating if one should return settings for training or
-      validation.
+    for_training: boolean indicating if one should return settings for training
+      or validation.
     dataset_name: a `str` as the name of the dataset.
 
   Returns:
     configs: a `dict` of configs.
 
   """
-  _, json_file = get_filenames(train=train, dataset_name=dataset_name)
+  _, json_file = get_filenames(train=for_training, dataset_name=dataset_name)
   with open(json_file) as f:
     return dict(json.load(f))
+
+
+def get_dataset_size(dataset_name, for_training=True):
+  """
+  Return the total number of examples in the given datatset.
+
+  Args:
+    dataset_name: a `str` as the name of the dataset.
+    for_training: a `bool` indicating whether we should return the size of the
+      training set or validation set.
+
+  Returns:
+    num_examples: an `int` as the number of examples in the dataset.
+
+  """
+  return len(get_configs(for_training, dataset_name)['lookup_indices'])
 
 
 def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
@@ -223,7 +239,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     dataset_name=dataset_name
   )
 
-  configs = get_configs(train=for_training, dataset_name=dataset_name)
+  configs = get_configs(for_training=for_training, dataset_name=dataset_name)
   shape = configs["shape"]
   cnk = shape[0]
   ck2 = shape[1]
