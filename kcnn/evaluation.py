@@ -32,6 +32,13 @@ tf.app.flags.DEFINE_boolean('output_acc_error', False,
                             """Output the accumulative error.""")
 
 
+def get_eval_dir():
+  """
+  Return the evaluation dir.
+  """
+  return join(FLAGS.checkpoint_dir, "eval")
+
+
 def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
               summary_op):
   """
@@ -188,12 +195,12 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
     coord.join(threads, stop_grace_period_secs=10)
 
 
-def evaluate():
+def evaluate(eval_dir):
   """Eval CIFAR-10 for a number of steps."""
 
   set_logging_configs(
     debug=False,
-    logfile=join(FLAGS.checkpoint_dir, "eval", FLAGS.logfile)
+    logfile=join(eval_dir, FLAGS.logfile)
   )
 
   with tf.Graph().as_default() as graph:
@@ -216,7 +223,7 @@ def evaluate():
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, graph)
+    summary_writer = tf.summary.FileWriter(eval_dir, graph)
 
     while True:
       eval_once(
@@ -231,9 +238,10 @@ def main(_):
   """
   The main function.
   """
-  if not tf.gfile.Exists(FLAGS.eval_dir):
-    tf.gfile.MakeDirs(FLAGS.eval_dir)
-  evaluate()
+  eval_dir = get_eval_dir()
+  if not tf.gfile.Exists(eval_dir):
+    tf.gfile.MakeDirs(eval_dir)
+  evaluate(eval_dir)
 
 
 if __name__ == '__main__':
