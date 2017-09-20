@@ -524,10 +524,12 @@ class Transformer:
         # cannot be used here because it will return absolute values.
         ndim = len(dists)
         delta = np.zeros((ndim, ndim, 3))
+        # Based on my tests, the vector subtraction used here should be:
+        #  r_{ij} = r_{i} - r_{j}.
         for i in range(ndim):
           for j in range(i + 1, ndim):
-            delta[i, j, :] = coords[j] - coords[i]
-            delta[j, i, :] = coords[j] - coords[i]
+            delta[i, j, :] = coords[i] - coords[j]
+            delta[j, i, :] = coords[i] - coords[j]
     else:
       atoms = Atoms(
         symbols=self._species,
