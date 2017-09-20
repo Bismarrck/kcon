@@ -180,12 +180,18 @@ def get_splits(batch, num_splits):
     num_or_size_splits=num_splits, value=batch[BatchIndex.weights])
   y_weight_splits = tf.split(
     num_or_size_splits=num_splits, value=batch[BatchIndex.loss_weight])
-  f_true_splits = tf.split(
-    num_or_size_splits=num_splits, value=batch[BatchIndex.f_true])
-  coef_splits = tf.split(
-    num_or_size_splits=num_splits, value=batch[BatchIndex.coefficients])
-  indexing_splits = tf.split(
-    num_or_size_splits=num_splits, value=batch[BatchIndex.indices])
+
+  if FLAGS.forces:
+    f_true_splits = tf.split(
+      num_or_size_splits=num_splits, value=batch[BatchIndex.f_true])
+    coef_splits = tf.split(
+      num_or_size_splits=num_splits, value=batch[BatchIndex.coefficients])
+    indexing_splits = tf.split(
+      num_or_size_splits=num_splits, value=batch[BatchIndex.indices])
+  else:
+    f_true_splits = [None] * num_splits
+    coef_splits = [None] * num_splits
+    indexing_splits = [None] * num_splits
 
   tensors_splits = []
   for i in range(num_splits):
