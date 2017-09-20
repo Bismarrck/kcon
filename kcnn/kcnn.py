@@ -11,6 +11,7 @@ from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
 from utils import lrelu, selu, selu_initializer
+from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -166,11 +167,12 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
   num_kernels = num_kernels or (40, 50, 60, 40)
 
   activation_fn = get_activation_fn(FLAGS.activation_fn)
-  alpha = FLAGS.alpha
+  weights_initializer = None
+
   if FLAGS.activation_fn == 'selu':
     weights_initializer = selu_initializer(seed=SEED)
-  else:
-    weights_initializer = None
+  elif FLAGS.activation_fn == 'lrelu':
+    activation_fn = partial(activation_fn, FLAGS.alpha)
 
   trainable = not FLAGS.fixed_one_body
   if FLAGS.normalizer.lower() == 'none':
@@ -198,7 +200,6 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
       max_k=FLAGS.k_max,
       num_kernels=num_kernels,
       activation_fn=activation_fn,
-      alpha=alpha,
       normalizer=normalizer,
       weights_initializer=weights_initializer,
       one_body_weights=one_body_weights,

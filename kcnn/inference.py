@@ -14,7 +14,6 @@ from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
 from constants import KcnnGraphKeys, SEED
 from utils import lrelu
-from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -26,8 +25,7 @@ BATCH_NORM_DECAY_FACTOR = 0.999
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                          reuse=False, normalizer='bias', activation_fn=lrelu,
-                         activation_params=(), weights_initializer=None,
-                         num_kernels=None):
+                         weights_initializer=None, num_kernels=None):
   """
   Infer the k-body term of `KCNN`.
 
@@ -71,9 +69,6 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   normalizer_params = {}
   collections = [KcnnGraphKeys.FORCES_VARIABLES,
                  KcnnGraphKeys.ENERGY_VARIABLES]
-
-  if len(activation_params) > 0:
-    activation_fn = partial(activation_fn, *activation_params)
 
   if normalizer == 'bias':
     biases_initializer = init_ops.zeros_initializer()
@@ -272,7 +267,7 @@ def _split_inputs(inputs, split_dims):
 def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
                      kbody_terms, is_training, max_k=3, reuse=False,
                      verbose=True, num_kernels=None, activation_fn=lrelu,
-                     alpha=0.2, normalizer='bias', weights_initializer=None,
+                     normalizer='bias', weights_initializer=None,
                      one_body_weights=None, trainable_one_body=True,
                      add_summary=True):
   """
@@ -296,7 +291,6 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     num_kernels: a `Tuple[int]` as the number of kernels of the convolution
       layers. This also determines the number of layers in each atomic network.
     activation_fn: a `Callable` as the activation function.
-    alpha: a `float` as the parameter alpha for Leaky ReLU.
     normalizer: a `str` as the normalizer to use. Supported normalizers include:
       'bias' (default), 'batch_norm', 'layer_norm' and None.
     weights_initializer: a `Callable` as the function to initialize weights.
@@ -332,7 +326,6 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
           kbody_term=kbody_terms[i],
           ck2=num_cols,
           activation_fn=activation_fn,
-          activation_params=(alpha, ),
           reuse=reuse,
           normalizer=normalizer,
           weights_initializer=weights_initializer,
