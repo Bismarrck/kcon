@@ -389,7 +389,7 @@ def print_activations(tensor):
     tensor: a Tensor.
 
   """
-  dims = ",".join(["{:16d}".format(dim if dim is not None else -1)
+  dims = ",".join(["{:6d}".format(dim if dim is not None else -1)
                    for dim in tensor.get_shape().as_list()])
   tf.logging.info("%-36s : [%s]" % (tensor.op.name, dims))
 
