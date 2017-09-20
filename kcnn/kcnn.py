@@ -86,7 +86,8 @@ class BatchIndex:
   indices = 7
 
 
-def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None):
+def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None,
+               batch_size=None):
   """
   Construct input for k-body evaluation using the Reader ops.
 
@@ -95,6 +96,8 @@ def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None):
     shuffle: a `bool` indicating if the batches shall be shuffled or not.
     dataset_name: a `str` as the dataset to use.
     num_epochs: an `int` as the maximum number of epochs to run.
+    batch_size: an `int` as the size of each batch. If None, FLAGS.batch_size
+      will be used.
 
   Returns:
     next_element: a tuple of Tensors.
@@ -102,7 +105,7 @@ def next_batch(train=True, shuffle=True, dataset_name=None, num_epochs=None):
   """
   return pipeline.next_batch(
     for_training=train,
-    batch_size=FLAGS.batch_size,
+    batch_size=batch_size or FLAGS.batch_size,
     shuffle=shuffle,
     dataset_name=dataset_name,
     num_epochs=num_epochs,
@@ -339,7 +342,7 @@ def get_y_loss(y_true, y_nn, weights=None):
       y_true, y_nn, scope="MSE", loss_collection=None, weights=weights)
     rmse = tf.sqrt(mean_squared_error, name="RMSE")
     tf.add_to_collection('losses', rmse)
-    return tf.add_n(tf.get_collection('losses'), name='total_loss')
+    return tf.add_n(tf.get_collection('losses'), name='total')
 
 
 def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
