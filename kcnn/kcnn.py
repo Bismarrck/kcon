@@ -38,6 +38,8 @@ tf.app.flags.DEFINE_string('normalizer', 'bias',
                            'layer_norm' or 'None'. """)
 tf.app.flags.DEFINE_float('floss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
+tf.app.flags.DEFINE_boolean('mse', False,
+                            """Use MSE loss instead of RMSE loss if True.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -293,10 +295,11 @@ def get_y_loss(y_true, y_nn, weights=None):
   with tf.name_scope("yRMSE"):
     if weights is None:
       weights = tf.constant(1.0, name='weight')
-    mean_squared_error = tf.losses.mean_squared_error(
+    loss = tf.losses.mean_squared_error(
       y_true, y_nn, scope="MSE", loss_collection=None, weights=weights)
-    rmse = tf.sqrt(mean_squared_error, name="RMSE")
-    tf.add_to_collection('losses', rmse)
+    if not FLAGS.mse:
+      loss = tf.sqrt(loss, name="RMSE")
+    tf.add_to_collection('losses', loss)
     return tf.add_n(tf.get_collection('losses'), name='total')
 
 
@@ -321,23 +324,25 @@ def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
   with tf.name_scope("yfRMSE"):
 
     with tf.name_scope("forces"):
-      f_mse = tf.losses.mean_squared_error(
+      f_loss = tf.losses.mean_squared_error(
         f_true,
         f_nn,
         scope="fMSE",
         loss_collection=None,
       )
-      f_rmse = tf.sqrt(f_mse, name="fRMSE")
-      f_loss = tf.multiply(f_rmse, FLAGS.floss_weight, name="f_loss")
+      if not FLAGS.mse:
+        f_loss = tf.sqrt(f_loss, name="fRMSE")
+      f_loss = tf.multiply(f_loss, FLAGS.floss_weight, name="f_loss")
 
     with tf.name_scope("energy"):
-      y_mse = tf.losses.mean_squared_error(
+      y_loss = tf.losses.mean_squared_error(
         y_true,
         y_nn,
         scope="yMSE",
         loss_collection=None,
       )
-      y_loss = tf.sqrt(y_mse, name="yRMSE")
+      if not FLAGS.mse:
+        y_loss = tf.sqrt(y_loss, name="yRMSE")
 
     with tf.name_scope("losses"):
       tf.summary.scalar("y", y_loss)
