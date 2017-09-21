@@ -9,6 +9,7 @@ import tensorflow as tf
 import numpy as np
 import logging
 import json
+import time
 from scipy.misc import factorial, comb
 from logging.config import dictConfig
 from tensorflow.python.framework import ops
@@ -232,5 +233,6 @@ def save_training_flags(save_dir, args):
   cmdline = get_xargs()
   if cmdline:
     args["cmdline"] = cmdline
-  with open(join(save_dir, "flags.json"), "w+") as f:
+  timestamp = "{}".format(int(time.time()))
+  with open(join(save_dir, "flags.{}.json".format(timestamp)), "w+") as f:
     json.dump(args, f, indent=2)
