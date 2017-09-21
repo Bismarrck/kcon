@@ -369,7 +369,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
         print_activations(y_total_kbody)
       y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
       if add_summary:
-        tf.summary.scalar("logEk", tf.reduce_mean(y_total_kbody, name="avgEk"))
+        tf.summary.scalar("Ek", tf.reduce_mean(y_total_kbody, name="avgEk"))
     with tf.name_scope("1body"):
       y_total_1body = tf.squeeze(one_body, name="squeeze")
       if add_summary:
