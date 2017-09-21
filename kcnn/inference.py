@@ -363,17 +363,19 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
   # This is why we call this network `KCNN`.
   with tf.name_scope("Sum"):
     with tf.name_scope("kbody"):
-      y_total_kbody = tf.reduce_sum(contribs, axis=2, name="Total")
+      y_total_kbody = tf.reduce_sum(contribs, axis=2, name="total")
       y_total_kbody.set_shape([None, 1, 1])
       if verbose:
         print_activations(y_total_kbody)
       y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
       if add_summary:
-        tf.summary.scalar("kbody_mean", tf.reduce_mean(y_total_kbody))
+        tf.summary.scalar("logEk", tf.reduce_mean(y_total_kbody, name="avgEk"))
     with tf.name_scope("1body"):
       y_total_1body = tf.squeeze(one_body, name="squeeze")
       if add_summary:
-        tf.summary.scalar('1body_mean', tf.reduce_mean(y_total_1body))
+        tf.summary.scalar(
+          'logE1', tf.log(
+            tf.reduce_mean(y_total_1body, name="avgE1"), name="log"))
     y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
 
   if verbose:
