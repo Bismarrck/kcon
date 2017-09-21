@@ -11,7 +11,6 @@ from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
 from utils import lrelu, selu, selu_initializer
-from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -24,7 +23,7 @@ tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
 tf.app.flags.DEFINE_float('learning_rate', 0.0001,
                           """The learning rate for minimizing energy.""")
-tf.app.flags.DEFINE_string('conv_sizes', '40,50,60,40',
+tf.app.flags.DEFINE_string('conv_sizes', '40,60,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
@@ -34,8 +33,6 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
-tf.app.flags.DEFINE_float('alpha', 0.01,
-                          """Set the parameter `alpha` for `lrelu`.""")
 tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
@@ -58,7 +55,7 @@ def get_activation_fn(name='lrelu'):
     return tf.nn.tanh
   elif name.lower() == 'relu':
     return tf.nn.relu
-  elif name.lower() == 'leaky_relu' or name.lower() == 'lrelu':
+  elif name.lower() == 'lrelu':
     return lrelu
   elif name.lower() == 'softplus':
     return tf.nn.softplus
@@ -132,8 +129,6 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
 
   if FLAGS.activation_fn == 'selu':
     weights_initializer = selu_initializer(seed=SEED)
-  elif FLAGS.activation_fn == 'lrelu':
-    activation_fn = partial(activation_fn, FLAGS.alpha)
 
   trainable = not FLAGS.fixed_one_body
   if FLAGS.normalizer.lower() == 'none':

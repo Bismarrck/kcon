@@ -13,7 +13,6 @@ from scipy.misc import factorial, comb
 from logging.config import dictConfig
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
-from tensorflow.contrib.framework import add_arg_scope
 from tensorflow.contrib.layers import variance_scaling_initializer
 from os import getpid
 from os.path import join
@@ -86,10 +85,9 @@ def get_atoms_from_kbody_term(kbody_term):
   return atoms
 
 
-@add_arg_scope
-def lrelu(x, alpha=0.2, name=None):
+def lrelu(x, name=None):
   """
-  A simple implementation of leaky relu.
+  The leaky relu activation function.
 
   `f(x) = alpha * x for x < 0`,
   `f(x) = x for x >= 0`.
@@ -97,7 +95,6 @@ def lrelu(x, alpha=0.2, name=None):
   Args:
     x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
       `int16`, or `int8`.
-    alpha: a `Tensor` with type `float`, `double`.
     name: a `str` as the name of this op.
 
   Returns:
@@ -105,7 +102,7 @@ def lrelu(x, alpha=0.2, name=None):
 
   """
   with ops.name_scope(name, "LRelu", [x]) as name:
-    alpha = ops.convert_to_tensor(alpha, dtype=tf.float32, name="alpha")
+    alpha = ops.convert_to_tensor(0.01, dtype=tf.float32, name="alpha")
     z = math_ops.multiply(alpha, x, "z")
     return math_ops.maximum(z, x, name=name)
 
