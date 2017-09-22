@@ -9,7 +9,7 @@ Currently two types of **XYZ** files are supported.
 * **xyz**: the default XYZ format. Atomic forces are not included.
 * **ase**: an extension of the origin XYZ format. Atomic forces, periodic boundary conditions and cell parameters are all included.
 
-### 1. xyz
+### a) xyz
 
 ```
 5
@@ -30,7 +30,7 @@ These default datasets are in **xyz** format:
 5. gdb9
 6. Bx-
 
-### 2. ase
+### b) ase
 
 ```
 9
@@ -51,6 +51,8 @@ These default datasets are in **xyz** format:
 1. naphthalene20k
 2. md3k
 3. ethanol10k
+
+### c) How to build a dataset
 
 To build a dataset, we can run the following command:
 
@@ -94,7 +96,7 @@ python -u train.py --dataset=ethanol10k --num_epochs=1000 --log_frequency=5 \
 ```
 
 The training may take a few or tens of hours. So if the node doesn't have a job
-batch system, one can use ``nohup`` to do backgroud training:
+batch system, one can use `nohup` to do background training:
 
 ```bash
 nohup python -u train.py --dataset=ethanol10k --num_epochs=1000 \
