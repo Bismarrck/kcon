@@ -40,6 +40,9 @@ tf.app.flags.DEFINE_float('floss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
 tf.app.flags.DEFINE_boolean('mse', False,
                             """Use MSE loss instead of RMSE loss if True.""")
+tf.app.flags.DEFINE_float('l2', None,
+                          """Set the lambda of the l2 loss. If None, 
+                          l2 regularizer is disabled.""")
 
 
 def get_activation_fn(name='lrelu'):
@@ -352,6 +355,9 @@ def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
     tf.add_to_collection("losses", loss)
     total_loss = tf.add_n(tf.get_collection("losses"), name="total")
 
+    if FLAGS.l2 is not None:
+      total_loss = _add_l2_regularizer(total_loss, eta=FLAGS.l2)
+
     return total_loss, y_loss, f_loss
 
 
@@ -436,6 +442,34 @@ def _add_variable_summaries():
       'kbody', tf.add_n(tf.get_collection('vars_k_sum'), name='kbody_vars_sum'))
     tf.summary.scalar(
       '1body', tf.add_n(tf.get_collection('vars_1_sum'), name='1body_vars_sum'))
+
+
+def _add_l2_regularizer(total_loss, eta):
+  """
+  Add l2 regularizer to the total loss.
+
+  Args:
+    total_loss: a `float32` tensor as the total loss.
+    eta: a `float32` tensor as the strength of the l2. `eta` is used to replace
+      `lambda` in the formula because `lambda` is a Python key word.
+
+  Returns:
+    total_loss: a `float32` tensor as the regularized total loss.
+
+  """
+  with tf.name_scope("L2"):
+    for var in tf.trainable_variables():
+      if 'bias' in var.op.name:
+        continue
+      # L2 loss will not include the one-body weights.
+      if var.op.name.startswith('one-body'):
+        continue
+      l2 = tf.nn.l2_loss(var, name=var.op.name + "/l2")
+      tf.add_to_collection('l2_loss', l2)
+    l2_loss = tf.add_n(tf.get_collection('l2_loss'), name='l2_raw')
+    l2_loss = tf.multiply(l2_loss, eta, name='loss')
+
+  return tf.add(total_loss, l2_loss, name='total_loss_and_l2')
 
 
 def get_joint_loss_train_op(total_loss, global_step):
