@@ -1555,7 +1555,7 @@ def debug():
         r = atoms.get_distance(i, j)
         radius = pyykko[symbols[i]] + pyykko[symbols[j]]
         v = np.exp(-r / radius)
-        g = (1.0 / radius**2) * v * (positions[j] - positions[i]) / np.log(v)
+        g = (1.0 / radius**2) * v * (positions[i] - positions[j]) / np.log(v)
         assert isinstance(g, np.ndarray)
 
         vlist[k] = v
