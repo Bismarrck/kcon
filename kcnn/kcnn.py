@@ -469,6 +469,7 @@ def _add_l2_regularizer(total_loss, eta):
     l2_loss = tf.add_n(tf.get_collection('l2_loss'), name='l2_raw')
     l2_loss = tf.multiply(l2_loss, eta, name='loss')
 
+  tf.summary.scalar('l2_loss', l2_loss)
   return tf.add(total_loss, l2_loss, name='total_loss_and_l2')
 
 
