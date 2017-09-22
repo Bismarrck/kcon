@@ -417,6 +417,27 @@ def _add_total_norm_summaries(grads_and_vars, collection,
   return total_norm
 
 
+def _add_variable_summaries():
+  """
+  Add variable summaries.
+  """
+  with tf.name_scope("variables"):
+
+    for var in tf.trainable_variables():
+      tf.summary.histogram(var.op.name, var)
+      vsum = tf.reduce_sum(tf.abs(var, name="absolute"), name="vsum")
+
+      if not var.op.name.startswith('one-body'):
+        tf.add_to_collection('vars_k_sum', vsum)
+      else:
+        tf.add_to_collection('vars_1_sum', vsum)
+
+    tf.summary.scalar(
+      'kbody', tf.add_n(tf.get_collection('vars_k_sum'), name='kbody_vars_sum'))
+    tf.summary.scalar(
+      '1body', tf.add_n(tf.get_collection('vars_1_sum'), name='1body_vars_sum'))
+
+
 def get_joint_loss_train_op(total_loss, global_step):
   """
   Train the model by minimizing the joint total loss.
@@ -461,8 +482,7 @@ def get_joint_loss_train_op(total_loss, global_step):
   )
 
   # Add histograms for trainable variables.
-  for var in tf.trainable_variables():
-    tf.summary.histogram(var.op.name, var)
+  _add_variable_summaries()
 
   # Track the moving averages of all trainable variables.
   with tf.name_scope("average"):
