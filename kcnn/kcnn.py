@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import pipeline
+from tensorflow.contrib.opt import NadamOptimizer
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
@@ -21,8 +22,8 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
-tf.app.flags.DEFINE_float('learning_rate', 0.0001,
-                          """The learning rate for minimizing energy.""")
+
+# Setup the structure of the model
 tf.app.flags.DEFINE_string('conv_sizes', '40,60,60,40',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
@@ -36,6 +37,8 @@ tf.app.flags.DEFINE_string('activation_fn', "lrelu",
 tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
+
+# Setup the total loss function
 tf.app.flags.DEFINE_float('floss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
 tf.app.flags.DEFINE_boolean('mse', False,
@@ -43,6 +46,92 @@ tf.app.flags.DEFINE_boolean('mse', False,
 tf.app.flags.DEFINE_float('l2', None,
                           """Set the lambda of the l2 loss. If None, 
                           l2 regularizer is disabled.""")
+
+# Setup the learning rate. By default the Adam optimizer and constant initial
+# learning rate are adopted.
+tf.app.flags.DEFINE_float('learning_rate', 0.0001,
+                          """The learning rate for minimizing energy.""")
+tf.app.flags.DEFINE_string('learning_rate_decay', None,
+                           """The decay function. Default is None. Available
+                           options are: exponential, inverse_time and 
+                           natrual_exp.""")
+tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.95,
+                          """A Python number.  The decay rate.""")
+tf.app.flags.DEFINE_float('learning_rate_decay_step', 1000,
+                          """How often to apply decay.""")
+
+# Setup the SGD optimizer.
+tf.app.flags.DEFINE_string('optimizer', 'adam',
+                           """Set the optimizer to use. Avaible optimizers are:
+                           adam, nadam, rmsprop, adadelta""")
+tf.app.flags.DEFINE_float('beta1', 0.9,
+                          """The beta1 of Adam/Nadam""")
+tf.app.flags.DEFINE_float('rho', 0.95,
+                          """The rho of Adadelta.""")
+tf.app.flags.DEFINE_float('rmsprop_decay', 0.9,
+                          """The decay factor of RMSProp.""")
+tf.app.flags.DEFINE_float('rmsprop_momentum', 0.0,
+                          """The momentum factor for the RMSProp optimizer.""")
+
+
+def get_learning_rate(global_step):
+  """
+  Return the tensor of learning rate.
+
+  Args:
+    global_step: an `int64` tensor as the global step.
+
+  Returns:
+    lr: a `float32` tensor as the learning rate.
+
+  """
+  if FLAGS.learning_rate_decay is None:
+    return tf.constant(
+      FLAGS.learning_rate, dtype=tf.float32, name="learning_rate")
+
+  else:
+    if FLAGS.learning_rate_decay == 'exponential':
+      lr = tf.train.exponential_decay
+    elif FLAGS.learning_rate_decay == 'inverse_time':
+      lr = tf.train.inverse_time_decay
+    elif FLAGS.learning_rate_decay == 'natural_exp':
+      lr = tf.train.natural_exp_decay
+    else:
+      raise ValueError(
+        'Supported decay functions: exponential, inverse_time, natural_exp')
+    return lr(FLAGS.learning_rate, global_step=global_step,
+              decay_rate=FLAGS.learning_rate_decay_factor,
+              decay_steps=FLAGS.learning_rate_decay_step,
+              staircase=FLAGS.staircase, name="learning_rate")
+
+
+def get_optimizer(learning_rate):
+  """
+  Return the tensor of SGD optimizer.
+
+  Args:
+    learning_rate: a `float32` tensor as the learning rate.
+
+  Returns:
+    optimizer: an optimizer.
+
+  """
+
+  if FLAGS.optimizer == 'adam':
+    return tf.train.AdamOptimizer(
+      learning_rate=learning_rate, beta1=FLAGS.beta1)
+  elif FLAGS.optimizer == 'nadam':
+    return NadamOptimizer(learning_rate=learning_rate, beta1=FLAGS.beta1)
+  elif FLAGS.optimzier == 'adadelta':
+    return tf.train.AdadeltaOptimizer(
+      learning_rate=learning_rate, rho=FLAGS.rho)
+  elif FLAGS.optimizer == 'rmsprop':
+    return tf.train.RMSPropOptimizer(
+      learning_rate=learning_rate,
+      decay=FLAGS.rmsprop_decay,
+      momentum=FLAGS.rmsprop_momentum)
+  else:
+    raise ValueError("Supported SGD optimizers: adam, nadam, adadelta, rmsprop")
 
 
 def get_activation_fn(name='lrelu'):
@@ -502,9 +591,11 @@ def get_joint_loss_train_op(total_loss, global_step):
     dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 
   # Compute gradients.
-  with tf.control_dependencies(dependencies):
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
-    grads = opt.compute_gradients(total_loss)
+  with tf.name_scope("Optimizer"):
+    with tf.control_dependencies(dependencies):
+      lr = get_learning_rate(global_step=global_step)
+      opt = get_optimizer(learning_rate=lr)
+      grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
   _add_total_norm_summaries(grads, "norms", only_summary_total=False)
