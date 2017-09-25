@@ -174,7 +174,7 @@ class BatchIndex:
   loss_weight = 4
   f_true = 5
   coefficients = 6
-  indices = 7
+  indexing = 7
 
 
 def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
@@ -362,7 +362,7 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
       batch[BatchIndex.occurs],
       batch[BatchIndex.weights],
       coefficients=batch[BatchIndex.coefficients],
-      indexing=batch[BatchIndex.indices],
+      indexing=batch[BatchIndex.indexing],
       **params,
     )
     f_true = batch[BatchIndex.f_true]

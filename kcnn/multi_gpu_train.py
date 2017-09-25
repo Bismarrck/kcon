@@ -75,7 +75,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
       occurs=batch[BatchIndex.occurs],
       weights=batch[BatchIndex.weights],
       coefficients=batch[BatchIndex.coefficients],
-      indexing=batch[BatchIndex.indices],
+      indexing=batch[BatchIndex.indexing],
       **params
     )
 
@@ -186,7 +186,7 @@ def get_splits(batch, num_splits):
     coef_splits = tf.split(
       num_or_size_splits=num_splits, value=batch[BatchIndex.coefficients])
     indexing_splits = tf.split(
-      num_or_size_splits=num_splits, value=batch[BatchIndex.indices])
+      num_or_size_splits=num_splits, value=batch[BatchIndex.indexing])
   else:
     f_true_splits = [None] * num_splits
     coef_splits = [None] * num_splits
