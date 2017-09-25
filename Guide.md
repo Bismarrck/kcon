@@ -46,7 +46,7 @@ H     -1.58244400     1.30150800    -0.31839200   1    0.00000000        0     0
 H      1.47470100     0.40039500    -0.92044900   1    0.00000000        0    -1.20122614    -1.21905564     0.96704276
 ```
 
-These default datasets are in **xyz** format:
+These default datasets are in **ase** format:
 
 1. naphthalene20k
 2. md3k
@@ -83,8 +83,7 @@ After building a dataset, we can run the following command to start training a
 
 ```bash
 python -u train.py --dataset=qm7 --num_epochs=1000 --log_frequency=5 \
-       --conv_sizes=40,60,60,40 --learning_rate=0.0001 \
-       --normalizer=layer_norm --train_dir=qm7_lr1_ln
+       --conv_sizes=40,60,60,40 --learning_rate=0.0004 --train_dir=qm7_lr4
 ```
 
 or
@@ -95,8 +94,8 @@ python -u train.py --dataset=ethanol10k --num_epochs=1000 --log_frequency=5 \
        --normalizer=layer_norm --train_dir=ethanol_lr1_ln
 ```
 
-The training may take a few or tens of hours. So if the node doesn't have a job
-batch system, one can use `nohup` to do background training:
+The training may take a few or tens of hours. So if the node can't access to a 
+batch system (PEB, Slurm), one can use `nohup` to do background training:
 
 ```bash
 nohup python -u train.py --dataset=ethanol10k --num_epochs=1000 \
