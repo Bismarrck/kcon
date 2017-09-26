@@ -113,7 +113,7 @@ def main(_):
   """
   The main function.
   """
-  if FLAGS.periodic and (FLAGS.format != 'grendel'):
+  if FLAGS.periodic and (FLAGS.format != 'ase'):
     tf.logging.error(
       "The xyz format must be `grendel` if `periodic` is True!")
   else:
