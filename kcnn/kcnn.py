@@ -225,7 +225,7 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
 
   activation_fn = get_activation_fn(FLAGS.activation_fn)
   if FLAGS.activation_fn == 'lrelu':
-    activation_fn = partial(activation_fn, alpha=alpha)
+    activation_fn = partial(activation_fn, alpha=FLAGS.alpha)
 
   weights_initializer = None
 
