@@ -25,10 +25,11 @@ __email__ = 'Bismarrck@me.com'
 
 FLAGS = tf.app.flags.FLAGS
 
+# Setup the I/O
 tf.app.flags.DEFINE_string('train_dir', './events',
                            """The directory for storing training files.""")
-tf.app.flags.DEFINE_integer('num_epochs', 1000,
-                            """The maximum number of training epochs.""")
+tf.app.flags.DEFINE_string('logfile', "train.log",
+                           """The training logfile.""")
 tf.app.flags.DEFINE_integer('save_frequency', 200,
                             """The frequency, in number of global steps, that
                             the summaries are written to disk""")
@@ -39,18 +40,26 @@ tf.app.flags.DEFINE_integer('freeze_frequency', 0,
                             """The frequency, in number of global steps, that
                             the graph will be freezed and exported. Set this to
                             0 to disable freezing.""")
+tf.app.flags.DEFINE_integer('max_to_keep', 100,
+                            """The maximum number of checkpoints to keep.""")
+
+# Setup the basic training parameters.
+tf.app.flags.DEFINE_integer('num_epochs', 1000,
+                            """The maximum number of training epochs.""")
+tf.app.flags.DEFINE_boolean('restore', True,
+                            """Restore the previous checkpoint if possible.""")
+tf.app.flags.DEFINE_string('restore_checkpoint', None,
+                           """Specify a checkpoint to restore.""")
+
+# Setup the devices.
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
                             """How many GPUs to use.""")
-tf.app.flags.DEFINE_string('logfile', "train.log",
-                           """The training logfile.""")
+tf.app.flags.DEFINE_integer('first_gpu_id', 0,
+                            """The id of the first gpu.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
-tf.app.flags.DEFINE_integer('max_to_keep', None,
-                            """The maximum number of checkpoints to keep.""")
-tf.app.flags.DEFINE_boolean('restore', True,
-                            """Restore the previous checkpoint if possible.""")
 
 
 def tower_loss(batch, params, scope, reuse_variables=False):
@@ -201,6 +210,27 @@ def get_splits(batch, num_splits):
   return tensors_splits
 
 
+def restore_previous_checkpoint(sess):
+  """
+  Restore the moving averaged variables from a previous checkpoint.
+
+  Args:
+    sess: a `tf.Session`.
+
+  """
+  variable_averages = tf.train.ExponentialMovingAverage(
+    constants.VARIABLE_MOVING_AVERAGE_DECAY)
+  variables_to_restore = variable_averages.variables_to_restore()
+
+  loader = tf.train.Saver(var_list=variables_to_restore)
+  if FLAGS.restore_checkpoint:
+    loader.restore(sess, FLAGS.restore_checkpoint)
+  else:
+    ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+    if ckpt and ckpt.model_checkpoint_path:
+      loader.restore(sess, ckpt.model_checkpoint_path)
+
+
 def train_with_multiple_gpus():
   """
   Train the KCNN model with mutiple gpus.
@@ -240,7 +270,7 @@ def train_with_multiple_gpus():
     batchnorm_updates = []
     reuse_variables = False
 
-    for i in range(FLAGS.num_gpus):
+    for i in range(FLAGS.first_gpu_id, FLAGS.first_gpu_id + FLAGS.num_gpus):
       with tf.device('/gpu:%d' % i):
         with tf.name_scope('%s%d' % (constants.TOWER_NAME, i)) as scope:
 
@@ -321,10 +351,8 @@ def train_with_multiple_gpus():
     # Restore the previous checkpoint
     start_step = 0
     if FLAGS.restore:
-      ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
-      if ckpt and ckpt.model_checkpoint_path:
-        saver.restore(sess, ckpt.model_checkpoint_path)
-        start_step = sess.run(global_step)
+      restore_previous_checkpoint(sess)
+      start_step = sess.run(global_step)
     max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size)
 
     # Create the summary writer
