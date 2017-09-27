@@ -99,10 +99,12 @@ def get_learning_rate(global_step):
     else:
       raise ValueError(
         'Supported decay functions: exponential, inverse_time, natural_exp')
-    return lr(FLAGS.learning_rate, global_step=global_step,
-              decay_rate=FLAGS.learning_rate_decay_factor,
-              decay_steps=FLAGS.learning_rate_decay_step,
-              staircase=FLAGS.staircase, name="learning_rate")
+    learning_rate = lr(FLAGS.learning_rate, global_step=global_step,
+                       decay_rate=FLAGS.learning_rate_decay_factor,
+                       decay_steps=FLAGS.learning_rate_decay_step,
+                       staircase=FLAGS.staircase, name="learning_rate")
+    tf.summary.scalar('decayed_learning_rate', learning_rate)
+    return learning_rate
 
 
 def get_optimizer(learning_rate):
