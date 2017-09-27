@@ -86,7 +86,7 @@ def get_atoms_from_kbody_term(kbody_term):
   return atoms
 
 
-def lrelu(x, name=None):
+def lrelu(x, alpha=0.01, name=None):
   """
   The leaky relu activation function.
 
@@ -96,6 +96,7 @@ def lrelu(x, name=None):
   Args:
     x: a `Tensor` with type `float`, `double`, `int32`, `int64`, `uint8`,
       `int16`, or `int8`.
+    alpha: a `float32` tensor as the alpha.
     name: a `str` as the name of this op.
 
   Returns:
@@ -103,7 +104,7 @@ def lrelu(x, name=None):
 
   """
   with ops.name_scope(name, "LRelu", [x]) as name:
-    alpha = ops.convert_to_tensor(0.01, dtype=tf.float32, name="alpha")
+    alpha = ops.convert_to_tensor(alpha, dtype=tf.float32, name="alpha")
     z = math_ops.multiply(alpha, x, "z")
     return math_ops.maximum(z, x, name=name)
 

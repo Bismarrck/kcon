@@ -12,6 +12,7 @@ from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
 from utils import lrelu, selu, selu_initializer
+from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -34,6 +35,8 @@ tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
+tf.app.flags.DEFINE_float('alpha', 0.01,
+                          """The alpha value of the leaky relu.""")
 tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
@@ -221,6 +224,9 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
   num_kernels = num_kernels or (40, 50, 60, 40)
 
   activation_fn = get_activation_fn(FLAGS.activation_fn)
+  if FLAGS.activation_fn == 'lrelu':
+    activation_fn = partial(activation_fn, alpha=alpha)
+
   weights_initializer = None
 
   if FLAGS.activation_fn == 'selu':
