@@ -400,7 +400,12 @@ def get_y_loss(y_true, y_nn, weights=None):
     if not FLAGS.mse:
       loss = tf.sqrt(loss, name="RMSE")
     tf.add_to_collection('losses', loss)
-    return tf.add_n(tf.get_collection('losses'), name='total')
+    total_loss = tf.add_n(tf.get_collection('losses'), name='total')
+
+    if FLAGS.l2 is not None:
+      total_loss = _add_l2_regularizer(total_loss, eta=FLAGS.l2)
+
+    return total_loss
 
 
 def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
