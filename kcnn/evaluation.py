@@ -30,9 +30,9 @@ tf.app.flags.DEFINE_string('logfile', 'eval.log',
                            """The file to write evaluation logs.""")
 tf.app.flags.DEFINE_boolean('output_acc_error', False,
                             """Output the accumulative error.""")
-
-
-# TODO: figure out what's wrong when restoring moving averaged variables.
+tf.app.flags.DEFINE_integer('stop_after_repeats', 3,
+                            """Automatically stop the evaluation if a checkpoint 
+                            was repeatedly used N times.""")
 
 
 def get_eval_dir():
@@ -69,12 +69,12 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       global_step = int(global_step)
     else:
       tf.logging.info('No checkpoint file found')
-      return
+      return -1
 
     # Wait until the parsed global step is not zero.
     if (not FLAGS.run_once) and global_step <= 1:
       tf.logging.info("The global step is <= 1. Wait ...")
-      return
+      return global_step
 
     # Start the queue runners.
     coord = tf.train.Coordinator()
@@ -197,6 +197,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
     coord.request_stop()
     coord.join(threads, stop_grace_period_secs=10)
 
+    return global_step
+
 
 def evaluate(eval_dir):
   """Eval CIFAR-10 for a number of steps."""
@@ -228,10 +230,20 @@ def evaluate(eval_dir):
     summary_op = tf.summary.merge_all()
     summary_writer = tf.summary.FileWriter(eval_dir, graph)
 
+    # Run the evalutions
+    evaluated_steps = []
+
     while True:
-      eval_once(
+      eval_at_step = eval_once(
         saver, summary_writer, y_true, y_calc, f_true, f_calc, summary_op
       )
+      if len(evaluated_steps) > 0 and evaluated_steps[-1] != eval_at_step:
+        evaluated_steps.clear()
+      evaluated_steps.append(eval_at_step)
+      if len(evaluated_steps) == FLAGS.stop_after_repeats:
+        tf.logging.info("Automatically stop the evaluation after "
+                        "{} repeats.".format(len(evaluated_steps)))
+        break
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)
