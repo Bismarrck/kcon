@@ -35,6 +35,9 @@ tf.app.flags.DEFINE_boolean('output_acc_error', False,
 tf.app.flags.DEFINE_integer('stop_after_repeats', 3,
                             """Automatically stop the evaluation if a checkpoint 
                             was repeatedly used N times.""")
+tf.app.flags.DEFINE_boolean('eval_training_data', False,
+                            """Evaluate the performances on the whole training 
+                            dataset.""")
 
 
 def get_eval_dir():
@@ -215,7 +218,7 @@ def evaluate(eval_dir):
     # Inference the KCNN model for evaluation
     y_calc, y_true, _, f_calc, f_true = kcnn_from_dataset(
       FLAGS.dataset,
-      for_training=False
+      for_training=FLAGS.eval_training_data
     )
 
     # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
