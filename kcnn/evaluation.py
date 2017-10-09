@@ -194,6 +194,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
         summary.ParseFromString(sess.run(summary_op))
         summary.value.add(tag='MAE (eV) @ 1', simple_value=precision)
         summary.value.add(tag='R2 Score @ 1', simple_value=score)
+        summary.value.add(tag='MAX (eV) @ 1', simple_value=emax)
+        summary.value.add(tag='MIN (eV) @ 1', simple_value=emin)
         summary_writer.add_summary(summary, global_step)
 
     except Exception as e:  # pylint: disable=broad-except
