@@ -20,6 +20,8 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('checkpoint_dir', './events',
                            """Directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string('summary_dir', None,
+                           """Alternative dir for saving summaries.""")
 tf.app.flags.DEFINE_integer('eval_interval_secs', 300,
                             """How often to run the eval.""")
 tf.app.flags.DEFINE_integer('num_evals', 500,
@@ -228,7 +230,8 @@ def evaluate(eval_dir):
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(eval_dir, graph)
+    summary_dir = FLAGS.summary_dir or eval_dir
+    summary_writer = tf.summary.FileWriter(summary_dir, graph)
 
     # Run the evalutions
     evaluated_steps = []
