@@ -231,6 +231,8 @@ def evaluate(eval_dir):
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
     summary_dir = FLAGS.summary_dir or eval_dir
+    if not tf.gfile.Exists(summary_dir):
+      tf.gfile.MakeDirs(summary_dir)
     summary_writer = tf.summary.FileWriter(summary_dir, graph)
 
     # Run the evalutions
