@@ -62,9 +62,9 @@ tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.95,
                           """A Python number.  The decay rate.""")
 tf.app.flags.DEFINE_float('learning_rate_decay_step', 1000,
                           """How often to apply decay.""")
-tf.app.flags.DEFINE_float('staircase', True,
-                          """Boolean.  If `True` decay the learning rate at 
-                          discrete intervals""")
+tf.app.flags.DEFINE_boolean('staircase', False,
+                            """Boolean.  If `True` decay the learning rate at 
+                            discrete intervals""")
 
 # Setup the SGD optimizer.
 tf.app.flags.DEFINE_string('optimizer', 'adam',
