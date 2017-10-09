@@ -247,7 +247,9 @@ def train_with_multiple_gpus():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Create an optimizer that performs gradient descent.
-    opt = tf.train.AdamOptimizer(FLAGS.learning_rate)
+    with tf.name_scope("Optimizer"):
+      learning_rate = kcnn.get_learning_rate(global_step)
+      opt = kcnn.get_optimizer(learning_rate)
 
     # Initialize the input pipeline.
     total_batch_size = FLAGS.batch_size * FLAGS.num_gpus
@@ -303,22 +305,24 @@ def train_with_multiple_gpus():
     # synchronization point across all towers.
     grads = average_gradients(tower_grads)
 
-    # Add histograms for gradients.
-    for grad, var in grads:
-      if grad is not None:
-        summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
-
     # Apply the gradients to adjust the shared variables.
     apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     # Add histograms for trainable variables.
-    for var in tf.trainable_variables():
-      summaries.append(tf.summary.histogram(var.op.name, var))
+    # Add histograms for gradients.
+    with tf.name_scope("Summary"):
+      for grad, var in grads:
+        if grad is not None:
+          summaries.append(
+            tf.summary.histogram(var.op.name + '/gradients', grad))
+      for var in tf.trainable_variables():
+        summaries.append(tf.summary.histogram(var.op.name, var))
 
     # Track the moving averages of all trainable variables.
-    variable_averages = tf.train.ExponentialMovingAverage(
-      constants.VARIABLE_MOVING_AVERAGE_DECAY, global_step)
-    variables_averages_op = variable_averages.apply(tf.trainable_variables())
+    with tf.name_scope("average"):
+      variable_averages = tf.train.ExponentialMovingAverage(
+        constants.VARIABLE_MOVING_AVERAGE_DECAY, global_step)
+      variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.
     if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
