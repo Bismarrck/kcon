@@ -65,6 +65,8 @@ tf.app.flags.DEFINE_float('learning_rate_decay_step', 1000,
 tf.app.flags.DEFINE_boolean('staircase', False,
                             """Boolean.  If `True` decay the learning rate at 
                             discrete intervals""")
+tf.app.flags.DEFINE_float('min_learning_rate', None,
+                          """Setup the minimum learning rate.""")
 
 # Setup the SGD optimizer.
 tf.app.flags.DEFINE_string('optimizer', 'adam',
@@ -92,9 +94,8 @@ def get_learning_rate(global_step):
 
   """
   if FLAGS.learning_rate_decay is None:
-    return tf.constant(
-      FLAGS.learning_rate, dtype=tf.float32, name="learning_rate")
-
+    learning_rate = tf.constant(
+      FLAGS.learning_rate, dtype=tf.float32, name="raw_learning_rate")
   else:
     if FLAGS.learning_rate_decay == 'exponential':
       lr = tf.train.exponential_decay
@@ -108,9 +109,12 @@ def get_learning_rate(global_step):
     learning_rate = lr(FLAGS.learning_rate, global_step=global_step,
                        decay_rate=FLAGS.learning_rate_decay_factor,
                        decay_steps=FLAGS.learning_rate_decay_step,
-                       staircase=FLAGS.staircase, name="learning_rate")
+                       staircase=FLAGS.staircase, name="raw_learning_rate")
     tf.summary.scalar('decayed_learning_rate', learning_rate)
-    return learning_rate
+
+  min_learning_rate = tf.constant(
+    FLAGS.min_learning_rate or 0.0, name="minimum_lr")
+  return tf.maximum(learning_rate, min_learning_rate, "learning_rate")
 
 
 def get_optimizer(learning_rate):
