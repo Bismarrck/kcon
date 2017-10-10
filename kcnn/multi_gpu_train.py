@@ -265,6 +265,9 @@ def train_with_multiple_gpus():
     # Split the batch for each tower
     tensors_splits = get_splits(batch, num_splits=FLAGS.num_gpus)
 
+    # Retain all non-tower summaries
+    non_tower_summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
+
     # Calculate the gradients for each model tower.
     tower_grads = []
     summaries = []
@@ -272,34 +275,35 @@ def train_with_multiple_gpus():
     batchnorm_updates = []
     reuse_variables = False
 
-    for i in range(FLAGS.first_gpu_id, FLAGS.first_gpu_id + FLAGS.num_gpus):
-      with tf.device('/gpu:%d' % i):
-        with tf.name_scope('%s%d' % (constants.TOWER_NAME, i)) as scope:
+    with tf.variable_scope("Variables"):
+      for i in range(FLAGS.first_gpu_id, FLAGS.first_gpu_id + FLAGS.num_gpus):
+        with tf.device('/gpu:%d' % i):
+          with tf.name_scope('%s%d' % (constants.TOWER_NAME, i)) as scope:
 
-          # Calculate the loss for one tower of the KCNN model.
-          # This function constructs the entire model but shares the variables
-          # across all towers.
-          loss = tower_loss(tensors_splits[i], params, scope, reuse_variables)
+            # Calculate the loss for one tower of the KCNN model.
+            # This function constructs the entire model but shares the variables
+            # across all towers.
+            loss = tower_loss(tensors_splits[i], params, scope, reuse_variables)
 
-          # Reuse variables for the next tower.
-          reuse_variables = True
+            # Reuse variables for the next tower.
+            reuse_variables = True
 
-          # Retain the summaries from the final tower.
-          summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+            # Retain the summaries from the final tower.
+            summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
 
-          # Retain the Batch Normalization updates operations only from the
-          # final tower. Ideally, we should grab the updates from all towers
-          # but these stats accumulate extremely fast so we can ignore the
-          # other stats from the other towers without significant detriment.
-          if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
-            batchnorm_updates = tf.get_collection(
-              tf.GraphKeys.UPDATE_OPS, scope)
+            # Retain the Batch Normalization updates operations only from the
+            # final tower. Ideally, we should grab the updates from all towers
+            # but these stats accumulate extremely fast so we can ignore the
+            # other stats from the other towers without significant detriment.
+            if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
+              batchnorm_updates = tf.get_collection(
+                tf.GraphKeys.UPDATE_OPS, scope)
 
-          # Calculate the gradients for the batch of data on this CIFAR tower.
-          grads = opt.compute_gradients(loss)
+            # Calculate the gradients for the batch of data on this CIFAR tower.
+            grads = opt.compute_gradients(loss)
 
-          # Keep track of the gradients across all towers.
-          tower_grads.append(grads)
+            # Keep track of the gradients across all towers.
+            tower_grads.append(grads)
 
     # We must calculate the mean of each gradient. Note that this is the
     # synchronization point across all towers.
@@ -339,7 +343,7 @@ def train_with_multiple_gpus():
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
 
     # Build the summary operation from the last tower summaries.
-    summary_op = tf.summary.merge(summaries)
+    summary_op = tf.summary.merge(summaries + non_tower_summaries)
 
     # Build an initialization operation to run below.
     init = tf.global_variables_initializer()
