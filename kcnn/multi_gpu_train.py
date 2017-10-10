@@ -46,10 +46,11 @@ tf.app.flags.DEFINE_integer('max_to_keep', 100,
 # Setup the basic training parameters.
 tf.app.flags.DEFINE_integer('num_epochs', 1000,
                             """The maximum number of training epochs.""")
-tf.app.flags.DEFINE_boolean('restore', True,
-                            """Restore the previous checkpoint if possible.""")
+tf.app.flags.DEFINE_boolean('restore_training', True,
+                            """Restore the previous training if possible.""")
 tf.app.flags.DEFINE_string('restore_checkpoint', None,
-                           """Specify a checkpoint to restore.""")
+                           """Start a new training using the variables restored
+                           from the checkpoint.""")
 
 # Setup the devices.
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
@@ -210,14 +211,16 @@ def get_splits(batch, num_splits):
   return tensors_splits
 
 
-def restore_previous_checkpoint(sess):
+def restore_previous_checkpoint(sess, global_step):
   """
   Restore the moving averaged variables from a previous checkpoint.
 
   Args:
     sess: a `tf.Session`.
+    global_step: the tensor of the `global_step`.
 
   """
+  start_step = 0
   variable_averages = tf.train.ExponentialMovingAverage(
     constants.VARIABLE_MOVING_AVERAGE_DECAY)
   variables_to_restore = variable_averages.variables_to_restore()
@@ -229,6 +232,8 @@ def restore_previous_checkpoint(sess):
     ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
     if ckpt and ckpt.model_checkpoint_path:
       loader.restore(sess, ckpt.model_checkpoint_path)
+      start_step = sess.run(global_step)
+  return start_step
 
 
 def train_with_multiple_gpus():
@@ -359,8 +364,7 @@ def train_with_multiple_gpus():
     # Restore the previous checkpoint
     start_step = 0
     if FLAGS.restore:
-      restore_previous_checkpoint(sess)
-      start_step = sess.run(global_step)
+      start_step = restore_previous_checkpoint(sess, global_step)
     max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size)
 
     # Create the summary writer
