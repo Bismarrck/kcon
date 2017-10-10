@@ -64,7 +64,7 @@ tf.app.flags.DEFINE_boolean('debug', False,
 
 
 def tower_loss(batch, params, scope, reuse_variables=False):
-  """Calculate the total loss on a single tower running the KCNN model.
+  """Calculate the total loss on a single tower running the kCON model.
 
   Args:
     batch: a `tuple` of Tensors: 'inputs', 'y_true', 'occurs', 'weights',
@@ -78,9 +78,8 @@ def tower_loss(batch, params, scope, reuse_variables=False):
 
   """
 
-  # Inference the model of `KCNN`
-  with tf.variable_scope(tf.get_variable_scope() + "kCON",
-                         reuse=reuse_variables):
+  # Inference the model of `kCON`
+  with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
     y_calc, f_calc = inference(
       inputs=batch[BatchIndex.inputs],
       occurs=batch[BatchIndex.occurs],
