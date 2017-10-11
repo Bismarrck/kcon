@@ -9,7 +9,7 @@ kCON is a scalable and transferable deep learning framework for chemistry with t
 
 ## 1. Related work
 
-* Exploring atomic chemistry with machine learning
+* Chen, X., Jørgenson, M. S., Hammer, B., & Li, J. (2017). Understanding atomic chemistry with machine learning. _Nature Communications, Just submitted._ 
 
 ## 2. Requirements
 
@@ -40,6 +40,7 @@ There some built-in dataset, including:
 - Anatase Titanium Dioxide (DFTB)
 
 See [this][3] guide for more details about how to build these datasets.
+
 See [this][4] guide for more details about how to generate the xyz files of these datasets from raw files.
 
 ## 5. Modules

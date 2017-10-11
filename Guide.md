@@ -23,7 +23,7 @@ H      0.64135998    -0.50746995    -0.90539992
 
 These default datasets are in **xyz** format:
 
-1. C9H7N.PBE
+1. CNH\_dft\_unique
 2. C9H7Nv1
 3. TiO2
 4. qm7
@@ -69,6 +69,8 @@ python -u build_dataset.py --dataset=ethanol10k --forces --num_examples=10000 \
 
 ## 2. Training
 
+### 2.1 Basic Usage
+
 Requirements:
 
 1. Python\>=3.6.0
@@ -83,14 +85,14 @@ After building a dataset, we can run the following command to start training a
 
 ```bash
 python -u train.py --dataset=qm7 --num_epochs=1000 --log_frequency=5 \
-       --conv_sizes=40,60,60,40 --learning_rate=0.0004 --train_dir=qm7_lr4
+       --conv_sizes=128,64,32 --learning_rate=0.0004 --train_dir=qm7_lr4
 ```
 
 or
 
 ```bash
 python -u train.py --dataset=ethanol10k --num_epochs=1000 --log_frequency=5 \
-       --conv_sizes=40,60,60,40 --learning_rate=0.0001 --forces \
+       --conv_sizes=128,64 --learning_rate=0.0001 --forces \
        --normalizer=layer_norm --train_dir=ethanol_lr1_ln
 ```
 
@@ -99,7 +101,17 @@ batch system (PEB, Slurm), one can use `nohup` to do background training:
 
 ```bash
 nohup python -u train.py --dataset=ethanol10k --num_epochs=1000 \
-             --log_frequency=5 --conv_sizes=40,60,60,40 --learning_rate=0.0001 \
+             --log_frequency=5 --conv_sizes=128,64,32 --learning_rate=0.0001 \
              --forces --normalizer=layer_norm \
              --train_dir=ethanol_lr1_ln &> ethanol.log &
 ```
+
+### 2.2 Tips
+
+Typically, training deep neural networks is difficult and empirical experiences
+is crucial to fine tune a model. Below are some tips I found helpful to improve
+the training:
+
+1. Use `ReLU` or `LeakyReLU` instead of `tanh` or `sigmoid` so that the vanishing gradients problem can be avoided.  
+2. Use adaptive stochastic optimizers, like `Adam` or `RMSProp`.
+3. Decay the learning rate even if optimizers like `Adam` which can automatically adjust the `learning rate` is used.
