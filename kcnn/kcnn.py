@@ -385,25 +385,57 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
   return y_calc, y_true, y_weight, f_calc, f_true
 
 
-def get_y_loss(y_true, y_nn, weights=None):
+def get_y_loss(y_true, y_calc, weights=None):
   """
   Return the total loss tensor of energy only.
 
   Args:
-    y_true: a `float32` tensor of shape `[-1, ]` the true energies.
-    y_nn: a `float32` tensor of shape `[-1, ]` as the neural network predicted
-      energies.
+    y_true: a `float32` tensor of shape `[-1, ]` as the true energies.
+    y_calc: a `float32` tensor of shape `[-1, ]` as the computed energies.
     weights: the weights for the energies.
 
   Returns:
     loss: a `float32` scalar tensor as the total loss.
 
   """
-  with tf.name_scope("yRMSE"):
+  return _get_rmse_loss(y_true, y_calc, weights=weights, scope="yRMSE")
+
+
+def get_f_loss(f_true, f_calc):
+  """
+  Return the total loss tensor of forces only.
+
+  Args:
+    f_true: a `float32` tensor of shape `[-1, -1]` as the true forces.
+    f_calc: a `float32` tensor of shape `[-1, -1]` as the computed forces.
+
+  Returns:
+    f_loss: a `float32` scalar tensor as the total loss.
+
+  """
+  return _get_rmse_loss(f_true, f_calc, scope="fRMSE")
+
+
+def _get_rmse_loss(true, calc, weights=None, scope=None):
+  """
+  Return the total loss tensor.
+
+  Args:
+    true: a `float32` tensor as the true values.
+    calc: a `float32` tensor as the computed values. This tensor must has the
+      same shape with `true`.
+    weights: a tensor as the weights.
+    scope: a `str` as the name scope.
+
+  Returns:
+    total_loss: a `float32` scalar tensor as the total loss.
+
+  """
+  with tf.name_scope(scope):
     if weights is None:
       weights = tf.constant(1.0, name='weight')
     loss = tf.losses.mean_squared_error(
-      y_true, y_nn, scope="MSE", loss_collection=None, weights=weights)
+      true, calc, scope="MSE", loss_collection=None, weights=weights)
     if not FLAGS.mse:
       loss = tf.sqrt(loss, name="RMSE")
     tf.add_to_collection('losses', loss)
@@ -415,17 +447,15 @@ def get_y_loss(y_true, y_nn, weights=None):
     return total_loss
 
 
-def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
+def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
   """
   Return the joint total loss tensor.
 
   Args:
     y_true: a `float32` tensor of shape `[-1, ]` the true energies.
-    y_nn: a `float32` tensor of shape `[-1, ]` as the neural network predicted
-      energies.
-    f_true: a `float32` tensor of shape `[-1, 3N]` as the true forces.
-    f_nn: a `float32` tensor of shape `[-1, 3N]` as the neural network predicted
-      atomic forces.
+    y_calc: a `float32` tensor of shape `[-1, ]` as the energies.
+    f_true: a `float32` tensor of shape `[-1, -1]` as the true forces.
+    f_calc: a `float32` tensor of shape `[-1, -1]` as the computed forces.
 
   Returns:
     loss: a `float32` scalar tensor as the total loss.
@@ -438,7 +468,7 @@ def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
     with tf.name_scope("forces"):
       f_loss = tf.losses.mean_squared_error(
         f_true,
-        f_nn,
+        f_calc,
         scope="fMSE",
         loss_collection=None,
       )
@@ -449,7 +479,7 @@ def get_yf_joint_loss(y_true, y_nn, f_true, f_nn):
     with tf.name_scope("energy"):
       y_loss = tf.losses.mean_squared_error(
         y_true,
-        y_nn,
+        y_calc,
         scope="yMSE",
         loss_collection=None,
       )
