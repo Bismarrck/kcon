@@ -25,7 +25,7 @@ tf.app.flags.DEFINE_integer('batch_size', 50,
                             """Number of structures to process in a batch.""")
 
 # Setup the structure of the model
-tf.app.flags.DEFINE_string('conv_sizes', '40,60,60,40',
+tf.app.flags.DEFINE_string('conv_sizes', '128,64,32',
                            """Comma-separated integers as the sizes of the 
                            convolution layers.""")
 tf.app.flags.DEFINE_string('initial_one_body_weights', None,
@@ -109,12 +109,13 @@ def get_learning_rate(global_step):
     learning_rate = lr(FLAGS.learning_rate, global_step=global_step,
                        decay_rate=FLAGS.learning_rate_decay_factor,
                        decay_steps=FLAGS.learning_rate_decay_step,
-                       staircase=FLAGS.staircase, name="raw_learning_rate")
-    tf.summary.scalar('decayed_learning_rate', learning_rate)
+                       staircase=FLAGS.staircase, name="raw_lr")
 
   min_learning_rate = tf.constant(
     FLAGS.min_learning_rate or 0.0, name="minimum_lr")
-  return tf.maximum(learning_rate, min_learning_rate, "learning_rate")
+  learning_rate = tf.maximum(learning_rate, min_learning_rate, "adjusted_lr")
+  tf.summary.scalar('lr', learning_rate)
+  return learning_rate
 
 
 def get_optimizer(learning_rate):
