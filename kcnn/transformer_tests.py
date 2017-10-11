@@ -20,19 +20,25 @@ __email__ = 'Bismarrck@me.com'
 epsilon = 1e-6
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def get_species(occurs):
+  """
+  Return a list of `str` as the ordered species generated from `occurs`.
+  """
   species = [list(repeat(elem, k)) for elem, k in occurs.items()]
   return sorted(chain(*species))
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 def get_example(num_atoms):
+  """
+  Return a naive coordinates array.
+  """
   return np.repeat(np.atleast_2d(np.arange(num_atoms)).T, repeats=3, axis=1)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 class TransformerTest(tf.test.TestCase):
+  """
+  Test the class `Transformer`.
+  """
 
   def test_simple(self):
     coords = get_example(21)
@@ -60,7 +66,6 @@ class TransformerTest(tf.test.TestCase):
     k_max = 3
     kbody_terms = sorted(list(set(
       ["".join(sorted(c)) for c in combinations(species, k_max)])))
-    num_terms = len(kbody_terms)
     coords = np.array([
       [0.15625000, 1.42857141, 0.00000000],
       [0.51290443, 0.41976140, 0.00000000],
@@ -91,7 +96,6 @@ class TransformerTest(tf.test.TestCase):
       k_max=k_max,
       kbody_terms=kbody_terms
     )
-    shape = clf.shape
 
     self.assertEqual(len(clf.split_dims), num_terms)
     self.assertEqual(len(clf.kbody_terms), num_terms)
@@ -120,7 +124,6 @@ class TransformerTest(tf.test.TestCase):
     species = get_species(occurs)
     kbody_terms = sorted(list(set(
       ["".join(sorted(c)) for c in combinations(species, k_max)])))
-    num_terms = len(kbody_terms)
     split_dims = []
     for kbody_term in kbody_terms:
       counter = Counter(get_atoms_from_kbody_term(kbody_term))
@@ -157,13 +160,10 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(np.sum(cco), 0.0, delta=epsilon)
 
 
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
-class MultiTransformerTest(tf.test.TestCase):
-  pass
-
-
-# noinspection PyUnusedLocal,PyMissingOrEmptyDocstring
 class FixedLenMultiTransformerTest(tf.test.TestCase):
+  """
+  Test the class `FixedLenMultiTransforme`.
+  """
 
   def test_main(self):
     max_occurs = {"C": 3, "H": 4, "O": 3}

@@ -253,7 +253,10 @@ class Transformer:
     self._atomic_forces = atomic_forces
     self._indexing_matrix = None
 
-    n = compute_n_from_cnk(self._offsets[-1], self._k_max)
+    # Here we must use `sum(kbody_sizes)` but not `offsets[-1]` because when
+    # `split_dims` is not set while `kbody_terms` is given, `offsets[-1]` is not
+    # equal to C(N, k) as a lot of zero paddings are inserted.
+    n = compute_n_from_cnk(sum(kbody_sizes), self._k_max)
     self._num_real = n - self._num_ghosts
     self._num_f_components = 3 * self._num_real
     self._num_entries = _get_num_force_entries(self._num_real, self._k_max)
