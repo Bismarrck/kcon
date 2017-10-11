@@ -45,6 +45,8 @@ tf.app.flags.DEFINE_string('logfile', "train.log",
                            """The training logfile.""")
 tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
+tf.app.flags.DEFINE_boolean('forces_only', False,
+                            """Only minimize the forces if this flag is set.""")
 
 
 def train_model():
@@ -79,6 +81,9 @@ def train_model():
 
     if not FLAGS.forces:
       total_loss = kcnn.get_y_loss(y_true, y_calc, y_weights)
+
+    elif FLAGS.forces_only:
+      total_loss = kcnn.get_f_loss(f_true, f_calc)
 
     else:
       total_loss, y_loss, f_loss = kcnn.get_yf_joint_loss(
@@ -135,7 +140,7 @@ def train_model():
         self._epoch = self._step * self._epoch_per_step
         self._start_time = time.time()
 
-        if not self._atomic_forces:
+        if not self._atomic_forces or FLAGS.forces_only:
           return tf.train.SessionRunArgs({"loss": total_loss,
                                           "global_step": global_step})
         else:
@@ -177,7 +182,7 @@ def train_model():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
 
-          if not self._atomic_forces:
+          if not self._atomic_forces or FLAGS.forces_only:
             format_str = "step %6d, epoch=%7.2f, loss=%10.6f " \
                        "(%6.1f examples/sec; %7.3f sec/batch)"
             tf.logging.info(
