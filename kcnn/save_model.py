@@ -26,8 +26,7 @@ tf.app.flags.DEFINE_string("aux_nodes", None,
                            """Comma separated string as the names of the 
                            auxiliary nodes to expose.""")
 
-# FIXME: cannot freeze models with batch normalization enabled!
-# FIXME: this module is currently broken!
+# TODO: test the batch normalization
 
 
 def _get_transformer_repr(configs):
@@ -57,13 +56,14 @@ def _get_output_node_names(forces=False):
   """
   Return the names of the tensors that should be accessed.
   """
-  tensors = ["Sum/1_and_k", "y_contribs", "one-body/weights",
-             "one-body/convolution", "transformer/json",
-             "placeholders/inputs", "placeholders/occurs",
+  tensors = ["kCON/Energy/Sum/1_and_k", "kCON/Energy/y_contribs",
+             "kCON/one-body/weights", "kCON/Energy/one-body/convolution",
+             "transformer/json", "placeholders/inputs", "placeholders/occurs",
              "placeholders/weights", "placeholders/split_dims"]
 
   if forces:
-    tensors.extend(["placeholders/coefficients", "placeholders/indexing"])
+    tensors.extend(["placeholders/coefficients", "placeholders/indexing",
+                    "kCON/Forces/forces"])
 
   return ",".join(tensors)
 
@@ -102,7 +102,7 @@ def _inference(dataset_name, conv_sizes):
     num_atom_types = configs["num_atom_types"]
     kbody_terms = [term.replace(",", "") for term in configs["kbody_terms"]]
     num_kernels = [int(units) for units in conv_sizes.split(",")]
-    atomic_forces = FLAGS.forces
+    atomic_forces = configs["atomic_forces_enabled"]
     ck2 = configs["shape"][1]
     num_f, num_entries = configs["indexing_shape"]
 
@@ -132,7 +132,8 @@ def _inference(dataset_name, conv_sizes):
     kcnn(inputs_, occurs_, weights_, is_training=is_training_,
          split_dims=split_dims_, num_atom_types=num_atom_types,
          kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False,
-         atomic_forces=atomic_forces, coefficients=coef_, indexing=indexing_)
+         atomic_forces=atomic_forces, coefficients=coef_, indexing=indexing_,
+         add_summary=False)
 
   return graph
 
