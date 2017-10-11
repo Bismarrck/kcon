@@ -254,35 +254,33 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
         num_atom_types, dtype=np.float32) * one_body_weights[0]
 
   with tf.variable_scope("kCON"):
-    with tf.name_scope("Energy"):
-      y_calc, _ = inference_energy(
-        inputs,
-        occurs,
-        weights,
-        split_dims,
-        num_atom_types=num_atom_types,
-        kbody_terms=kbody_terms,
-        is_training=is_training,
-        reuse=reuse,
-        max_k=FLAGS.k_max,
-        num_kernels=num_kernels,
-        activation_fn=activation_fn,
-        normalizer=normalizer,
-        weights_initializer=weights_initializer,
-        one_body_weights=one_body_weights,
-        verbose=verbose,
-        trainable_one_body=trainable,
-        add_summary=add_summary,
-      )
+    y_calc, _ = inference_energy(
+      inputs,
+      occurs,
+      weights,
+      split_dims,
+      num_atom_types=num_atom_types,
+      kbody_terms=kbody_terms,
+      is_training=is_training,
+      reuse=reuse,
+      max_k=FLAGS.k_max,
+      num_kernels=num_kernels,
+      activation_fn=activation_fn,
+      normalizer=normalizer,
+      weights_initializer=weights_initializer,
+      one_body_weights=one_body_weights,
+      verbose=verbose,
+      trainable_one_body=trainable,
+      add_summary=add_summary,
+    )
 
     if atomic_forces:
-      with tf.name_scope("Forces"):
-        f_calc = inference_forces(
-          y_total=y_calc,
-          inputs=inputs,
-          coefficients=coefficients,
-          indexing=indexing
-        )
+      f_calc = inference_forces(
+        y_total=y_calc,
+        inputs=inputs,
+        coefficients=coefficients,
+        indexing=indexing
+      )
     else:
       f_calc = None
 

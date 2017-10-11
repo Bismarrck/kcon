@@ -310,77 +310,79 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
 
   """
 
-  # Split the input feature matrix into several parts. Each part represents a
-  # certain atomic interaction. The number of parts is equal to the number of
-  # k-body terms.
-  num_cols = int(comb(max_k, 2, exact=True))
-  splited_inputs = _split_inputs(inputs, split_dims)
+  with tf.name_scope("Energy"):
 
-  # Inference the convolution network for each k-body interaction
-  y_contribs = []
-  for i, conv in enumerate(splited_inputs):
-    with tf.variable_scope(kbody_terms[i]):
-      y_contribs.append(
-        _inference_kbody_cnn(
-          inputs=conv,
-          kbody_term=kbody_terms[i],
-          ck2=num_cols,
-          activation_fn=activation_fn,
-          reuse=reuse,
-          normalizer=normalizer,
-          weights_initializer=weights_initializer,
-          is_training=is_training,
-          num_kernels=num_kernels,
-          verbose=verbose)
-      )
+    # Split the input feature matrix into several parts. Each part represents a
+    # certain atomic interaction. The number of parts is equal to the number of
+    # k-body terms.
+    num_cols = int(comb(max_k, 2, exact=True))
+    splited_inputs = _split_inputs(inputs, split_dims)
 
-  # Concat the k-body contribs from all k-body terms. The new tensor has the
-  # shape of `[-1, 1, D, 1]`.
-  contribs = tf.concat(y_contribs, axis=2, name="raw_contribs")
+    # Inference the convolution network for each k-body interaction
+    y_contribs = []
+    for i, conv in enumerate(splited_inputs):
+      with tf.variable_scope(kbody_terms[i]):
+        y_contribs.append(
+          _inference_kbody_cnn(
+            inputs=conv,
+            kbody_term=kbody_terms[i],
+            ck2=num_cols,
+            activation_fn=activation_fn,
+            reuse=reuse,
+            normalizer=normalizer,
+            weights_initializer=weights_initializer,
+            is_training=is_training,
+            num_kernels=num_kernels,
+            verbose=verbose)
+        )
 
-  # Obtain the weighted k-body contribs.
-  # In general we hope zero inputs lead to zero contribs. But the convolution
-  # kernels have biases so the output may not be zero. To fix this potential
-  # problem we multiply the calculated k-body contribs with binary weights.
-  contribs = tf.multiply(contribs, weights, name="y_contribs")
-  if add_summary:
-    tf.summary.histogram("kbody_contribs", contribs)
-  if verbose:
-    print_activations(contribs)
+    # Concat the k-body contribs from all k-body terms. The new tensor has the
+    # shape of `[-1, 1, D, 1]`.
+    contribs = tf.concat(y_contribs, axis=2, name="raw_contribs")
 
-  # Inference the one-body expression.
-  one_body = _inference_1body_nn(occurs,
-                                 num_atom_types,
-                                 reuse=reuse,
-                                 initial_one_body_weights=one_body_weights,
-                                 trainable=trainable_one_body)
-  if add_summary:
-    tf.summary.histogram("1body_contribs", one_body)
-  if verbose:
-    print_activations(one_body)
+    # Obtain the weighted k-body contribs.
+    # In general we hope zero inputs lead to zero contribs. But the convolution
+    # kernels have biases so the output may not be zero. To fix this potential
+    # problem we multiply the calculated k-body contribs with binary weights.
+    contribs = tf.multiply(contribs, weights, name="y_contribs")
+    if add_summary:
+      tf.summary.histogram("kbody_contribs", contribs)
+    if verbose:
+      print_activations(contribs)
 
-  # Sum up the k-body contribs and one-body contribs to get the total energy.
-  # This is why we call this network `KCNN`.
-  with tf.name_scope("Sum"):
-    with tf.name_scope("kbody"):
-      y_total_kbody = tf.reduce_sum(contribs, axis=2, name="total")
-      y_total_kbody.set_shape([None, 1, 1])
-      if verbose:
-        print_activations(y_total_kbody)
-      y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
-      if add_summary:
-        tf.summary.scalar("Ek", tf.reduce_mean(y_total_kbody, name="avgEk"))
-    with tf.name_scope("1body"):
-      y_total_1body = tf.squeeze(one_body, name="squeeze")
-      if add_summary:
-        tf.summary.scalar(
-          'logE1', tf.log(
-            tf.reduce_mean(y_total_1body, name="avgE1"), name="log"))
-    y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
+    # Inference the one-body expression.
+    one_body = _inference_1body_nn(occurs,
+                                   num_atom_types,
+                                   reuse=reuse,
+                                   initial_one_body_weights=one_body_weights,
+                                   trainable=trainable_one_body)
+    if add_summary:
+      tf.summary.histogram("1body_contribs", one_body)
+    if verbose:
+      print_activations(one_body)
 
-  if verbose:
-    get_number_of_trainable_parameters(verbose=verbose)
-  return y_total, contribs
+    # Sum up the k-body contribs and one-body contribs to get the total energy.
+    # This is why we call this network `KCNN`.
+    with tf.name_scope("Sum"):
+      with tf.name_scope("kbody"):
+        y_total_kbody = tf.reduce_sum(contribs, axis=2, name="total")
+        y_total_kbody.set_shape([None, 1, 1])
+        if verbose:
+          print_activations(y_total_kbody)
+        y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
+        if add_summary:
+          tf.summary.scalar("Ek", tf.reduce_mean(y_total_kbody, name="avgEk"))
+      with tf.name_scope("1body"):
+        y_total_1body = tf.squeeze(one_body, name="squeeze")
+        if add_summary:
+          tf.summary.scalar(
+            'logE1', tf.log(
+              tf.reduce_mean(y_total_1body, name="avgE1"), name="log"))
+      y_total = tf.add(y_total_1body, y_total_kbody, "1_and_k")
+
+    if verbose:
+      get_number_of_trainable_parameters(verbose=verbose)
+    return y_total, contribs
 
 
 def print_activations(tensor):
