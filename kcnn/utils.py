@@ -151,6 +151,23 @@ def selu_initializer(dtype=tf.float32, seed=None):
     factor=1.0, mode=mode, dtype=dtype, seed=seed)
 
 
+def reduce_l2_norm(tensor, name=None):
+  """
+  Return the mean of the L2 norms along axis 1 of the given tensor.
+
+  Args:
+    tensor: a `float32` tensor of rank 2.
+    name: a `str` as the name of the op.
+
+  Returns:
+    norm: a `float32` tensor as the mean of the L2 norms.
+
+  """
+  with ops.name_scope(name, "reduce_norm", [tensor]):
+    norms = tf.norm(tensor, axis=1, keep_dims=False, name="norm")
+    return tf.reduce_mean(norms, name="mean")
+
+
 def get_xargs(pid=None):
   """
   Return the build and execute command lines from standard input for a process. 

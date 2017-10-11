@@ -11,7 +11,7 @@ from tensorflow.contrib.opt import NadamOptimizer
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
-from utils import lrelu, selu, selu_initializer
+from utils import lrelu, selu, selu_initializer, reduce_l2_norm
 from functools import partial
 
 __author__ = 'Xin Chen'
@@ -413,10 +413,10 @@ def get_f_loss(f_true, f_calc):
     f_loss: a `float32` scalar tensor as the total loss.
 
   """
-  return _get_rmse_loss(f_true, f_calc, scope="fRMSE")
+  return _get_rmse_loss(f_true, f_calc, scope="fRMSE", summary_norms=True)
 
 
-def _get_rmse_loss(true, calc, weights=None, scope=None):
+def _get_rmse_loss(true, calc, weights=None, scope=None, summary_norms=False):
   """
   Return the total loss tensor.
 
@@ -424,13 +424,16 @@ def _get_rmse_loss(true, calc, weights=None, scope=None):
     true: a `float32` tensor as the true values.
     calc: a `float32` tensor as the computed values. This tensor must has the
       same shape with `true`.
-    weights: a tensor as the weights.
+    weights: a tensor as the weights for the mean squared errors.
     scope: a `str` as the name scope.
+    summary_norms: a `bool` indicating whether we should summary the norms of
+      the values or not.
 
   Returns:
     total_loss: a `float32` scalar tensor as the total loss.
 
   """
+
   with tf.name_scope(scope):
     if weights is None:
       weights = tf.constant(1.0, name='weight')
@@ -443,6 +446,13 @@ def _get_rmse_loss(true, calc, weights=None, scope=None):
 
     if FLAGS.l2 is not None:
       total_loss = _add_l2_regularizer(total_loss, eta=FLAGS.l2)
+
+    if summary_norms:
+      l2_true = reduce_l2_norm(true, name="l2_true")
+      l2_calc = reduce_l2_norm(calc, name="l2_calc")
+      with tf.name_scope("magnitudes"):
+        tf.summary.scalar('true', l2_true)
+        tf.summary.scalar('calc', l2_calc)
 
     return total_loss
 
@@ -475,6 +485,10 @@ def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
       if not FLAGS.mse:
         f_loss = tf.sqrt(f_loss, name="fRMSE")
       f_loss = tf.multiply(f_loss, FLAGS.floss_weight, name="f_loss")
+
+      with tf.name_scope("magnitudes"):
+        tf.summary.scalar('true', reduce_l2_norm(f_true, name="l2_true"))
+        tf.summary.scalar('calc', reduce_l2_norm(f_calc, name="l2_calc"))
 
     with tf.name_scope("energy"):
       y_loss = tf.losses.mean_squared_error(
