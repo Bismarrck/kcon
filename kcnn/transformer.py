@@ -222,6 +222,11 @@ class Transformer:
         kbody_sizes.append(size)
         offsets.append(real_dim)
       split_dims = np.diff(offsets).tolist()
+      # Here we must use `sum(kbody_sizes)` but not `offsets[-1]` because when
+      # `split_dims` is not set while `kbody_terms` is given, `offsets[-1]` is
+      # not equal to C(N_max, k).
+      n = compute_n_from_cnk(sum(kbody_sizes), k_max)
+
     else:
       offsets = [0] + np.cumsum(split_dims).tolist()
       real_dim = offsets[-1]
@@ -232,6 +237,7 @@ class Transformer:
         else:
           size = 0
         kbody_sizes.append(size)
+      n = compute_n_from_cnk(offsets[-1], k_max)
 
     # Initialize internal variables.
     self._k_max = k_max
@@ -252,11 +258,6 @@ class Transformer:
     self._binary_weights = self._get_binary_weights()
     self._atomic_forces = atomic_forces
     self._indexing_matrix = None
-
-    # Here we must use `sum(kbody_sizes)` but not `offsets[-1]` because when
-    # `split_dims` is not set while `kbody_terms` is given, `offsets[-1]` is not
-    # equal to C(N, k) as a lot of zero paddings are inserted.
-    n = compute_n_from_cnk(sum(kbody_sizes), self._k_max)
     self._num_real = n - self._num_ghosts
     self._num_f_components = 3 * self._num_real
     self._num_entries = _get_num_force_entries(self._num_real, self._k_max)
