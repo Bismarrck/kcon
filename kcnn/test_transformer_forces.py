@@ -11,6 +11,7 @@ from transformer import Transformer
 from constants import GHOST, pyykko
 from itertools import combinations
 from os.path import join, dirname
+from tensorflow.contrib.layers.python.layers import flatten
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -168,6 +169,79 @@ def reorder(coefficients, indexing):
   return c[indexing]
 
 
+def batch_reorder(g, indexing):
+  """
+  The batch reordering algorithm implemented in `inference_forces`.
+
+  Args:
+    g: a 3D Tensor as the elementwise multiplication results of the auxiliary
+      coefficients and `dydz` for computing atomic forces.
+    indexing: a 3D Tensor as the indexing matrix for force compoenents.
+
+  Returns:
+    forces: a `float32` Tensor of shape `[-1, num_force_components]` as the
+      computed atomic forces.
+
+  """
+  g = tf.constant(g, dtype=tf.float32, name="tiled")
+  indexing = tf.constant(indexing, dtype=tf.int32, name="indexing")
+
+  with tf.name_scope("Forces"):
+
+    # Now we should re-order all entries of `g`. Flatten it so that its shape
+    # will be `[-1, D * 6 * C(k, 2)]`.
+    g = flatten(g)
+    g = tf.pad(g, [[0, 0], [1, 0]], mode='constant', name="pad")
+
+    # The basic idea of the re-ordering algorithm is taking advantage of the
+    # array broadcasting scheme of TensorFlow (Numpy). Since the batch size (the
+    # first axis of `g`) will not be 1, we cannot do broadcasting directly.
+    # Instead, we make the `g` a total flatten vector and broadcast it into a
+    # matrix with `indexing`.
+    with tf.name_scope("reshape"):
+
+      with tf.name_scope("indices"):
+
+        with tf.name_scope("g"):
+          shape = tf.shape(g, name="shape")
+          batch_size, step = shape[0], shape[1]
+
+        with tf.name_scope("indexing"):
+          shape = tf.shape(indexing, name="shape")
+          num_f, num_entries = shape[1], shape[2]
+
+        multiples = [1, num_f, num_entries]
+        size = tf.multiply(batch_size, step, name="total_size")
+        steps = tf.range(0, limit=size, delta=step, name="arange")
+        steps = tf.reshape(steps, (batch_size, 1, 1), name="steps")
+        steps = tf.tile(steps, multiples, name="tiled")
+        indexing = tf.add(indexing, steps, name="indices")
+
+      # Do the broadcast
+      g = tf.reshape(g, (-1, ), "1D")
+
+      # Pad an zero at the begining of the totally flatten `g` because real
+      # indices in `indexing` start from one and the index of zero suggests the
+      # contribution should also be zero.
+      # g = tf.pad(g, [[1, 0]], name="pad")
+      g = tf.gather(g, indexing, name="gather")
+
+      # Reshape `g` so that all entries of each row (axis=2) correspond to the
+      # same force component (axis=1).
+      g = tf.reshape(g, (batch_size, num_f, num_entries), "reshape")
+
+    # Sum up all entries of each row to get the final gradient for each force
+    # component.
+    g = tf.reduce_sum(g, axis=2, keep_dims=False, name="sum")
+
+    # Always remember the physics law: f = -dE / dr. But the output `y_total`
+    # already took the minus sign.
+    g = tf.identity(g, "forces")
+
+  with tf.Session() as sess:
+    return sess.run(g)
+
+
 def eval_row_diff(source, target):
   """
   Return the sum of absolute differences of each row.
@@ -231,6 +305,31 @@ class TransformerTests(tf.test.TestCase):
 
   def test_simple_ethanol(self):
     self._eval_simple("Ethanol", self.atoms["C2H6O"])
+
+  def test_simple_batch_reorder(self):
+    list_of_atoms = self.atoms["C2H6O"]
+    n = len(list_of_atoms)
+
+    clf = Transformer(list_of_atoms[0].get_chemical_symbols(),
+                      atomic_forces=True)
+    n_rows, n_cols = clf.shape
+    n_f_components = clf.num_force_components
+    n_entries = clf.num_entries_per_component
+    array_of_coefficients = np.zeros((n, n_rows, n_cols * 6))
+    array_of_indexing = np.zeros((n, n_f_components, n_entries), dtype=int)
+    singles = []
+
+    for i, atoms in enumerate(list_of_atoms):
+      _, coefficients, indexing = clf.transform(atoms)
+      array_of_coefficients[i] = coefficients
+      array_of_indexing[i] = indexing
+      singles.append(reorder(coefficients, indexing).sum(axis=1))
+
+    batches = batch_reorder(array_of_coefficients, array_of_indexing)
+
+    for i in range(len(batches)):
+      diff = np.abs(singles[i] - batches[i])
+      self.assertLess(diff.max(), self.epsilon)
 
 
 if __name__ == "__main__":
