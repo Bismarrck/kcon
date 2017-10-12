@@ -189,23 +189,37 @@ class TransformerTests(tf.test.TestCase):
       "C10H8": list_of_atoms[0],
       "CH4": list_of_atoms[1],
       "C2H6": list_of_atoms[2],
-      "C6H3N": list_of_atoms[3]
+      "C6H3N": list_of_atoms[3],
+      "C2H6O": list_of_atoms[4]
     }
     self.threshold = 1e-6
 
-  def test_simple(self):
+  def _eval_simple(self, name, atoms):
     """
-    Test the examples using their default transformers.
+    Evaluate the computed coefficients using the default `Transformer`.
     """
+    print("Test {} using default `Transformer` ...".format(name))
+    clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
+    _, transformed, indexing = clf.transform(atoms)
+    target = reorder(transformed, indexing)
+    source = get_coef_naive(clf, atoms)
+    diff = eval_diff(source, target)
+    self.assertLess(max(diff), self.threshold)
 
-    for name, atoms in self.atoms.items():
-      print("Test {} using default `Transformer` ...".format(name))
-      clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
-      _, transformed, indexing = clf.transform(atoms)
-      target = reorder(transformed, indexing)
-      source = get_coef_naive(clf, atoms)
-      diff = eval_diff(source, target)
-      self.assertLess(max(diff), self.threshold)
+  def test_simple_methane(self):
+    self._eval_simple("Methane", self.atoms["CH4"])
+
+  def test_simple_ethane(self):
+    self._eval_simple("Ethane", self.atoms["CH4"])
+
+  def test_simple_c6h3n(self):
+    self._eval_simple("C6H3N", self.atoms["C6H3N"])
+
+  def test_simple_napthalene(self):
+    self._eval_simple("Napthalene", self.atoms["C10H8"])
+
+  def test_simple_ethanol(self):
+    self._eval_simple("Ethanol", self.atoms["C2H6O"])
 
 
 if __name__ == "__main__":
