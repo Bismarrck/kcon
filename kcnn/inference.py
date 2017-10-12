@@ -206,6 +206,11 @@ def inference_forces(y_total, inputs, coefficients, indexing):
     # will be `[-1, D * 6 * C(k, 2)]`.
     g = flatten(g)
 
+    # Pad an zero at the begining of each row of `g` because real indices in
+    # `indexing` start from one and the index of zero suggests the contribution
+    # should also be zero.
+    g = tf.pad(g, [[0, 0], [1, 0]], mode='constant', name="pad")
+
     # The basic idea of the re-ordering algorithm is taking advantage of the
     # array broadcasting scheme of TensorFlow (Numpy). Since the batch size (the
     # first axis of `g`) will not be 1, we cannot do broadcasting directly.
@@ -232,11 +237,6 @@ def inference_forces(y_total, inputs, coefficients, indexing):
 
       # Do the broadcast
       g = tf.reshape(g, (-1, ), "1D")
-
-      # Pad an zero at the begining of the totally flatten `g` because real
-      # indices in `indexing` start from one and the index of zero suggests the
-      # contribution should also be zero.
-      g = tf.pad(g, [[1, 0]], name="pad")
       g = tf.gather(g, indices, name="gather")
 
       # Reshape `g` so that all entries of each row (axis=2) correspond to the
