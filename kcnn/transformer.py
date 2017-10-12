@@ -29,7 +29,9 @@ __email__ = 'Bismarrck@me.com'
 
 FLAGS = tf.app.flags.FLAGS
 
-_safe_log = np.e**(-6)
+# Important: this `_safe_log` must be very very small. The previous e^-6 is
+# large enough to cause significant numeric errors.
+_safe_log = np.e**(-20)
 
 
 """
@@ -528,12 +530,13 @@ class Transformer:
         # cannot be used here because it will return absolute values.
         ndim = len(dists)
         delta = np.zeros((ndim, ndim, 3))
+
         # Based on my tests, the vector subtraction used here should be:
-        #  r_{ij} = r_{i} - r_{j}.
+        # r_{ij} = r_{i} - r_{j}
         for i in range(ndim):
           for j in range(i + 1, ndim):
-            delta[i, j, :] = coords[i] - coords[j]
-            delta[j, i, :] = coords[i] - coords[j]
+            delta[i, j, :] = coords[i] - coords[j]  # r_ij
+            delta[j, i, :] = coords[j] - coords[i]  # r_ji
     else:
       atoms = Atoms(
         symbols=self._species,
@@ -721,8 +724,7 @@ class Transformer:
     if self._atomic_forces:
       # There will be zeros in `z`. Here we make sure every entry is no smaller
       # than e^-6.
-      z = np.maximum(z, _safe_log)
-      logz6 = np.tile(np.log(z), (1, 6))
+      logz6 = np.tile(np.log(z.clip(min=_safe_log)), (1, 6))
       z6 = np.tile(z, (1, 6))
       l6 = np.tile(l**2, (1, 6))
       coef = safe_divide(z6 * d6, l6 * logz6)
@@ -1422,191 +1424,3 @@ class FixedLenMultiTransformer(MultiTransformer):
         initial_1body_weights=weights,
         lookup_indices=ids
       )
-
-
-def debug():
-  """
-  Debugging the calculation of the atomic forces.
-
-  Goals:
-    1. [x] CH4 and C2H6, default settings.
-    2. [x] CH4 and C2H6, alternative `kbody_terms`.
-    3. [x] CH4 and C2H6, alternative `kbody_terms` and `split_dims`.
-    4. [x] CH4 and C2H6, alternative `kbody_terms` and `split_dims`, GHOST
-    5. [ ] TiO2, default settings.
-
-  """
-
-  def print_atoms(_atoms):
-    """
-    Print the coordinates of the `ase.Atoms` in XYZ format.
-    """
-    for _i, _atom in enumerate(_atoms):
-      print("{:2d} {:2s} {: 14.8f} {: 14.8f} {: 14.8f}".format(
-        _i, _atom.symbol, *_atom.position))
-
-  def array2string(_x):
-    """
-    Convert the numpy array to a string.
-    """
-    return np.array2string(_x, formatter={"float": lambda _x: "%-8.3f" % _x})
-
-  positions = np.array([
-    [0.99825996, -0.00246000, -0.00436000],
-    [2.09020996, -0.00243000,  0.00414000],
-    [0.63378996,  1.02686000,  0.00414000],
-    [0.62703997, -0.52772999,  0.87810999],
-    [0.64135998, -0.50746995, -0.90539992],
-  ])
-  symbols = ["C", "H", "H", "H", "H"]
-
-  # positions = np.array([
-  #  [0.98915994,  0.00010000,  0.00000000],
-  #  [2.32491994, -0.00017000, -0.00000000],
-  #  [0.42940998,  0.93013996,  0.00000000],
-  #  [0.42907000, -0.92984998,  0.00000000],
-  #  [2.88499999,  0.92979997, -0.00000000],
-  #  [2.88466978, -0.93019998,  0.00000000],
-  # ])
-  # symbols = ["C", "C", "H", "H", "H", "H"]
-  atoms = Atoms(symbols=symbols, positions=positions)
-
-  print("Molecule: {}".format(atoms.get_chemical_symbols()))
-  print_atoms(atoms)
-
-  species = ["C", "C", "H", "H", "H", "H", "N", GHOST]
-  kbody_terms = _get_kbody_terms(species, k_max=3)
-
-  split_dims = []
-  max_occurs = {"C": 2, "H": 4, "N": 1, GHOST: 1}
-  for kbody_term in kbody_terms:
-    elements = get_atoms_from_kbody_term(kbody_term)
-    counter = Counter(elements)
-    dims = [comb(max_occurs[e], k, True) for e, k in counter.items()]
-    split_dims.append(np.prod(dims))
-  split_dims = [int(x) for x in split_dims]
-  print(split_dims)
-
-  clf = Transformer(symbols + [GHOST],
-                    kbody_terms=kbody_terms,
-                    split_dims=split_dims,
-                    atomic_forces=True)
-
-  bond_types = clf.get_bond_types()
-  features, coef, indexing = clf.transform(atoms)
-  offsets = [0] + np.cumsum(clf.split_dims).tolist()
-
-  for i, kbody_term in enumerate(clf.kbody_terms):
-    istart = offsets[i]
-
-    print(kbody_term)
-    print("Bond types: {}".format(bond_types[kbody_term]))
-
-    if kbody_term in clf.kbody_selections:
-      istep = min(offsets[i + 1] - istart, clf.kbody_sizes[i])
-      istop = istart + istep
-
-      selections = clf.kbody_selections[kbody_term]
-      for j, index in enumerate(range(istart, istop)):
-        print("Selection: {}".format(selections[j]))
-        print("out  : {}".format(array2string(features[index])))
-
-    else:
-      print("Selection: None")
-
-  print("Forces coefficients: ")
-  print(array2string(coef.flatten()[indexing]))
-
-  n = sum(max_occurs.values())
-  natoms = n - max_occurs.get(GHOST, 0)
-  matrix = np.zeros((natoms * 3, (natoms - 1)**2))
-  locations = np.zeros(n, dtype=int)
-  vlist = np.zeros(3)
-  xlist = np.zeros(3)
-  ylist = np.zeros(3)
-  zlist = np.zeros(3)
-  ilist = np.zeros(3, dtype=int)
-  jlist = np.zeros(3, dtype=int)
-
-  for kbody_term in clf.kbody_terms:
-
-    if kbody_term not in clf.kbody_selections:
-      continue
-
-    selections = clf.kbody_selections[kbody_term]
-    bonds = bond_types[kbody_term]
-
-    if bonds[0] == bonds[1]:
-      if bonds[1] == bonds[2]:
-        cols = [0, 1, 2]
-      else:
-        cols = [0, 1]
-    elif bonds[0] == bonds[2]:
-      cols = [0, 2]
-    elif bonds[1] == bonds[2]:
-      cols = [1, 2]
-    else:
-      cols = []
-
-    for selection in selections:
-      vlist.fill(0.0)
-      xlist.fill(0.0)
-      ylist.fill(0.0)
-      zlist.fill(0.0)
-      for k, (i, j) in enumerate(combinations(selection, r=2)):
-        if i >= len(atoms) or j >= len(atoms):
-          continue
-        r = atoms.get_distance(i, j)
-        radius = pyykko[symbols[i]] + pyykko[symbols[j]]
-        v = np.exp(-r / radius)
-        g = (1.0 / radius**2) * v * (positions[i] - positions[j]) / np.log(v)
-        assert isinstance(g, np.ndarray)
-
-        vlist[k] = v
-        ilist[k] = i
-        jlist[k] = j
-        xlist[k] = g[0]
-        ylist[k] = g[1]
-        zlist[k] = g[2]
-
-      if len(cols) > 0:
-        orders = np.argsort(vlist[cols])
-        for vector in (ilist, jlist, xlist, ylist, zlist):
-          entries = vector[cols]
-          entries = entries[orders]
-          vector[cols] = entries
-
-      for k in range(3):
-        i = ilist[k]
-        j = jlist[k]
-        x = xlist[k]
-        y = ylist[k]
-        z = zlist[k]
-        matrix[i * 3: i * 3 + 3, locations[i]] = +x, +y, +z
-        matrix[j * 3: j * 3 + 3, locations[j]] = -x, -y, -z
-        locations[i] += 1
-        locations[j] += 1
-
-  print("Targets: ")
-  print(array2string(matrix))
-
-  directions = ("x", "y", "z")
-  calculated = np.pad(coef.flatten(), [[1, 0]], mode='constant')[indexing]
-  print("Differences: ")
-  for i in range(len(matrix)):
-    diff = np.abs(np.sort(calculated[i]) - np.sort(matrix[i])).sum()
-    print("{:d}{:s} : {: 10.6f}".format(i // 3, directions[i % 3], diff))
-
-  sorted_diff = np.sort(calculated.flatten()) - np.sort(matrix.flatten())
-  abs_sorted_diff = np.absolute(sorted_diff)
-  ntotal = len(abs_sorted_diff)
-  for n in range(10):
-    print(abs_sorted_diff[0: (n + 1) * ntotal // 10].sum())
-
-  print("Shape of the features:        {}".format(features.shape))
-  print("Shape of the indexing matrix: {}".format(indexing.shape))
-  print("Shape of the coef matrix:     {}".format(coef.shape))
-
-
-if __name__ == "__main__":
-  debug()
