@@ -109,7 +109,7 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
     return lmat
 
 
-def _get_kbody_terms(species, k_max):
+def get_kbody_terms_from_species(species, k_max):
   """
   Return the k-body terms given the chemical symbols and `many_body_k`.
 
@@ -204,7 +204,7 @@ class Transformer:
     if split_dims is not None:
       assert len(split_dims) == len(kbody_terms)
 
-    kbody_terms = kbody_terms or _get_kbody_terms(species, k_max)
+    kbody_terms = kbody_terms or get_kbody_terms_from_species(species, k_max)
     num_ghosts = self._get_num_ghosts(species, k_max)
     mapping, selections = self._get_mapping(species, kbody_terms)
 
@@ -926,7 +926,7 @@ class MultiTransformer:
     self._include_all_k = include_all_k
     self._k_max = k_max
     self._atom_types = list(set(atom_types))
-    self._kbody_terms = _get_kbody_terms(species, k_max)
+    self._kbody_terms = get_kbody_terms_from_species(species, k_max)
     self._transformers = {}
     self._max_occurs = max_occurs
     self._norm_order = norm_order

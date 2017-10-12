@@ -7,10 +7,13 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import numpy as np
 import ase.io
-from transformer import Transformer
+from transformer import Transformer, get_kbody_terms_from_species
 from constants import GHOST, pyykko
-from itertools import combinations
+from utils import get_atoms_from_kbody_term
+from itertools import combinations, chain, repeat
 from os.path import join, dirname
+from collections import Counter
+from scipy.misc import comb
 from tensorflow.contrib.layers.python.layers import flatten
 
 __author__ = 'Xin Chen'
@@ -124,6 +127,8 @@ def get_coef_naive(transformer, atoms, max_occurs=None):
       # (i, j) is the indices of the atoms that form the bond r_ij.
       for k, (i, j) in enumerate(combinations(selection, r=2)):
         if i >= len(atoms) or j >= len(atoms):
+          # Set the corresponding index to -1 so that later it can be avoided.
+          ilist[k] = -1
           continue
         r = atoms.get_distance(i, j)
         radius = pyykko[symbols[i]] + pyykko[symbols[j]]
@@ -149,6 +154,8 @@ def get_coef_naive(transformer, atoms, max_occurs=None):
       # Assign the calculated coefficients.
       for k in range(3):
         i = ilist[k]
+        if i < 0:
+          continue
         j = jlist[k]
         x = xlist[k]
         y = ylist[k]
@@ -330,6 +337,78 @@ class TransformerTests(tf.test.TestCase):
     for i in range(len(batches)):
       diff = np.abs(singles[i] - batches[i])
       self.assertLess(diff.max(), self.epsilon)
+
+  def test_ethanol_with_ghost(self):
+    atoms = self.atoms["C2H6O"][0]
+    species = atoms.get_chemical_symbols() + [GHOST]
+
+    clf = Transformer(species, atomic_forces=True)
+    self.assertEqual(clf.num_force_components, 27)
+    self.assertEqual(clf.num_entries_per_component, 64)
+
+    _, transformed, indexing = clf.transform(atoms)
+    target = reorder(transformed, indexing)
+    source = get_coef_naive(clf, atoms)
+    row_diff = eval_row_diff(source, target)
+    all_diff = eval_all_diff(source, target)
+    self.assertLess(all_diff, self.epsilon)
+    self.assertLess(max(row_diff), self.epsilon ** 2)
+
+  def test_ethanol_with_ghost_and_kbody_terms(self):
+    atoms = self.atoms["C2H6O"][0]
+
+    max_occurs = {"C": 3, "H": 6, "O": 2, GHOST: 1}
+    species = list(
+      chain(*[list(repeat(element, n)) for element, n in max_occurs.items()]))
+    kbody_terms = get_kbody_terms_from_species(species, k_max=3)
+
+    clf = Transformer(atoms.get_chemical_symbols() + [GHOST],
+                      kbody_terms=kbody_terms, atomic_forces=True)
+
+    self.assertEqual(clf.num_force_components, 27)
+
+    _, transformed, indexing = clf.transform(atoms)
+    target = reorder(transformed, indexing)
+    source = get_coef_naive(clf, atoms)
+    row_diff = eval_row_diff(source, target)
+    all_diff = eval_all_diff(source, target)
+    self.assertLess(all_diff, self.epsilon)
+    self.assertLess(max(row_diff), self.epsilon ** 2)
+
+  def test_ethanol_with_all(self):
+    atoms = self.atoms["C2H6O"][0]
+
+    max_occurs = {"C": 3, "H": 6, "O": 2, GHOST: 1}
+    species = list(
+      chain(*[list(repeat(element, n)) for element, n in max_occurs.items()]))
+    kbody_terms = get_kbody_terms_from_species(species, k_max=3)
+    split_dims = []
+    for kbody_term in kbody_terms:
+      elements = get_atoms_from_kbody_term(kbody_term)
+      counter = Counter(elements)
+      dims = [comb(max_occurs[e], k, True) for e, k in counter.items()]
+      split_dims.append(np.prod(dims))
+    split_dims = [int(x) for x in split_dims]
+
+    clf = Transformer(atoms.get_chemical_symbols() + [GHOST],
+                      kbody_terms=kbody_terms,
+                      split_dims=split_dims,
+                      atomic_forces=True)
+
+    self.assertEqual(clf.num_force_components, 33)
+    self.assertEqual(clf.num_entries_per_component, 100)
+
+    _, transformed, indexing = clf.transform(atoms)
+    target = reorder(transformed, indexing)
+    source = get_coef_naive(clf, atoms)
+
+    self.assertLess(np.abs(target[:, 64:]).max(), self.epsilon)
+    self.assertLess(np.abs(target[27:, :]).max(), self.epsilon)
+
+    row_diff = eval_row_diff(source, target[:27, :64])
+    all_diff = eval_all_diff(source, target[:27, :64])
+    self.assertLess(all_diff, self.epsilon)
+    self.assertLess(max(row_diff), self.epsilon ** 2)
 
 
 if __name__ == "__main__":
