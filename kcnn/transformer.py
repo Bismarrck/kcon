@@ -344,11 +344,25 @@ class Transformer:
     return self._periodic
 
   @property
-  def atomic_forces_enabled(self):
+  def support_atomic_forces(self):
     """
     Return True if atomic forces derivation is enabled.
     """
     return self._atomic_forces
+
+  @property
+  def num_force_components(self):
+    """
+    Return the total number of force components.
+    """
+    return self._num_f_components
+
+  @property
+  def num_entries_per_component(self):
+    """
+    Return the number of entries per force component.
+    """
+    return self._num_entries
 
   def get_bond_types(self):
     """
