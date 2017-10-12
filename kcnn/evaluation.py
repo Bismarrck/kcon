@@ -38,6 +38,9 @@ tf.app.flags.DEFINE_integer('stop_after_repeats', 3,
 tf.app.flags.DEFINE_boolean('eval_training_data', False,
                             """Evaluate the performances on the whole training 
                             dataset.""")
+tf.app.flags.DEFINE_boolean('disable_moving_average', False,
+                            """The moving averaged variables will not be used 
+                            if this flag is set.""")
 
 
 def get_eval_dir():
@@ -227,11 +230,16 @@ def evaluate(eval_dir):
     y_true = tf.cast(y_true, tf.float32)
     y_calc.set_shape(y_true.get_shape().as_list())
 
-    # Restore the moving average version of the learned variables for eval.
-    variable_averages = tf.train.ExponentialMovingAverage(
-        VARIABLE_MOVING_AVERAGE_DECAY)
-    variables_to_restore = variable_averages.variables_to_restore()
-    saver = tf.train.Saver(variables_to_restore)
+    # Restore the moving average version of the learned variables for eval by
+    # default. Sometimes this may cause some problem so we can manually disable
+    # it.
+    if FLAGS.disable_moving_average:
+      saver = tf.train.Saver()
+    else:
+      variable_averages = tf.train.ExponentialMovingAverage(
+          VARIABLE_MOVING_AVERAGE_DECAY)
+      variables_to_restore = variable_averages.variables_to_restore()
+      saver = tf.train.Saver(variables_to_restore)
 
     # Build the summary operation based on the TF collection of Summaries.
     summary_op = tf.summary.merge_all()
