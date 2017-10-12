@@ -168,6 +168,22 @@ def reduce_l2_norm(tensor, name=None):
     return tf.reduce_mean(norms, name="mean")
 
 
+def msra_initializer(dtype=tf.float32, seed=None):
+  """
+  [Delving Deep into Rectifiers](http://arxiv.org/pdf/1502.01852v1.pdf)
+
+  Args:
+    seed: A Python integer. Used to create random seeds. See
+          @{tf.set_random_seed} for behavior.
+    dtype: The data type. Only floating point types are supported.
+
+  Returns:
+    An initializer for a weight matrix.
+
+  """
+  return variance_scaling_initializer(seed=seed, dtype=dtype)
+
+
 def get_xargs(pid=None):
   """
   Return the build and execute command lines from standard input for a process. 

@@ -11,7 +11,8 @@ from tensorflow.contrib.opt import NadamOptimizer
 from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
 from constants import SEED
 from inference import inference_energy, inference_forces
-from utils import lrelu, selu, selu_initializer, reduce_l2_norm
+from utils import lrelu, selu, reduce_l2_norm
+from utils import selu_initializer, msra_initializer
 from functools import partial
 
 __author__ = 'Xin Chen'
@@ -40,6 +41,9 @@ tf.app.flags.DEFINE_float('alpha', 0.01,
 tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
+tf.app.flags.DEFINE_string('initializer', 'msra',
+                           """Set the weights initialization method: msra or 
+                           xvaier""")
 
 # Setup the total loss function
 tf.app.flags.DEFINE_float('floss_weight', 1.0,
@@ -239,6 +243,8 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
 
   if FLAGS.activation_fn == 'selu':
     weights_initializer = selu_initializer(seed=SEED)
+  elif FLAGS.initializer == 'msra':
+    weights_initializer = msra_initializer(seed=SEED)
 
   trainable = not FLAGS.fixed_one_body
   if FLAGS.normalizer.lower() == 'none':
