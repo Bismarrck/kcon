@@ -168,7 +168,7 @@ def reorder(coefficients, indexing):
   return c[indexing]
 
 
-def eval_diff(source, target):
+def eval_row_diff(source, target):
   """
   Return the sum of absolute differences of each row.
   """
@@ -176,6 +176,13 @@ def eval_diff(source, target):
   for i in range(len(source)):
     diff[i] = np.abs(np.sort(source[i]) - np.sort(target[i])).sum()
   return diff
+
+
+def eval_all_diff(source, target):
+  """
+  Return the sum of absolute differences of all entries.
+  """
+  return np.abs(np.sort(source.flatten()) - np.sort(target.flatten())).sum()
 
 
 class TransformerTests(tf.test.TestCase):
@@ -186,25 +193,29 @@ class TransformerTests(tf.test.TestCase):
     """
     list_of_atoms = get_test_examples()
     self.atoms = {
-      "C10H8": list_of_atoms[0],
-      "CH4": list_of_atoms[1],
-      "C2H6": list_of_atoms[2],
-      "C6H3N": list_of_atoms[3],
-      "C2H6O": list_of_atoms[4]
+      "C10H8": [list_of_atoms[0]],
+      "CH4": [list_of_atoms[1]],
+      "C2H6": [list_of_atoms[2]],
+      "C6H3N": [list_of_atoms[3]],
+      "C2H6O": list_of_atoms[4:9]
     }
-    self.threshold = 1e-6
+    self.epsilon = 1e-3
 
-  def _eval_simple(self, name, atoms):
+  def _eval_simple(self, name, list_of_atoms):
     """
     Evaluate the computed coefficients using the default `Transformer`.
     """
     print("Test {} using default `Transformer` ...".format(name))
-    clf = Transformer(atoms.get_chemical_symbols(), atomic_forces=True)
-    _, transformed, indexing = clf.transform(atoms)
-    target = reorder(transformed, indexing)
-    source = get_coef_naive(clf, atoms)
-    diff = eval_diff(source, target)
-    self.assertLess(max(diff), self.threshold)
+    clf = Transformer(list_of_atoms[0].get_chemical_symbols(),
+                      atomic_forces=True)
+    for atoms in list_of_atoms:
+      _, transformed, indexing = clf.transform(atoms)
+      target = reorder(transformed, indexing)
+      source = get_coef_naive(clf, atoms)
+      row_diff = eval_row_diff(source, target)
+      all_diff = eval_all_diff(source, target)
+      self.assertLess(all_diff, self.epsilon)
+      self.assertLess(max(row_diff), self.epsilon**2)
 
   def test_simple_methane(self):
     self._eval_simple("Methane", self.atoms["CH4"])
