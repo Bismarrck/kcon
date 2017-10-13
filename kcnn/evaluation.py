@@ -157,9 +157,17 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
         f_true_norms = np.linalg.norm(f_true, axis=1)
         f_diff_norms = np.linalg.norm(f_true - f_pred, axis=1)
         f_ratio = (f_diff_norms / f_true_norms).mean()
-        tf.logging.info("%s: f_MAE     = %10.6f" % (dtime, f_precision))
-        tf.logging.info("%s: f_RMSE    = %10.6f" % (dtime, f_rmse))
-        tf.logging.info("%s: f_ratio   = %10.6f" % (dtime, f_ratio))
+
+        f_true_atom = np.linalg.norm(f_true.reshape((num_evals, -1, 3)), axis=2)
+        f_pred_atom = np.linalg.norm(f_pred.reshape((num_evals, -1, 3)), axis=2)
+        f_mae_atom = mean_absolute_error(f_true_atom, f_pred_atom)
+        f_rmse_atom = mean_squared_error(f_true_atom, f_pred_atom)
+
+        tf.logging.info("%s: f_MAE         = %10.6f" % (dtime, f_precision))
+        tf.logging.info("%s: f_MAE / atom  = %10.6f" % (dtime, f_mae_atom))
+        tf.logging.info("%s: f_RMSE        = %10.6f" % (dtime, f_rmse))
+        tf.logging.info("%s: f_RMSE / atom = %10.6f" % (dtime, f_rmse_atom))
+        tf.logging.info("%s: f_ratio       = %10.6f" % (dtime, f_ratio))
 
       # Randomly output 10 predictions and true values
       if FLAGS.output_acc_error:
