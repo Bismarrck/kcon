@@ -143,13 +143,13 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       score = r2_score(y_true, y_pred)
 
       dtime = datetime.now()
-      tf.logging.info("%s: step      = %d" % (dtime, global_step))
-      tf.logging.info("%s: time      = %.2f" % (dtime, elpased))
-      tf.logging.info("%s: precision = %10.6f" % (dtime, precision))
-      tf.logging.info("%s: RMSE      = %10.6f" % (dtime, rmse))
-      tf.logging.info("%s: minimum   = %10.6f" % (dtime, emin))
-      tf.logging.info("%s: maximum   = %10.6f" % (dtime, emax))
-      tf.logging.info("%s: score     = %10.6f" % (dtime, score))
+      tf.logging.info("%s: step          = %d" % (dtime, global_step))
+      tf.logging.info("%s: time          = %.2f" % (dtime, elpased))
+      tf.logging.info("%s: precision     = %10.6f" % (dtime, precision))
+      tf.logging.info("%s: RMSE          = %10.6f" % (dtime, rmse))
+      tf.logging.info("%s: minimum       = %10.6f" % (dtime, emin))
+      tf.logging.info("%s: maximum       = %10.6f" % (dtime, emax))
+      tf.logging.info("%s: score         = %10.6f" % (dtime, score))
 
       if atomic_forces:
         f_precision = mean_absolute_error(f_true, f_pred)
@@ -161,11 +161,11 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
         f_true_atom = f_true.reshape((num_evals, -1, 3))
         f_pred_atom = f_pred.reshape((num_evals, -1, 3))
         f_diff_atom = f_true_atom - f_pred_atom
-        f_mae_atom = np.linalg.norm(f_diff_atom, ord=1, axis=1).mean()
-        f_rmse_atom = np.linalg.norm(f_diff_atom, ord=2, axis=1).mean()
+        f_mae_atom = np.linalg.norm(f_diff_atom, ord=1, axis=2).mean()
+        f_rmse_atom = np.linalg.norm(f_diff_atom, ord=2, axis=2).mean()
 
         tf.logging.info("%s: f_MAE         = %10.6f" % (dtime, f_precision))
-        tf.logging.info("%s: f_MAE / atom  = %10.6f" % (dtime, f_mae_atom))
+        tf.logging.info("%s: f_MAE  / atom = %10.6f" % (dtime, f_mae_atom))
         tf.logging.info("%s: f_RMSE        = %10.6f" % (dtime, f_rmse))
         tf.logging.info("%s: f_RMSE / atom = %10.6f" % (dtime, f_rmse_atom))
         tf.logging.info("%s: f_ratio       = %10.6f" % (dtime, f_ratio))
