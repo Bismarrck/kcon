@@ -571,8 +571,10 @@ def _add_total_norm_summaries(grads_and_vars, collection,
     if grad is not None:
       norm = tf.norm(grad, name=var.op.name + "/norm")
       tf.add_to_collection(collection, norm)
+      with tf.name_scope("gradients/"):
+        tf.summary.histogram(var.op.name + "/g", grad)
       if not only_summary_total:
-        with tf.name_scope("norms/{}/".format(collection)):
+        with tf.name_scope("norms/"):
           tf.summary.scalar(var.op.name, norm)
 
   with tf.name_scope("total_norm/"):
@@ -593,14 +595,14 @@ def _add_variable_summaries():
       vsum = tf.reduce_sum(tf.abs(var, name="absolute"), name="vsum")
 
       if not var.op.name.startswith('kCON/one-body'):
-        tf.add_to_collection('vars_k_sum', vsum)
+        tf.add_to_collection('k_sum', vsum)
       else:
-        tf.add_to_collection('vars_1_sum', vsum)
+        tf.add_to_collection('1_sum', vsum)
 
     tf.summary.scalar(
-      'kbody', tf.add_n(tf.get_collection('vars_k_sum'), name='kbody_vars_sum'))
+      'kbody', tf.add_n(tf.get_collection('k_sum'), name='vars_ksum'))
     tf.summary.scalar(
-      '1body', tf.add_n(tf.get_collection('vars_1_sum'), name='1body_vars_sum'))
+      '1body', tf.add_n(tf.get_collection('1_sum'), name='vars_1sum'))
 
 
 def _add_l2_regularizer(total_loss, eta):
