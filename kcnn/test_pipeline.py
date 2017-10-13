@@ -22,6 +22,9 @@ from constants import hartree_to_ev, au_to_angstrom
 from transformer import FixedLenMultiTransformer
 
 
+# TODO: fix the tests here!
+
+
 def test_extract_mixed_xyz():
   """
   Test parsing the mixed xyz file `qm7.xyz`.
