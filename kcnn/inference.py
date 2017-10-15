@@ -164,7 +164,7 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
   )
 
 
-def inference_forces(y_total, inputs, coefficients, indexing):
+def inference_forces(y_total, inputs, coefficients, indexing, summary=False):
   """
   Inference the kCON forces.
 
@@ -174,6 +174,8 @@ def inference_forces(y_total, inputs, coefficients, indexing):
     coefficients: a 3D Tensor as the auxiliary coefficients for computing atomic
       forces.
     indexing: a 3D Tensor as the indexing matrix for force compoenents.
+    summary: a `bool` indicating whether we add summaries of some internal
+      tensors or not.
 
   Returns:
     forces: a `float32` Tensor of shape `[-1, num_force_components]` as the
@@ -189,9 +191,11 @@ def inference_forces(y_total, inputs, coefficients, indexing):
     # Compute the derivative of dE / dz. `z` is the input feature matrix and
     # E = NN(z) is the output of the KCNN model.
     dydz = tf.gradients([y_total], [inputs], name="dydz")[0]
+    if summary:
+      tf.summary.histogram(dydz.op.name + "/hist", dydz)
 
     # Squeeze the `dydz`. Now its shape will be `[-1, D, C(k, 2)]`
-    dydz = tf.squeeze(dydz, axis=1, name="dydz3d")
+    dydz = tf.squeeze(dydz, axis=1, name="squeezed")
 
     # Tile the derivatives because each entry of `z` contributes to six force
     # components.
@@ -242,6 +246,8 @@ def inference_forces(y_total, inputs, coefficients, indexing):
       # Reshape `g` so that all entries of each row (axis=2) correspond to the
       # same force component (axis=1).
       g = tf.reshape(g, (batch_size, num_f, num_entries), "reshape")
+      if summary:
+        tf.summary.histogram(g.op.name + "/hist", g)
 
     # Sum up all entries of each row to get the final gradient for each force
     # component.
