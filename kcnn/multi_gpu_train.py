@@ -223,7 +223,9 @@ def restore_previous_checkpoint(sess, global_step):
   start_step = 0
   variable_averages = tf.train.ExponentialMovingAverage(
     constants.VARIABLE_MOVING_AVERAGE_DECAY)
-  variables_to_restore = variable_averages.variables_to_restore()
+  variables_to_restore = {}
+  for var in tf.trainable_variables():
+    variables_to_restore[variable_averages.average_name(var)] = var
 
   loader = tf.train.Saver(var_list=variables_to_restore)
   if FLAGS.restore_checkpoint:
