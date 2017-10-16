@@ -51,6 +51,9 @@ tf.app.flags.DEFINE_boolean('restore_training', True,
 tf.app.flags.DEFINE_string('restore_checkpoint', None,
                            """Start a new training using the variables restored
                            from the checkpoint.""")
+tf.app.flags.DEFINE_boolean('forces_only', False,
+                            """Only optimize force-related variables if this 
+                            flag is set.""")
 
 # Setup the devices.
 tf.app.flags.DEFINE_boolean('log_device_placement', True,
@@ -99,6 +102,10 @@ def tower_loss(batch, params, scope, reuse_variables=False):
   if not FLAGS.forces:
     kcnn.get_y_loss(y_true, y_calc, weights=batch[BatchIndex.loss_weight])
 
+  elif FLAGS.forces_only:
+    f_true = batch[BatchIndex.f_true]
+    kcnn.get_f_loss(f_true, f_calc)
+
   else:
     f_true = batch[BatchIndex.f_true]
     kcnn.get_yf_joint_loss(y_true, y_calc, f_true, f_calc)
@@ -119,7 +126,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
   for l in losses + [total_loss]:
     # Remove 'tower[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
-    loss_name = re.sub(r'%s[0-9]*/' % constants.TOWER_NAME, '', l.op.name)
+    loss_name = re.sub('%s[0-9]*/' % constants.TOWER_NAME, '', l.op.name)
     tf.summary.scalar(loss_name, l)
 
   with tf.control_dependencies([loss_averages_op]):
@@ -147,21 +154,31 @@ def average_gradients(tower_grads):
     #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
     grads = []
     for g, _ in grad_and_vars:
+      if g is None:
+        continue
+
       # Add 0 dimension to the gradients to represent the tower.
       expanded_g = tf.expand_dims(g, 0)
 
       # Append on a 'tower' dimension which we will average over below.
       grads.append(expanded_g)
 
-    # Average over the 'tower' dimension.
-    grad = tf.concat(grads, 0)
-    grad = tf.reduce_mean(grad, 0)
-
-    # Keep in mind that the Variables are redundant because they are shared
-    # across towers. So .. we will just return the first tower's pointer to
-    # the Variable.
     v = grad_and_vars[0][1]
-    grad_and_var = (grad, v)
+
+    # If the grads are all None, we just return a None grad.
+    if len(grads) == 0:
+      grad_and_var = (None, v)
+
+    else:
+      # Average over the 'tower' dimension.
+      grad = tf.concat(grads, 0)
+      grad = tf.reduce_mean(grad, 0)
+
+      # Keep in mind that the Variables are redundant because they are shared
+      # across towers. So .. we will just return the first tower's pointer to
+      # the Variable.
+      grad_and_var = (grad, v)
+
     average_grads.append(grad_and_var)
 
   return average_grads
