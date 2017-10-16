@@ -164,7 +164,7 @@ def _inference_1body_nn(occurs, num_atom_types, initial_one_body_weights=None,
   )
 
 
-def inference_forces(y_total, inputs, coefficients, indexing, summary=False):
+def inference_forces(y_total, inputs, coefficients, indexing, summary=True):
   """
   Inference the kCON forces.
 
@@ -275,7 +275,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
                      verbose=True, num_kernels=None, activation_fn=lrelu,
                      normalizer='bias', weights_initializer=None,
                      one_body_weights=None, trainable_one_body=True,
-                     add_summary=True):
+                     summary=True):
   """
   Inference the kCON energy model.
 
@@ -304,7 +304,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
       trainable or not.
-    add_summary: a `bool` indicating whether we should add summaries for
+    summary: a `bool` indicating whether we should add summaries for
       tensors or not.
 
   Returns:
@@ -351,7 +351,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     # kernels have biases so the output may not be zero. To fix this potential
     # problem we multiply the calculated k-body contribs with binary weights.
     contribs = tf.multiply(contribs, weights, name="y_contribs")
-    if add_summary:
+    if summary:
       tf.summary.histogram("kbody_contribs", contribs)
     if verbose:
       print_activations(contribs)
@@ -362,7 +362,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
                                    reuse=reuse,
                                    initial_one_body_weights=one_body_weights,
                                    trainable=trainable_one_body)
-    if add_summary:
+    if summary:
       tf.summary.histogram("1body_contribs", one_body)
     if verbose:
       print_activations(one_body)
@@ -376,11 +376,11 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
         if verbose:
           print_activations(y_total_kbody)
         y_total_kbody = tf.squeeze(flatten(y_total_kbody), name="squeeze")
-        if add_summary:
+        if summary:
           tf.summary.scalar("Ek", tf.reduce_mean(y_total_kbody, name="avgEk"))
       with tf.name_scope("1body"):
         y_total_1body = tf.squeeze(one_body, name="squeeze")
-        if add_summary:
+        if summary:
           tf.summary.scalar(
             'logE1', tf.log(
               tf.reduce_mean(y_total_1body, name="avgE1"), name="log"))
