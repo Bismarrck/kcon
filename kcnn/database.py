@@ -215,7 +215,7 @@ def xyz_to_database(xyzfile, num_examples, xyz_format='xyz', verbose=True,
           atoms.append(Atom(symbol=m.group(1),
                             position=[float(v) for v in m.groups()[1:4]]))
           if parse_forces:
-            atoms.info['provided_forces'][ai, :] = [float(v)
+            atoms.info['provided_forces'][ai, :] = [float(v) * unit
                                                     for v in m.groups()[4:7]]
           ai += 1
           if ai == natoms:
