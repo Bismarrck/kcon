@@ -73,7 +73,8 @@ def may_build_dataset(dataset=None, verbose=True):
   database = Database.from_xyz(xyzfile,
                                num_examples=FLAGS.num_examples,
                                verbose=verbose,
-                               xyz_format=FLAGS.format)
+                               xyz_format=FLAGS.format,
+                               unit_to_ev=FLAGS.unit)
   database.split(test_size=FLAGS.test_size)
 
   # The maximum supported `k` is 5.
