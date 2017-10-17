@@ -49,8 +49,10 @@ tf.app.flags.DEFINE_string('initializer', 'msra',
                            xvaier""")
 
 # Setup the total loss function
-tf.app.flags.DEFINE_float('floss_weight', 1.0,
+tf.app.flags.DEFINE_float('f_loss_weight', 1.0,
                           """The weight of the f-loss in total loss.""")
+tf.app.flags.DEFINE_float('y_loss_weight', 1.0,
+                          """The weight of the y-loss in total loss.""")
 tf.app.flags.DEFINE_boolean('mse', False,
                             """Use MSE loss instead of RMSE loss if True.""")
 tf.app.flags.DEFINE_float('l2', None,
@@ -523,7 +525,7 @@ def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
       )
       if not FLAGS.mse:
         f_loss = tf.sqrt(f_loss, name="fRMSE")
-      f_loss = tf.multiply(f_loss, FLAGS.floss_weight, name="f_loss")
+      f_loss = tf.multiply(f_loss, FLAGS.f_loss_weight, name="f_loss")
 
       with tf.name_scope("magnitudes"):
         tf.summary.scalar('true', reduce_l2_norm(f_true, name="l2_true"))
@@ -538,6 +540,7 @@ def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
       )
       if not FLAGS.mse:
         y_loss = tf.sqrt(y_loss, name="yRMSE")
+      y_loss = tf.multiply(y_loss, FLAGS.y_loss_weight, name="y_loss")
 
     with tf.name_scope("losses"):
       tf.summary.scalar("y", y_loss)
