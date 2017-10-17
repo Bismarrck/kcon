@@ -47,6 +47,9 @@ tf.app.flags.DEFINE_boolean('debug', False,
                             """Set the logging level to `logging.DEBUG`.""")
 tf.app.flags.DEFINE_boolean('forces_only', False,
                             """Only minimize the forces if this flag is set.""")
+tf.app.flags.DEFINE_boolean('alter_train_op', False,
+                            """Use the alternative training op if this flag is 
+                            set.""")
 
 
 def train_model():
@@ -90,8 +93,11 @@ def train_model():
         y_true, y_calc, f_true, f_calc
       )
 
-    # Build a Graph that trains the model with respect to energy only.
-    train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
+    # Build a Graph that trains the model.
+    if FLAGS.forces and FLAGS.alter_train_op:
+      train_op = kcnn.get_yf_train_op(y_loss, f_loss, global_step)
+    else:
+      train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
     # Save the training flags
     save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
