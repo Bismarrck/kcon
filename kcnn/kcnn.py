@@ -4,16 +4,19 @@ This script is used to infer the neural network.
 """
 from __future__ import print_function, absolute_import
 
+from functools import partial
+
 import numpy as np
 import tensorflow as tf
-import pipeline
 from tensorflow.contrib.opt import NadamOptimizer
-from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
+
+import pipeline
 from constants import SEED
+from constants import VARIABLE_MOVING_AVERAGE_DECAY, LOSS_MOVING_AVERAGE_DECAY
+from summary_utils import add_total_norm_summaries, add_variable_summaries
 from inference import inference_energy, inference_forces
 from utils import lrelu, selu, reduce_l2_norm
 from utils import selu_initializer, msra_initializer
-from functools import partial
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -277,7 +280,7 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
       one_body_weights=one_body_weights,
       verbose=verbose,
       trainable_one_body=trainable,
-      add_summary=add_summary,
+      summary=add_summary,
     )
 
     if atomic_forces:
@@ -285,7 +288,8 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
         y_total=y_calc,
         inputs=inputs,
         coefficients=coefficients,
-        indexing=indexing
+        indexing=indexing,
+        summary=add_summary
       )
     else:
       f_calc = None
@@ -391,6 +395,35 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
   return y_calc, y_true, y_weight, f_calc, f_true
 
 
+def add_l2_regularizer(total_loss, eta):
+  """
+  Add l2 regularizer to the total loss.
+
+  Args:
+    total_loss: a `float32` tensor as the total loss.
+    eta: a `float32` tensor as the strength of the l2. `eta` is used to replace
+      `lambda` in the formula because `lambda` is a Python key word.
+
+  Returns:
+    total_loss: a `float32` tensor as the regularized total loss.
+
+  """
+  with tf.name_scope("L2"):
+    for var in tf.trainable_variables():
+      if 'bias' in var.op.name:
+        continue
+      # L2 loss will not include the one-body weights.
+      if var.op.name.startswith('one-body'):
+        continue
+      l2 = tf.nn.l2_loss(var, name=var.op.name + "/l2")
+      tf.add_to_collection('l2_loss', l2)
+    l2_loss = tf.add_n(tf.get_collection('l2_loss'), name='l2_raw')
+    l2_loss = tf.multiply(l2_loss, eta, name='loss')
+
+  tf.summary.scalar('l2_loss', l2_loss)
+  return tf.add(total_loss, l2_loss, name='total_loss_and_l2')
+
+
 def get_y_loss(y_true, y_calc, weights=None):
   """
   Return the total loss tensor of energy only.
@@ -451,7 +484,7 @@ def _get_rmse_loss(true, calc, weights=None, scope=None, summary_norms=False):
     total_loss = tf.add_n(tf.get_collection('losses'), name='total')
 
     if FLAGS.l2 is not None:
-      total_loss = _add_l2_regularizer(total_loss, eta=FLAGS.l2)
+      total_loss = add_l2_regularizer(total_loss, eta=FLAGS.l2)
 
     if summary_norms:
       l2_true = reduce_l2_norm(true, name="l2_true")
@@ -515,7 +548,7 @@ def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
     total_loss = tf.add_n(tf.get_collection("losses"), name="total")
 
     if FLAGS.l2 is not None:
-      total_loss = _add_l2_regularizer(total_loss, eta=FLAGS.l2)
+      total_loss = add_l2_regularizer(total_loss, eta=FLAGS.l2)
 
     return total_loss, y_loss, f_loss
 
@@ -549,89 +582,6 @@ def _add_loss_summaries(total_loss):
     tf.summary.scalar(l.op.name, loss_averages.average(l))
 
   return loss_averages_op
-
-
-def _add_total_norm_summaries(grads_and_vars, collection,
-                              only_summary_total=True):
-  """
-  Add summaries for the 2-norms of the gradients.
-
-  Args:
-    grads_and_vars: a list of (gradient, variable) returned by an optimizer.
-    collection: a `str` as the collection to add the computed norms.
-    only_summary_total: a `bool` indicating whether we should summarize the
-      individual norms or not.
-
-  Returns:
-    total_norm: a `float32` tensor that computes the sum of all norms of the
-      gradients.
-
-  """
-  for grad, var in grads_and_vars:
-    if grad is not None:
-      norm = tf.norm(grad, name=var.op.name + "/norm")
-      tf.add_to_collection(collection, norm)
-      with tf.name_scope("gradients/"):
-        tf.summary.histogram(var.op.name + "/g", grad)
-      if not only_summary_total:
-        with tf.name_scope("norms/"):
-          tf.summary.scalar(var.op.name, norm)
-
-  with tf.name_scope("total_norm/"):
-    total_norm = tf.add_n(tf.get_collection(collection))
-    tf.summary.scalar(collection, total_norm)
-
-  return total_norm
-
-
-def _add_variable_summaries():
-  """
-  Add variable summaries.
-  """
-  with tf.name_scope("variables"):
-
-    for var in tf.trainable_variables():
-      tf.summary.histogram(var.op.name, var)
-      vsum = tf.reduce_sum(tf.abs(var, name="absolute"), name="vsum")
-
-      if not var.op.name.startswith('kCON/one-body'):
-        tf.add_to_collection('k_sum', vsum)
-      else:
-        tf.add_to_collection('1_sum', vsum)
-
-    tf.summary.scalar(
-      'kbody', tf.add_n(tf.get_collection('k_sum'), name='vars_ksum'))
-    tf.summary.scalar(
-      '1body', tf.add_n(tf.get_collection('1_sum'), name='vars_1sum'))
-
-
-def _add_l2_regularizer(total_loss, eta):
-  """
-  Add l2 regularizer to the total loss.
-
-  Args:
-    total_loss: a `float32` tensor as the total loss.
-    eta: a `float32` tensor as the strength of the l2. `eta` is used to replace
-      `lambda` in the formula because `lambda` is a Python key word.
-
-  Returns:
-    total_loss: a `float32` tensor as the regularized total loss.
-
-  """
-  with tf.name_scope("L2"):
-    for var in tf.trainable_variables():
-      if 'bias' in var.op.name:
-        continue
-      # L2 loss will not include the one-body weights.
-      if var.op.name.startswith('one-body'):
-        continue
-      l2 = tf.nn.l2_loss(var, name=var.op.name + "/l2")
-      tf.add_to_collection('l2_loss', l2)
-    l2_loss = tf.add_n(tf.get_collection('l2_loss'), name='l2_raw')
-    l2_loss = tf.multiply(l2_loss, eta, name='loss')
-
-  tf.summary.scalar('l2_loss', l2_loss)
-  return tf.add(total_loss, l2_loss, name='total_loss_and_l2')
 
 
 def get_joint_loss_train_op(total_loss, global_step):
@@ -670,7 +620,7 @@ def get_joint_loss_train_op(total_loss, global_step):
       grads = opt.compute_gradients(total_loss)
 
   # Add histograms for grandients
-  _add_total_norm_summaries(grads, "norms", only_summary_total=False)
+  add_total_norm_summaries(grads, "joint", only_summary_total=False)
 
   # Apply gradients.
   apply_gradient_op = opt.apply_gradients(
@@ -680,7 +630,7 @@ def get_joint_loss_train_op(total_loss, global_step):
   )
 
   # Add histograms for trainable variables.
-  _add_variable_summaries()
+  add_variable_summaries()
 
   # Track the moving averages of all trainable variables.
   with tf.name_scope("average"):
@@ -692,3 +642,160 @@ def get_joint_loss_train_op(total_loss, global_step):
     train_op = tf.no_op(name='train')
 
   return train_op
+
+
+def sum_of_gradients(grads_of_losses):
+  """
+  Calculate the total gradient from `grad_and_vars` of different losses.
+
+  Args:
+    grads_of_losses: a list of lists of (gradient, variable) tuples.
+
+  Returns:
+    List of pairs of (gradient, variable) as the total gradient.
+
+  """
+  # Merge gradients
+  sum_grads = []
+  for grad_and_vars in zip(*grads_of_losses):
+    # Note that each grad_and_vars looks like the following:
+    #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+    grads = []
+    for g, _ in grad_and_vars:
+      if g is None:
+        continue
+
+      # Add 0 dimension to the gradients to represent the tower.
+      expanded_g = tf.expand_dims(g, 0)
+
+      # Append on a 'tower' dimension which we will average over below.
+      grads.append(expanded_g)
+
+    v = grad_and_vars[0][1]
+
+    # If the grads are all None, we just return a None grad.
+    if len(grads) == 0:
+      grad_and_var = (None, v)
+
+    else:
+      # Average over the 'tower' dimension.
+      grad = tf.concat(grads, 0)
+      grad = tf.reduce_sum(grad, 0)
+
+      # Keep in mind that the Variables are redundant because they are shared
+      # across towers. So .. we will just return the first tower's pointer to
+      # the Variable.
+      grad_and_var = (grad, v)
+    sum_grads.append(grad_and_var)
+
+  return sum_grads
+
+
+def get_yf_train_op(y_loss, f_loss, global_step):
+  """
+  An alternative implementation of building the `train_op`.
+
+  Args:
+    y_loss: a `float32` scalar tensor as the energy loss.
+    f_loss: a `float32` scalar tensor as the forces loss.
+    global_step: Integer Variable counting the number of training steps
+      processed.
+
+  Returns:
+    train_op: the op for training.
+
+  """
+
+  # Add the update ops if batch_norm is True.
+  # If we don't include the update ops as dependencies on the train step, the
+  # batch_normalization layers won't update their population statistics, which
+  # will cause the model to fail at inference time.
+  dependencies = []
+  if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
+    dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
+
+  with tf.name_scope("Optimizer"):
+    with tf.control_dependencies(dependencies):
+      lr = get_learning_rate(global_step=global_step)
+      opt = get_optimizer(learning_rate=lr)
+      assert isinstance(opt, tf.train.Optimizer)
+
+  with tf.name_scope("Gradients"):
+    with tf.name_scope("y"):
+      dydw = opt.compute_gradients(y_loss)
+      add_total_norm_summaries(dydw, "y")
+
+    with tf.name_scope("f"):
+      dfdw = opt.compute_gradients(f_loss)
+      add_total_norm_summaries(dfdw, "f")
+
+  # Merge the gradients
+  sum_grads = sum_of_gradients((dydw, dfdw))
+  add_total_norm_summaries(sum_grads, "yf", only_summary_total=False)
+
+  # Apply the gradients to variables
+  apply_gradient_op = opt.apply_gradients(
+    sum_grads, global_step=global_step, name="apply_merged"
+  )
+
+  # Add histograms for trainable variables.
+  add_variable_summaries()
+
+  # Track the moving averages of all trainable variables.
+  with tf.name_scope("average"):
+    variable_averages = tf.train.ExponentialMovingAverage(
+      VARIABLE_MOVING_AVERAGE_DECAY, global_step)
+    variables_averages_op = variable_averages.apply(tf.trainable_variables())
+
+  with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
+    train_op = tf.no_op(name='train')
+
+  return train_op
+
+
+def test_sum_of_gradients():
+  """
+  Test the function `sum_of_gradients`.
+  """
+  with tf.Graph().as_default():
+    a = tf.get_variable('a', shape=(), dtype=tf.float32,
+                        initializer=tf.zeros_initializer())
+    b = tf.get_variable('b', shape=(), dtype=tf.float32,
+                        initializer=tf.zeros_initializer())
+    x = tf.placeholder(tf.float32, shape=(None, ), name='x')
+    y = tf.placeholder(tf.float32, shape=(None, ), name='y')
+
+    f_calc = a * x + b * tf.pow(y, 2)
+    f_true = tf.placeholder(tf.float32, shape=(None, ), name='f_true')
+    f_loss = tf.sqrt(tf.losses.mean_squared_error(f_true, f_calc))
+    g_calc = b * y
+    g_true = tf.placeholder(tf.float32, shape=(None, ), name='g_true')
+    g_loss = tf.sqrt(tf.losses.mean_squared_error(g_true, g_calc))
+    h_loss = f_loss + g_loss
+
+    data = [[2.0, 3.0, 31.0, 9.0],
+            [1.0, 1.0, 5.0, 3.0]]
+    data = np.array(data, dtype=np.float32)
+
+    opt = tf.train.GradientDescentOptimizer(learning_rate=0.1)
+
+    with tf.name_scope("h"):
+      raw_grads = opt.compute_gradients(h_loss)
+
+    with tf.name_scope("separated"):
+      with tf.name_scope("f"):
+        dfdx = opt.compute_gradients(f_loss)
+      with tf.name_scope("g"):
+        dgdx = opt.compute_gradients(g_loss)
+      sum_grads = sum_of_gradients((dfdx, dgdx))
+
+    with tf.Session() as sess:
+      tf.global_variables_initializer().run()
+      feed_dict = {x: data[:, 0],
+                   y: data[:, 1],
+                   f_true: data[:, 2],
+                   g_true: data[:, 3]}
+      grad1 = sess.run(raw_grads, feed_dict=feed_dict)
+      grad2 = sess.run(sum_grads, feed_dict=feed_dict)
+      assert abs(grad1[0][0] - grad2[0][0]) < 0.001
+      assert abs(grad1[1][0] - grad2[1][0]) < 0.001
