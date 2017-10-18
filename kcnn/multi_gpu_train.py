@@ -18,6 +18,7 @@ from kcnn import extract_configs, BatchIndex
 from kcnn import kcnn as inference
 from save_model import save_model
 from utils import set_logging_configs, save_training_flags
+from summary_utils import add_total_norm_summaries
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -331,6 +332,7 @@ def train_with_multiple_gpus():
     # We must calculate the mean of each gradient. Note that this is the
     # synchronization point across all towers.
     grads = average_gradients(tower_grads)
+    add_total_norm_summaries(grads, "yf", only_summary_total=False)
 
     # Apply the gradients to adjust the shared variables.
     apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
