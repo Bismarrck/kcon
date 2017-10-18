@@ -22,35 +22,40 @@ def add_total_norm_summaries(grads_and_vars, collection,
       individual norms or not.
 
   Returns:
-    total_norm: a `float32` tensor that computes the sum of all norms of the
-      gradients.
+    list_of_ops: a list of added summary tensors.
 
   """
+  list_of_ops = []
+
   for grad, var in grads_and_vars:
     if grad is not None:
       norm = tf.norm(grad, name=var.op.name + "/norm")
       tf.add_to_collection(collection, norm)
       with tf.name_scope("gradients/{}/".format(collection)):
-        tf.summary.histogram(var.op.name + "/hist", grad)
+        list_of_ops.append(tf.summary.histogram(var.op.name + "/hist", grad))
       if not only_summary_total:
         with tf.name_scope("gradients/{}/".format(collection)):
-          tf.summary.scalar(var.op.name + "/norm", norm)
+          list_of_ops.append(tf.summary.scalar(var.op.name + "/norm", norm))
 
   with tf.name_scope("total_norm/"):
     total_norm = tf.add_n(tf.get_collection(collection))
-    tf.summary.scalar(collection, total_norm)
-
-  return total_norm
+    list_of_ops.append(tf.summary.scalar(collection, total_norm))
+  return list_of_ops
 
 
 def add_variable_summaries():
   """
   Add variable summaries.
-  """
-  with tf.name_scope("variables"):
 
+  Returns:
+    list_of_ops: a list of added summary tensors.
+
+  """
+  list_of_ops = []
+
+  with tf.name_scope("variables"):
     for var in tf.trainable_variables():
-      tf.summary.histogram(var.op.name, var)
+      list_of_ops.append(tf.summary.histogram(var.op.name, var))
       vsum = tf.reduce_sum(tf.abs(var, name="absolute"), name="vsum")
 
       if not var.op.name.startswith('kCON/one-body'):
@@ -58,7 +63,9 @@ def add_variable_summaries():
       else:
         tf.add_to_collection('1_sum', vsum)
 
-    tf.summary.scalar(
-      'kbody', tf.add_n(tf.get_collection('k_sum'), name='vars_ksum'))
-    tf.summary.scalar(
-      '1body', tf.add_n(tf.get_collection('1_sum'), name='vars_1sum'))
+    list_of_ops.append(tf.summary.scalar(
+      'kbody', tf.add_n(tf.get_collection('k_sum'), name='vars_ksum')))
+    list_of_ops.append(tf.summary.scalar(
+      '1body', tf.add_n(tf.get_collection('1_sum'), name='vars_1sum')))
+
+  return list_of_ops
