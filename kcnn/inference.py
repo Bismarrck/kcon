@@ -18,6 +18,8 @@ from utils import lrelu
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
+# TODO: test the resnet block
+
 
 # The decay for batch normalization
 BATCH_NORM_DECAY_FACTOR = 0.999
