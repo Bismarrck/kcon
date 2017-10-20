@@ -184,18 +184,18 @@ def xyz_to_database(xyzfile, num_examples, xyz_format='xyz', verbose=True,
     for line in f:
       if count == num_examples:
         break
-      l = line.strip()
-      if l == "":
+      line = line.strip()
+      if line == "":
         continue
       if stage == 0:
-        if l.isdigit():
-          natoms = int(l)
+        if line.isdigit():
+          natoms = int(line)
           atoms = Atoms(calculator=ProvidedCalculator())
           if parse_forces:
             atoms.info['provided_forces'] = np.zeros((natoms, 3))
           stage += 1
       elif stage == 1:
-        m = formatter.energy_patt.search(l)
+        m = formatter.energy_patt.search(line)
         if m:
           if xyz_format.lower() == 'extxyz':
             energy = float(m.group(3)) * unit
@@ -210,7 +210,7 @@ def xyz_to_database(xyzfile, num_examples, xyz_format='xyz', verbose=True,
           atoms.info['provided_energy'] = energy
           stage += 1
       elif stage == 2:
-        m = formatter.string_patt.search(l)
+        m = formatter.string_patt.search(line)
         if m:
           atoms.append(Atom(symbol=m.group(1),
                             position=[float(v) for v in m.groups()[1:4]]))
