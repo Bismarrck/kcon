@@ -694,11 +694,14 @@ def sum_of_gradients(grads_of_losses):
   return sum_grads
 
 
-def get_yf_train_op(y_loss, f_loss, global_step):
+def get_yf_train_op(total_loss, y_loss, f_loss, global_step):
   """
   An alternative implementation of building the `train_op`.
 
   Args:
+    total_loss: a `float32` scalar tensor as the total loss. `total_loss` should
+      be the sum of `y_loss` and `f_loss`. In this function `total_loss` is used
+      for summary only.
     y_loss: a `float32` scalar tensor as the energy loss.
     f_loss: a `float32` scalar tensor as the forces loss.
     global_step: Integer Variable counting the number of training steps
@@ -708,12 +711,13 @@ def get_yf_train_op(y_loss, f_loss, global_step):
     train_op: the op for training.
 
   """
+  total_loss_op = _add_loss_summaries(total_loss)
 
   # Add the update ops if batch_norm is True.
   # If we don't include the update ops as dependencies on the train step, the
   # batch_normalization layers won't update their population statistics, which
   # will cause the model to fail at inference time.
-  dependencies = []
+  dependencies = [total_loss_op]
   if FLAGS.normalizer and FLAGS.normalizer == 'batch_norm':
     dependencies.extend(tf.get_collection(tf.GraphKeys.UPDATE_OPS))
 

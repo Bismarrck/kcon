@@ -95,7 +95,7 @@ def train_model():
 
     # Build a Graph that trains the model.
     if FLAGS.forces and FLAGS.alter_train_op:
-      train_op = kcnn.get_yf_train_op(y_loss, f_loss, global_step)
+      train_op = kcnn.get_yf_train_op(total_loss, y_loss, f_loss, global_step)
     else:
       train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
