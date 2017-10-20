@@ -1406,35 +1406,37 @@ class FixedLenMultiTransformer(MultiTransformer):
       examples = database.examples(for_training=False)
       ids = database.ids_of_testing_examples
       num_examples = len(ids)
-      self._transform_and_save(
-        test_file,
-        examples,
-        num_examples,
-        max_size,
-        loss_fn=loss_fn,
-        verbose=verbose
-      )
-      self._save_auxiliary_for_file(
-        test_file,
-        max_size=max_size,
-        lookup_indices=ids
-      )
+      if num_examples > 0:
+        self._transform_and_save(
+          test_file,
+          examples,
+          num_examples,
+          max_size,
+          loss_fn=loss_fn,
+          verbose=verbose
+        )
+        self._save_auxiliary_for_file(
+          test_file,
+          max_size=max_size,
+          lookup_indices=ids
+        )
 
     if train_file:
       examples = database.examples(for_training=True)
       ids = database.ids_of_training_examples
       num_examples = len(ids)
-      weights = self._transform_and_save(
-        train_file,
-        examples,
-        num_examples,
-        max_size,
-        loss_fn=loss_fn,
-        verbose=verbose
-      )
-      self._save_auxiliary_for_file(
-        train_file,
-        max_size=max_size,
-        initial_1body_weights=weights,
-        lookup_indices=ids
-      )
+      if num_examples > 0:
+        weights = self._transform_and_save(
+          train_file,
+          examples,
+          num_examples,
+          max_size,
+          loss_fn=loss_fn,
+          verbose=verbose
+        )
+        self._save_auxiliary_for_file(
+          train_file,
+          max_size=max_size,
+          initial_1body_weights=weights,
+          lookup_indices=ids
+        )

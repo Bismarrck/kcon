@@ -16,8 +16,6 @@ from pipeline import get_filenames
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
-# TODO: Can we set test_size to be 0?
-
 
 tf.app.flags.DEFINE_float('unit', None,
                           """Override the default unit if this is not None.""")
@@ -77,7 +75,7 @@ def may_build_dataset(dataset=None, verbose=True):
                                verbose=verbose,
                                xyz_format=FLAGS.format,
                                unit_to_ev=FLAGS.unit)
-  database.split(test_size=FLAGS.test_size)
+  database.split(test_size=min(max(FLAGS.test_size, 0.0), 1.0))
 
   # The maximum supported `k` is 5.
   k_max = min(5, FLAGS.k_max)
