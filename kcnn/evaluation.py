@@ -41,6 +41,9 @@ tf.app.flags.DEFINE_boolean('eval_training_data', False,
 tf.app.flags.DEFINE_boolean('disable_moving_average', False,
                             """The moving averaged variables will not be used 
                             if this flag is set.""")
+tf.app.flags.DEFINE_integer('eval_step', -1,
+                            """Evaluate the specified checkpoint saved at the 
+                            given step.""")
 
 
 def get_eval_dir():
@@ -68,15 +71,25 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
   with tf.Session() as sess:
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
-      # Restores from checkpoint
-      saver.restore(sess, ckpt.model_checkpoint_path)
       # Assuming model_checkpoint_path looks something like:
       #   /my-favorite-path/model.ckpt-0,
       # extract global_step from it.
       global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
       global_step = int(global_step)
+      if FLAGS.eval_step < 0:
+        model_checkpoint_path = ckpt.model_checkpoint_path
+      else:
+        model_checkpoint_path = ckpt.model_checkpoint_path.replace(
+          '-{}'.format(global_step), '-{}'.format(FLAGS.eval_step))
+        global_step = FLAGS.eval_step
+      if model_checkpoint_path not in ckpt.all_model_checkpoint_paths:
+        tf.logging.error('The checkpoint {} cannot be accessed!'.format(
+          model_checkpoint_path))
+        return -1
+      # Restores from checkpoint
+      saver.restore(sess, model_checkpoint_path)
     else:
-      tf.logging.info('No checkpoint file found')
+      tf.logging.error('No checkpoint file can be found!')
       return -1
 
     # Wait until the parsed global step is not zero.
