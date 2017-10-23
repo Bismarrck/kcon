@@ -84,7 +84,7 @@ def tower_loss(batch, params, scope, reuse_variables=False):
 
   # Inference the model of `kCON`
   with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
-    y_calc, f_calc = inference(
+    y_calc, f_calc, n_atom = inference(
       inputs=batch[BatchIndex.inputs],
       occurs=batch[BatchIndex.occurs],
       weights=batch[BatchIndex.weights],

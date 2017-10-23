@@ -248,7 +248,7 @@ def evaluate(eval_dir):
   with tf.Graph().as_default() as graph:
 
     # Inference the KCNN model for evaluation
-    y_calc, y_true, _, f_calc, f_true = kcnn_from_dataset(
+    y_calc, y_true, _, f_calc, f_true, _ = kcnn_from_dataset(
       FLAGS.dataset,
       for_training=FLAGS.eval_training_data
     )

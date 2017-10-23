@@ -233,8 +233,10 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
       tensors or not.
 
   Returns:
-    y_calc: a Tensor of shape `[-1, ]` as the predicted total energies.
-    f_calc: a Tensor of shape `[-1, 3N]` as the calculated atomic forces.
+    y_calc: a tensor of shape `(-1, )` as the predicted total energy.
+    f_calc: a tensor of shape `(-1, 3 * num_atoms)` as the predicted forces.
+    num_atoms: a tensor of shape `(-1, )` as the total number of atoms for each
+      configuration.
 
   """
 
@@ -296,7 +298,11 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
     else:
       f_calc = None
 
-  return y_calc, f_calc
+    n_atom = tf.squeeze(
+      tf.reduce_sum(occurs, axis=-1, name="sum_of_atoms"), name="num_atoms")
+    n_atom.set_shape([None])
+
+  return y_calc, f_calc, n_atom
 
 
 def extract_configs(configs, for_training=True):
@@ -348,10 +354,13 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
     kwargs: additional key-value parameters.
 
   Returns:
-    y_total: a `float32` Tensor of shape `(-1, )` as the predicted total energy.
+    y_calc: a `float32` Tensor of shape `(-1, )` as the predicted total energy.
     y_true: a `float32` Tensor of shape `(-1, )` as the true energy.
     y_weight: a `float32` Tensor of shape `(-1, )` as the weights for computing
       weighted RMSE loss.
+    f_calc:
+    f_true:
+    n_atom:
 
   """
   batch = pipeline.next_batch(
@@ -377,14 +386,14 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
   f_true = None
 
   if not params["atomic_forces"]:
-    y_calc, _ = kcnn(
+    y_calc, _, n_atom = kcnn(
       batch[BatchIndex.inputs],
       batch[BatchIndex.occurs],
       batch[BatchIndex.weights],
       **params
     )
   else:
-    y_calc, f_calc = kcnn(
+    y_calc, f_calc, n_atom = kcnn(
       batch[BatchIndex.inputs],
       batch[BatchIndex.occurs],
       batch[BatchIndex.weights],
@@ -394,7 +403,7 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
     )
     f_true = batch[BatchIndex.f_true]
 
-  return y_calc, y_true, y_weight, f_calc, f_true
+  return y_calc, y_true, y_weight, f_calc, f_true, n_atom
 
 
 def add_l2_regularizer(total_loss, eta):
@@ -549,6 +558,53 @@ def get_yf_joint_loss(y_true, y_calc, f_true, f_calc):
     loss = tf.add(f_loss, y_loss, name="together")
     tf.add_to_collection("losses", loss)
     total_loss = tf.add_n(tf.get_collection("losses"), name="total")
+
+    if FLAGS.l2 is not None:
+      total_loss = add_l2_regularizer(total_loss, eta=FLAGS.l2)
+
+    return total_loss, y_loss, f_loss
+
+
+def get_amp_yf_joint_loss(y_true, y_calc, f_true, f_calc, n_atom):
+  """
+  The Amp joint loss function.
+
+  Args:
+    y_true: a `float32` tensor of shape `(-1, )` the true energies.
+    y_calc: a `float32` tensor of shape `(-1, )` as the energies.
+    f_true: a `float32` tensor of shape `(-1, -1)` as the true forces.
+    f_calc: a `float32` tensor of shape `(-1, -1)` as the computed forces.
+    n_atom: a `int32` tensor of shape `(-1, )` as the number of atoms for each
+      configuration.
+
+  Returns:
+    loss: a `float32` scalar tensor as the total loss.
+    y_loss: a `float32` scalar tensor as the energy loss.
+    f_loss: a `float32` scalar tensor as the forces loss.
+
+  """
+
+  with tf.name_scope("yf"):
+
+    with tf.name_scope("energy"):
+      y_true = tf.divide(y_true, n_atom, name="true/per_atom")
+      y_calc = tf.divide(y_calc, n_atom, name="calc/per_atom")
+      y_diff = tf.squared_difference(y_true, y_calc, name="squared")
+      y_loss = tf.reduce_sum(y_diff, name='loss')
+
+    with tf.name_scope("forces"):
+      alpha = tf.constant(1.0, dtype=tf.float32, name="alpha")
+      f_diff = tf.squared_difference(f_true, f_calc, name="squared")
+      f_loss = tf.reduce_sum(tf.reduce_mean(f_diff, axis=1))
+      f_loss = tf.multiply(f_loss, alpha, name="loss")
+
+    with tf.name_scope("losses"):
+      tf.summary.scalar('y', y_loss)
+      tf.summary.scalar('f', f_loss)
+
+    loss = tf.multiply(0.5, tf.add(y_loss, f_loss))
+    tf.add_to_collection('losses', loss)
+    total_loss = tf.add_n(tf.get_collection('losses'), name="total")
 
     if FLAGS.l2 is not None:
       total_loss = add_l2_regularizer(total_loss, eta=FLAGS.l2)

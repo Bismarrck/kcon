@@ -50,6 +50,8 @@ tf.app.flags.DEFINE_boolean('forces_only', False,
 tf.app.flags.DEFINE_boolean('alter_train_op', False,
                             """Use the alternative training op if this flag is 
                             set.""")
+tf.app.flags.DEFINE_boolean('amp', False,
+                            """Use the Amp total loss function.""")
 
 
 def train_model():
@@ -68,15 +70,18 @@ def train_model():
     global_step = tf.contrib.framework.get_or_create_global_step()
 
     # Inference the kCON energy model
-    y_calc, y_true, y_weights, f_calc, f_true = kcnn_from_dataset(
+    y_calc, y_true, y_weights, f_calc, f_true, n_atom = kcnn_from_dataset(
       FLAGS.dataset,
       for_training=True,
       num_epochs=FLAGS.num_epochs
     )
 
-    # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.
-    y_true = tf.cast(y_true, tf.float32)
+    # Cast `y_true` and `f_true` to `tf.float32` and set the shape of the
+    # `y_calc` explicitly.
     y_calc.set_shape(y_true.get_shape().as_list())
+    y_true = tf.cast(y_true, tf.float32)
+    if f_true is not None:
+      f_true = tf.cast(f_true, tf.float32)
 
     # Setup the loss function
     y_loss = None
@@ -87,6 +92,11 @@ def train_model():
 
     elif FLAGS.forces_only:
       total_loss = kcnn.get_f_loss(f_true, f_calc)
+
+    elif FLAGS.amp:
+      total_loss, y_loss, f_loss = kcnn.get_amp_yf_joint_loss(
+        y_true, y_calc, f_true, f_calc, n_atom
+      )
 
     else:
       total_loss, y_loss, f_loss = kcnn.get_yf_joint_loss(
