@@ -285,7 +285,7 @@ def main(_):
   The main function.
   """
   if not tf.gfile.Exists(FLAGS.train_dir):
-    tf.gfile.MkDir(FLAGS.train_dir)
+    tf.gfile.MakeDirs(FLAGS.train_dir)
   train_model()
 
 
