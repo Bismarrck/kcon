@@ -598,11 +598,15 @@ def get_amp_yf_joint_loss(y_true, y_calc, f_true, f_calc, n_atom):
       f_loss = tf.reduce_sum(tf.reduce_mean(f_diff, axis=1))
       f_loss = tf.multiply(f_loss, alpha, name="loss")
 
+      with tf.name_scope("magnitudes"):
+        tf.summary.scalar('true', reduce_l2_norm(f_true, name="l2_true"))
+        tf.summary.scalar('calc', reduce_l2_norm(f_calc, name="l2_calc"))
+
     with tf.name_scope("losses"):
       tf.summary.scalar('y', y_loss)
       tf.summary.scalar('f', f_loss)
 
-    loss = tf.multiply(0.5, tf.add(y_loss, f_loss))
+    loss = tf.multiply(0.5, tf.add(y_loss, f_loss, name="add"), name="loss")
     tf.add_to_collection('losses', loss)
     total_loss = tf.add_n(tf.get_collection('losses'), name="total")
 
