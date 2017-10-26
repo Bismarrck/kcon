@@ -9,7 +9,7 @@ kCON is a scalable and transferable deep learning framework for chemistry with t
 
 ## 1. Related work
 
-* Chen, X., Jørgenson, M. S., Hammer, B., & Li, J. (2017). Understanding atomic chemistry with machine learning. _Nature Communications, Just submitted._ 
+* Chen, X., Jørgensen, M. S., Hammer, B., & Li, J. (2017). Understanding atomic chemistry with machine learning. _Nature Communications, under review._
 
 ## 2. Requirements
 
