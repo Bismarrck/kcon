@@ -25,6 +25,12 @@ __email__ = 'Bismarrck@me.com'
 BATCH_NORM_DECAY_FACTOR = 0.999
 
 
+def _kbody_resnet(inputs, kbody_term, ck2, is_training, verbose=True,
+                  reuse=False, num_blocks=2, weights_initializer=None,
+                  num_kernels=None):
+  pass
+
+
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                          reuse=False, normalizer='bias', activation_fn=lrelu,
                          weights_initializer=None, num_kernels=None):
