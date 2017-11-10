@@ -11,7 +11,6 @@ from collections import namedtuple
 from functools import partial
 from os import makedirs
 from os.path import join, isdir
-from tensorflow.contrib.data.python.ops.dataset_ops import TFRecordDataset
 from constants import SEED
 
 __author__ = 'Xin Chen'
@@ -30,6 +29,8 @@ tf.app.flags.DEFINE_boolean('include_all_k', True,
                             """Include all k-body terms from k = 1 to k_max.""")
 tf.app.flags.DEFINE_boolean('forces', False,
                             """Set this to True to enable atomic forces.""")
+tf.app.flags.DEFINE_integer('num_parallel_calls', 64,
+                            """The number elements to process in parallel.""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -253,14 +254,15 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
       num_f_components, num_entries = None, None
 
     # Initialize a basic dataset
-    dataset = TFRecordDataset([tfrecods_file]).map(
+    dataset = tf.data.TFRecordDataset([tfrecods_file]).map(
       partial(decode_protobuf,
               cnk=cnk,
               ck2=ck2,
               num_atom_types=num_atom_types,
               atomic_forces=FLAGS.forces,
               num_f_components=num_f_components,
-              num_entries=num_entries)
+              num_entries=num_entries),
+      num_parallel_calls=FLAGS.num_parallel_calls,
     )
 
     # Repeat the dataset
