@@ -57,7 +57,7 @@ def _get_output_node_names(forces=False):
   Return the names of the tensors that should be accessed.
   """
   tensors = ["kCON/Energy/Sum/1_and_k", "kCON/Energy/y_contribs",
-             "kCON/one-body/weights", "kCON/Energy/one-body/convolution",
+             "kCON/one-body/weights", "kCON/Energy/one-body/Conv2D",
              "transformer/json", "placeholders/inputs", "placeholders/occurs",
              "placeholders/weights", "placeholders/split_dims"]
 
