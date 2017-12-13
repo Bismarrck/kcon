@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import
 
 import json
 import tensorflow as tf
+from multiprocessing import cpu_count
 from collections import namedtuple
 from functools import partial
 from os import makedirs
@@ -253,6 +254,9 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     else:
       num_f_components, num_entries = None, None
 
+    # Set the number of parallel calls (threads).
+    num_parallel_calls = min(cpu_count() * 2, FLAGS.num_parallel_calls)
+
     # Initialize a basic dataset
     dataset = tf.data.TFRecordDataset([tfrecods_file]).map(
       partial(decode_protobuf,
@@ -262,7 +266,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
               atomic_forces=FLAGS.forces,
               num_f_components=num_f_components,
               num_entries=num_entries),
-      num_parallel_calls=FLAGS.num_parallel_calls,
+      num_parallel_calls=num_parallel_calls,
     )
 
     # Repeat the dataset
