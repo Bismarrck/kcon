@@ -23,7 +23,7 @@ tf.app.flags.DEFINE_boolean('periodic', False,
                             """The isomers are periodic structures.""")
 tf.app.flags.DEFINE_string('format', 'xyz',
                            """The format of the xyz file.""")
-tf.app.flags.DEFINE_integer('num_examples', 5000,
+tf.app.flags.DEFINE_integer('num_examples', None,
                             """The total number of examples to use.""")
 tf.app.flags.DEFINE_float('test_size', 0.2,
                           """The proportion of the dataset to include in the 
