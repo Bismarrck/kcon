@@ -128,7 +128,7 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
   natoms = 0
   stage = 0
   atoms = None
-  num_examples = num_examples or np.Infinity
+  num_examples = num_examples or 0
 
   db = connect(name=database)
   tic = time.time()
@@ -136,7 +136,7 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
     sys.stdout.write("Extract cartesian coordinates ...\n")
   with open(xyzfile) as f:
     for line in f:
-      if count == num_examples:
+      if num_examples and count == num_examples:
         break
       line = line.strip()
       if line == "":
