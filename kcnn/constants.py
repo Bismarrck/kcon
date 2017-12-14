@@ -40,10 +40,9 @@ pyykko = {
   'Te': 1.36, 'Th': 1.75, 'Ti': 1.36, 'Tl': 1.44, 'Tm': 1.64, 'U': 1.7,
   'V': 1.34, 'W': 1.37, 'Xe': 1.31, 'Y': 1.63, 'Yb': 1.7,
   'Zn': 1.18, 'Zr': 1.54,
-  # X represents virtual atoms
-  'X': 0.32,
-  # L represents ideal Lennard-Jones atoms.
-  'L': 0.5 * 1.122462048309373,
+  # X represents virtual atoms, the covalent radius is the half of the LJ
+  # distance.
+  'X': 0.5 * 1.122462048309373,
 }
 
 # the ghost atom
