@@ -60,10 +60,10 @@ class KcnnPredictor:
 
     self._graph = graph
     self._sess = tf.Session(graph=graph)
-    self._initialize_tensors()
     self._transformer = restore_transformer(self._graph, self._sess)
     assert isinstance(self._transformer, MultiTransformer)
 
+    self._initialize_tensors()
     self._y_atomic_1body = self._get_y_atomic_1body(
       self._transformer.species
     )
@@ -122,6 +122,17 @@ class KcnnPredictor:
     """
     return self._transformer.kbody_terms
 
+  @property
+  def atomic_forces(self):
+    """
+    Return True if this predictor supports predicting atomic forces.
+
+    Notes:
+      Currently the atomic forces are not supported!
+
+    """
+    return False
+
   def __str__(self):
     """
     Return the string representation of this predictor.
@@ -146,20 +157,32 @@ class KcnnPredictor:
     for name, tensor_name in get_tensors_to_restore().items():
       tensors[name] = self._graph.get_tensor_by_name(tensor_name)
 
-    # operations
-    self._operator_y_nn = tensors["Sum/1_and_k"]
-    self._operator_y_kbody = tensors["y_contribs"]
-    self._operator_y_1body = tensors["one-body/convolution"]
+    # The operators
+    self._operator_y_nn = tensors["kCON/Energy/Sum/1_and_k"]
+    self._operator_y_kbody = tensors["kCON/Energy/y_contribs"]
+    self._operator_y_1body = tensors["kCON/Energy/one-body/Conv2D"]
 
-    # tensor
-    self._tensor_1body = tensors["one-body/weights"]
+    # The data tensor
+    self._tensor_1body = tensors["kCON/one-body/weights"]
 
-    # placeholders
+    # Placeholders
     self._placeholder_inputs = tensors["placeholders/inputs"]
     self._placeholder_occurs = tensors["placeholders/occurs"]
     self._placeholder_weights = tensors["placeholders/weights"]
     self._placeholder_split_dims = tensors["placeholders/split_dims"]
-    self._placeholder_is_training = tensors["placeholders/is_training"]
+
+    # Tensors for predicting atomic forces
+    if self._transformer.atomic_forces_enabled:
+      self._placeholder_coefficients = tensors["placeholders/coefficients"]
+      self._placeholder_indexing = ["placeholders/indexing"]
+      self._operator_f_nn = tensors["kCON/Forces/forces"]
+    else:
+      self._placeholder_coefficients = None
+      self._placeholder_indexing = None
+      self._operator_f_nn = None
+
+    # Temporarily disable this tensor. I think this will be removed soon.
+    # self._placeholder_is_training = tensors["placeholders/is_training"]
 
   def _get_y_atomic_1body(self, species):
     """
@@ -203,17 +226,19 @@ class KcnnPredictor:
       raise ValueError("`atoms_or_trajectory` should be an `ase.Atoms` or an"
                        "`ase.io.TrajectoryReader` or a list of `ase.Atoms`!")
 
-    features, split_dims, weights, occurs = transform_func(atoms_or_trajectory)
+    # The `transformed` is a named tupe: KcnnSample.
+    transformed = transform_func(atoms_or_trajectory)
 
     # Build the feed dict for running the session.
-    features = features.reshape((ntotal, 1, -1, self._transformer.ck2))
-    weights = weights.reshape((ntotal, 1, -1, 1))
-    occurs = occurs.reshape((ntotal, 1, 1, -1))
+    ck2 = self._transformer.ck2
+    features = transformed.features.reshape((ntotal, 1, -1, ck2))
+    weights = transformed.binary_weights.reshape((ntotal, 1, -1, 1))
+    occurs = transformed.occurs.reshape((ntotal, 1, 1, -1))
+    split_dims = transformed.split_dims
 
     feed_dict = {self._placeholder_inputs: features,
                  self._placeholder_occurs: occurs,
                  self._placeholder_weights: weights,
-                 self._placeholder_is_training: False,
                  self._placeholder_split_dims: split_dims}
     return species, feed_dict
 
