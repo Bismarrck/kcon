@@ -92,14 +92,15 @@ class ProvidedCalculator(Calculator):
     }
 
 
-def xyz_to_database(xyzfile, num_examples, xyz_format='xyz', verbose=True,
+def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
                     unit_to_ev=None, restart=False):
   """
   Convert the xyz file to an `ase.db.core.Database`.
 
   Args:
     xyzfile: a `str` as the file to parse.
-    num_examples: a `int` as the maximum number of examples to parse.
+    num_examples: a `int` as the maximum number of examples to parse. If None,
+      all examples in the given file will be saved.
     xyz_format: a `str` representing the format of the given xyz file.
     verbose: a `bool` indicating whether we should log the parsing progress.
     unit_to_ev: a `float` as the unit for converting energies to eV. Defaults
@@ -127,6 +128,7 @@ def xyz_to_database(xyzfile, num_examples, xyz_format='xyz', verbose=True,
   natoms = 0
   stage = 0
   atoms = None
+  num_examples = num_examples or np.Infinity
 
   db = connect(name=database)
   tic = time.time()
