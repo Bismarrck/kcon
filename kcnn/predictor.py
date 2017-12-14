@@ -8,7 +8,7 @@ import numpy as np
 import tensorflow as tf
 import json
 from ase import Atoms
-from ase.io.trajectory import TrajectoryReader
+from ase.io.trajectory import Trajectory
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
 from constants import GHOST
@@ -133,6 +133,13 @@ class KcnnPredictor:
     """
     return False
 
+  @property
+  def transformer(self):
+    """
+    Return the `MultiTransformer` of this predictor.
+    """
+    return self._transformer
+
   def __str__(self):
     """
     Return the string representation of this predictor.
@@ -218,7 +225,7 @@ class KcnnPredictor:
       transform_func = self._transformer.transform
       ntotal = 1
       species = atoms_or_trajectory.get_chemical_symbols()
-    elif isinstance(atoms_or_trajectory, (list, tuple, TrajectoryReader)):
+    elif isinstance(atoms_or_trajectory, (list, tuple, Trajectory)):
       transform_func = self._transformer.transform_trajectory
       ntotal = len(atoms_or_trajectory)
       species = atoms_or_trajectory[0].get_chemical_symbols()
