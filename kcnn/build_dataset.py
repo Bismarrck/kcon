@@ -35,6 +35,12 @@ tf.app.flags.DEFINE_float('weighted_loss', None,
                           """The kT (eV) for computing the weighted loss. """)
 tf.app.flags.DEFINE_boolean('lj', False,
                             """Treat all atoms as ideal LJ atoms.""")
+tf.app.flags.DEFINE_float('lr_scaling_factor', 1.0,
+                          """The scaling factor for the computed initial 
+                          one-body weights.""")
+tf.app.flags.DEFINE_boolean('legacy_lr_algorithm', False,
+                            """Use the legacy LR algorithm to compute the 
+                            initial one-body weights.""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -108,6 +114,8 @@ def may_build_dataset(dataset=None, verbose=True):
     database,
     train_file=train_file,
     test_file=test_file,
+    lr_factor=FLAGS.lr_scaling_factor,
+    only_minimum_of_stoichiometry=not FLAGS.legacy_lr_algorithm,
     verbose=True,
     loss_fn=exp_rmse_fn
   )

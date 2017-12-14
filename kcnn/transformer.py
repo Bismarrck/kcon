@@ -54,7 +54,8 @@ def get_formula(species):
   return "".join(species)
 
 
-def _compute_lr_weights(coef, y, num_real_atom_types):
+def _compute_lr_weights(coef, y, num_real_atom_types, factor=1.0,
+                        only_minimum_of_stoichiometry=True):
   """
   Solve the linear equation system of Ax = b.
   
@@ -63,6 +64,10 @@ def _compute_lr_weights(coef, y, num_real_atom_types):
     y: a `float` array of shape `[num_examples, ]`.
     num_real_atom_types: an `int` as the number of types of atoms excluding the
       ghost atoms.
+    factor: a `float` as a scaling factor for the weights.
+    only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
+      weights will be computed using only the minimum structure of each
+      stoichiometry.
 
   Returns:
     x: a `float` array of shape `[num_atom_types, ]` as the solution.
@@ -73,19 +78,24 @@ def _compute_lr_weights(coef, y, num_real_atom_types):
 
   # The coef matrix is full rank. So the linear equations can be solved.
   if diff == 0:
-    return np.negative(np.dot(np.linalg.pinv(coef), y))
+    x = np.negative(np.dot(np.linalg.pinv(coef), y))
 
   # The rank is 1, so all structures have the same stoichiometry. Then all types
   # of atoms can be treated equally.
   elif rank == 1:
     x = np.zeros_like(coef[0])
-    x[:num_real_atom_types] = np.negative(np.mean(y / coef.sum(axis=1)))
+    if not only_minimum_of_stoichiometry:
+      x[:num_real_atom_types] = np.negative(np.mean(y / coef.sum(axis=1)))
+    else:
+      x[:num_real_atom_types] = np.negative(np.min(y / coef.sum(axis=1)))
     return x
 
   else:
     raise ValueError(
       "Coefficients matrix rank {} of {} is not supported!".format(
         rank, num_real_atom_types))
+
+  return x * factor
 
 
 def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True, lj=False):
@@ -1278,6 +1288,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     return [int(x) for x in split_dims]
 
   def _transform_and_save(self, filename, examples, num_examples, max_size,
+                          only_minimum_of_stoichiometry=True, lr_factor=1.0,
                           loss_fn=None, verbose=True):
     """
     Transform the given atomic coordinates to input features and save them to
@@ -1289,6 +1300,10 @@ class FixedLenMultiTransformer(MultiTransformer):
       num_examples: an `int` as the number of examples.
       max_size: an `int` as the maximum size of all structures. This determines
         the dimension of the forces.
+      only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
+        weights will be computed using only the minimum structure of each
+        stoichiometry.
+      lr_factor: a `float` as a scaling factor for the one-body weights.
       verbose: boolean indicating whether.
       loss_fn: a `Callable` for transforming the calculated raw loss.
 
@@ -1303,6 +1318,14 @@ class FixedLenMultiTransformer(MultiTransformer):
       """
       return 1.0
 
+    def _get_stoichiometry(atoms_counts):
+      """
+      A helper function to get the stoichiometry of a structure.
+      """
+      return ";".join(["{},{}".format(self._species[j], int(atoms_counts[j]))
+                       for j in range(len(self._species))])
+
+
     # Setup the loss function.
     loss_fn = loss_fn or _identity
 
@@ -1310,6 +1333,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       if verbose:
         print("Start transforming {} ... ".format(filename))
 
+      num_real_atom_types = self._num_atom_types - self._num_ghosts
+      stoichiometries = {}
       lr = np.zeros((num_examples, self.number_of_atom_types))
       b = np.zeros((num_examples, ))
 
@@ -1351,6 +1376,10 @@ class FixedLenMultiTransformer(MultiTransformer):
           lr[i, loc] = counter[atom]
         b[i] = y_true
 
+        sch = _get_stoichiometry(lr[i])
+        if sch not in stoichiometries or y_true < b[stoichiometries[sch]]:
+          stoichiometries[sch] = i
+
         if verbose and (i + 1) % 100 == 0:
           sys.stdout.write("\rProgress: {:7d} / {:7d}".format(
             i + 1, num_examples))
@@ -1359,8 +1388,16 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("")
         print("Transforming {} finished!".format(filename))
 
-      num_real_atom_types = self._num_atom_types - self._num_ghosts
-      return _compute_lr_weights(lr, b, num_real_atom_types)
+      if only_minimum_of_stoichiometry:
+        selected = np.ix_(list(stoichiometries.values()))
+        lr = lr[selected]
+        b = b[selected]
+
+      return _compute_lr_weights(
+        lr, b, num_real_atom_types,
+        factor=lr_factor,
+        only_minimum_of_stoichiometry=only_minimum_of_stoichiometry
+      )
 
   def _save_auxiliary_for_file(self, filename, max_size, lookup_indices=None,
                                initial_1body_weights=None):
@@ -1414,7 +1451,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       json.dump(auxiliary_properties, fp=fp, indent=2)
 
   def transform_and_save(self, database, train_file=None, test_file=None,
-                         verbose=True, loss_fn=None):
+                         only_minimum_of_stoichiometry=True, lr_factor=1.0,
+                         loss_fn=None, verbose=True):
     """
     Transform coordinates to input features and save them to tfrecord files
     using `tf.TFRecordWriter`.
@@ -1423,6 +1461,11 @@ class FixedLenMultiTransformer(MultiTransformer):
       database: a `Database` as the parsed results from a xyz file.
       train_file: a `str` as the file for saving training data or None to skip.
       test_file: a `str` as the file for saving testing data or None to skip.
+      only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
+        weights will be computed using only the minimum structure of each
+        stoichiometry.
+      lr_factor: a `float` as the scaling factor for the computed initial
+        one-body weights.
       verbose: a `bool` indicating whether logging the transformation progress.
       loss_fn: a `Callable` for computing the exponential scaled RMSE loss.
 
@@ -1459,6 +1502,8 @@ class FixedLenMultiTransformer(MultiTransformer):
           examples,
           num_examples,
           max_size,
+          lr_factor=lr_factor,
+          only_minimum_of_stoichiometry=only_minimum_of_stoichiometry,
           loss_fn=loss_fn,
           verbose=verbose
         )
