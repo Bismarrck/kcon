@@ -54,7 +54,7 @@ def get_eval_dir():
 
 
 def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
-              summary_op):
+              summary_op, eval_training_data=False):
   """
   Run Eval once.
 
@@ -66,6 +66,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
     f_true_op: The Tensor used for fetching true forces.
     f_nn_op: The Tensor used for fetching neural network predicted forces.
     summary_op: Summary op.
+    eval_training_data: a `bool` indicating whether the dataset used is the
+      training dataset or not.
 
   """
   with tf.Session() as sess:
@@ -154,8 +156,10 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       emax = y_diff.max()
       emin = y_diff.min()
       score = r2_score(y_true, y_pred)
-
+      eval_type = "training" if eval_training_data else "testing"
       dtime = datetime.now()
+
+      tf.logging.info("%s: type          = %s" % (dtime, eval_type))
       tf.logging.info("%s: step          = %d" % (dtime, global_step))
       tf.logging.info("%s: time          = %.2f" % (dtime, elpased))
       tf.logging.info("%s: precision     = %10.6f" % (dtime, precision))
@@ -280,7 +284,8 @@ def evaluate(eval_dir):
 
     while True:
       eval_at_step = eval_once(
-        saver, summary_writer, y_true, y_calc, f_true, f_calc, summary_op
+        saver, summary_writer, y_true, y_calc, f_true, f_calc, summary_op,
+        eval_training_data=FLAGS.eval_training_data
       )
       if len(evaluated_steps) > 0 and evaluated_steps[-1] != eval_at_step:
         evaluated_steps.clear()
