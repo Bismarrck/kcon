@@ -118,8 +118,11 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
     formatter = _xyz
 
   database = "{}.db".format(splitext(xyzfile)[0])
-  if isfile(database) and restart:
-    remove(database)
+  if isfile(database):
+    if restart:
+      remove(database)
+    else:
+      return connect(name=database)
 
   unit = unit_to_ev or formatter.default_unit
   parse_forces = formatter.parse_forces
