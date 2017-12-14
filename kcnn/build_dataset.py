@@ -33,6 +33,8 @@ tf.app.flags.DEFINE_integer("norm_order", 1,
                             distances.""")
 tf.app.flags.DEFINE_float('weighted_loss', None,
                           """The kT (eV) for computing the weighted loss. """)
+tf.app.flags.DEFINE_boolean('lj', False,
+                            """Treat all atoms as ideal LJ atoms.""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -99,7 +101,8 @@ def may_build_dataset(dataset=None, verbose=True):
     periodic=FLAGS.periodic,
     norm_order=FLAGS.norm_order,
     include_all_k=FLAGS.include_all_k,
-    atomic_forces=FLAGS.forces
+    atomic_forces=FLAGS.forces,
+    lj=FLAGS.lj
   )
   clf.transform_and_save(
     database,
