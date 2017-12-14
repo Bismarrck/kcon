@@ -17,7 +17,7 @@ from ase.atoms import Atoms
 from scipy.misc import comb
 from sklearn.metrics import pairwise_distances
 from tensorflow.python.training.training import Features, Example
-from constants import pyykko, GHOST
+from constants import pyykko, GHOST, LJR
 from utils import get_atoms_from_kbody_term, safe_divide, compute_n_from_cnk
 
 __author__ = 'Xin Chen'
@@ -88,7 +88,7 @@ def _compute_lr_weights(coef, y, num_real_atom_types):
         rank, num_real_atom_types))
 
 
-def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
+def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True, lj=False):
   """
   Return the pyykko-bonds matrix given a list of atomic symbols.
 
@@ -96,12 +96,16 @@ def _get_pyykko_bonds_matrix(species, factor=1.0, flatten=True):
     species: a `List[str]` as the atomic symbols.
     factor: a `float` as the normalization factor.
     flatten: a `bool` indicating whether the bonds matrix is flatten or not.
+    lj: a `bool`. If True, all atoms will be treated as ideal LJ atoms.
 
   Returns:
     bonds: the bonds matrix (or vector if `flatten` is True).
 
   """
-  rr = np.asarray([pyykko[specie] for specie in species])[:, np.newaxis]
+  if not lj:
+    rr = np.asarray([pyykko[specie] for specie in species])[:, np.newaxis]
+  else:
+    rr = np.ones((len(species), 1)) * LJR
   lmat = np.multiply(factor, rr + rr.T)
   if flatten:
     return lmat.flatten()
@@ -183,7 +187,7 @@ class Transformer:
   """
 
   def __init__(self, species, k_max=3, kbody_terms=None, split_dims=None,
-               norm_order=1, periodic=False, atomic_forces=False):
+               norm_order=1, periodic=False, atomic_forces=False, lj=False):
     """
     Initialization method.
 
@@ -199,6 +203,7 @@ class Transformer:
         periodic structures or not.
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
+      lj: a `bool` indicating that this transformer targets on LJ systems.
 
     """
     if split_dims is not None:
@@ -242,6 +247,7 @@ class Transformer:
       n = compute_n_from_cnk(offsets[-1], k_max)
 
     # Initialize internal variables.
+    self._lj = lj
     self._k_max = k_max
     self._kbody_terms = kbody_terms
     self._offsets = offsets
@@ -252,7 +258,7 @@ class Transformer:
     self._split_dims = split_dims
     self._ck2 = int(comb(k_max, 2, exact=True))
     self._cond_sort = self._get_conditional_sorting_indices(kbody_terms)
-    self._normalizers = _get_pyykko_bonds_matrix(species)
+    self._normalizers = _get_pyykko_bonds_matrix(species, lj=lj)
     self._norm_order = norm_order
     self._num_ghosts = num_ghosts
     self._periodic = periodic
@@ -363,6 +369,13 @@ class Transformer:
     Return the number of entries per force component.
     """
     return self._num_entries
+
+  @property
+  def is_lj(self):
+    """
+    Return True if this transformer shall be used for LJ systems.
+    """
+    return self._lj
 
   def get_bond_types(self):
     """
@@ -886,7 +899,8 @@ class MultiTransformer:
   """
 
   def __init__(self, atom_types, k_max=3, max_occurs=None, norm_order=1,
-               include_all_k=True, periodic=False, atomic_forces=False):
+               include_all_k=True, periodic=False, atomic_forces=False,
+               lj=False):
     """
     Initialization method.
 
@@ -902,6 +916,7 @@ class MultiTransformer:
         conditions.
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
+      lj: a `bool` indicating that this transformer targets on LJ systems.
 
     """
 
@@ -935,6 +950,8 @@ class MultiTransformer:
     self._num_ghosts = num_ghosts
     self._periodic = periodic
     self._atomic_forces = atomic_forces
+    self._lj = lj
+
     # The global split dims is None so that internal `_Transformer` objects will
     # construct their own `splid_dims`.
     self._split_dims = None
@@ -1012,6 +1029,13 @@ class MultiTransformer:
     """
     return self._atomic_forces
 
+  @property
+  def is_lj(self):
+    """
+    Return True if this transformer is used for LJ systems.
+    """
+    return self._lj
+
   def accept_species(self, species):
     """
     Return True if the given species can be handled.
@@ -1046,7 +1070,8 @@ class MultiTransformer:
                            split_dims=self._split_dims,
                            norm_order=self._norm_order,
                            periodic=self._periodic,
-                           atomic_forces=self._atomic_forces)
+                           atomic_forces=self._atomic_forces,
+                           lj=self._lj)
     )
     self._transformers[formula] = clf
     return clf
@@ -1201,7 +1226,7 @@ class FixedLenMultiTransformer(MultiTransformer):
   """
 
   def __init__(self, max_occurs, periodic=False, k_max=3, norm_order=1,
-               include_all_k=True, atomic_forces=False):
+               include_all_k=True, atomic_forces=False, lj=False):
     """
     Initialization method. 
     
@@ -1217,6 +1242,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         considered.
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
+      lj: a `bool` indicating that this transformer targets on LJ systems.
     
     """
     super(FixedLenMultiTransformer, self).__init__(
@@ -1227,6 +1253,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       include_all_k=include_all_k,
       periodic=periodic,
       atomic_forces=atomic_forces,
+      lj=lj
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
