@@ -1404,7 +1404,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       "norm_order": self._norm_order,
       "initial_one_body_weights": initial_1body_weights,
       "atomic_forces_enabled": self._atomic_forces,
-      "indexing_shape": [max_size * 3, num_entries]
+      "indexing_shape": [max_size * 3, num_entries],
+      "lj": self._lj
     }
 
     with open(join(dirname(filename),

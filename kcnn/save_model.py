@@ -34,7 +34,7 @@ def _get_transformer_repr(configs):
   Return the JSON string for creating a `MultiTransformer`.
 
   Args:
-    configs: a `dict` as the
+    configs: a `dict` of configurations read from a JSON file.
 
   Returns:
     js: a `str` as the JSON string representation of the parameters for creating
@@ -48,7 +48,8 @@ def _get_transformer_repr(configs):
             "include_all_k": configs["include_all_k"],
             "periodic": configs["periodic"],
             "max_occurs": configs["max_occurs"],
-            "atomic_forces": configs["atomic_forces_enabled"]}
+            "atomic_forces": configs["atomic_forces_enabled"],
+            "lj": configs.get("lj", False)}
   return json.dumps(params)
 
 
