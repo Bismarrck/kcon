@@ -44,6 +44,7 @@ def _get_transformer_repr(configs):
   atom_types = configs["species"]
   params = {"atom_types": [atom for atom in atom_types if atom != GHOST],
             "k_max": configs["k_max"],
+            "norm": configs.get('norm', 'exp'),
             "norm_order": configs["norm_order"],
             "include_all_k": configs["include_all_k"],
             "periodic": configs["periodic"],

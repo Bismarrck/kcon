@@ -12,6 +12,7 @@ import json
 import sys
 from collections import Counter, namedtuple
 from itertools import combinations, product, repeat, chain
+from functools import partial
 from os.path import basename, dirname, join, splitext
 from ase.atoms import Atoms
 from scipy.misc import comb
@@ -155,26 +156,47 @@ def _get_num_force_entries(n, k_max):
                        for k in range(2, k_max + 1)]).sum())
 
 
-def normalize(x, l, order=1):
+def exponential_norm(x, unit=1.0, order=1):
   """
-  Normalize the `inputs` with the exponential function:
+  Normalize the inputs `x` with the exponential function:
     f(r) = exp(-r/L)
 
   Args:
     x: Union[float, np.ndarray] as the inputs to scale.
-    l: a `float` or an array with the same shape of `inputs` as the scaling
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
       factor(s).
     order: a `int` as the exponential order. If `order` is 0, the inputs will 
       not be scaled by `factor`.
 
   Returns:
-    scaled: the scaled inputs.
+    scaled: the scaled unitless inputs.
 
   """
   if order == 0:
     return np.exp(-x)
   else:
-    return np.exp(-(x / l) ** order)
+    return np.exp(-(x / unit) ** order)
+
+
+def lj_norm(x, unit=1.0):
+  """
+  Normalize the inputs `x` with the Lennard-Jones function.
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+
+  Returns:
+    scaled: the scaled unitless inputs.
+
+  """
+  rm = x / unit
+  left = np.where(rm < 1.0)[0]
+  rp = rm ** 4
+  rp[left] = rm[left] ** 2
+  y = safe_divide(1.0, rp)
+  return np.clip(-(y ** 2 - 2.0 * y), 0.0, 1.0)
 
 
 def _bytes_feature(value):
@@ -197,7 +219,8 @@ class Transformer:
   """
 
   def __init__(self, species, k_max=3, kbody_terms=None, split_dims=None,
-               norm_order=1, periodic=False, atomic_forces=False, lj=False):
+               norm='exp', norm_order=1, periodic=False, atomic_forces=False,
+               lj=False):
     """
     Initialization method.
 
@@ -208,6 +231,8 @@ class Transformer:
       split_dims: a `List[int]` as the dimensions for splitting inputs. If this
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
+      norm: a `str` specifying the normalization function to use. Defaults to
+        `exp`, `lj` is also supported.
       norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
@@ -268,8 +293,7 @@ class Transformer:
     self._split_dims = split_dims
     self._ck2 = int(comb(k_max, 2, exact=True))
     self._cond_sort = self._get_conditional_sorting_indices(kbody_terms)
-    self._normalizers = _get_pyykko_bonds_matrix(species, lj=lj)
-    self._norm_order = norm_order
+    self._cmatrix = _get_pyykko_bonds_matrix(species, lj=lj)
     self._num_ghosts = num_ghosts
     self._periodic = periodic
     self._real_dim = real_dim
@@ -279,6 +303,13 @@ class Transformer:
     self._num_real = n - self._num_ghosts
     self._num_f_components = 3 * self._num_real
     self._num_entries = _get_num_force_entries(self._num_real, self._k_max)
+    self._norm = norm
+    if norm.lower() == 'exp':
+      self._norm_fn = partial(exponential_norm, order=norm_order)
+    elif norm.lower() == 'lj':
+      self._norm_fn = lj_norm
+    else:
+      raise ValueError("Unsupported normalizing function: {}".format(norm))
 
   @property
   def species(self):
@@ -650,7 +681,7 @@ class Transformer:
       for k in range(self._ck2):
         features[istart: istop, k] = dists[mapping[k]]
         if self._atomic_forces:
-          cr[istart: istop, k] = self._normalizers[mapping[k]]
+          cr[istart: istop, k] = self._cmatrix[mapping[k]]
           # x = 0, y = 1, z = 2
           for j in range(3):
             dr[istart: istop, j * step + k + zero] = +delta[mapping[k], j]
@@ -880,7 +911,7 @@ class Transformer:
     dists = dists.flatten()
     if delta is not None:
       delta = delta.reshape((-1, 3))
-    norm_dists = normalize(dists, self._normalizers, order=self._norm_order)
+    norm_dists = self._norm_fn(dists, unit=self._cmatrix.flatten())
 
     # Assign the normalized distances to the input feature matrix.
     features, cr, dr = self._assign(norm_dists, delta, features=features)
@@ -908,9 +939,9 @@ class MultiTransformer:
   A flexible transformer targeting on AxByCz ... molecular compositions.
   """
 
-  def __init__(self, atom_types, k_max=3, max_occurs=None, norm_order=1,
-               include_all_k=True, periodic=False, atomic_forces=False,
-               lj=False):
+  def __init__(self, atom_types, k_max=3, max_occurs=None, norm='exp',
+               norm_order=1, include_all_k=True, periodic=False, lj=False,
+               atomic_forces=False):
     """
     Initialization method.
 
@@ -919,6 +950,9 @@ class MultiTransformer:
       k_max: a `int` as the maximum k for the many body expansion scheme.
       max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
         If an atom is explicitly specied, it can appear infinity times.
+      norm: a `str` specifying the normalization function to use. Defaults to
+        `exp`, `lj` is also supported.
+      norm_order: a `int` as the order for normalizing interatomic distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
         terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
         considered.
@@ -961,6 +995,7 @@ class MultiTransformer:
     self._periodic = periodic
     self._atomic_forces = atomic_forces
     self._lj = lj
+    self._norm = norm
 
     # The global split dims is None so that internal `_Transformer` objects will
     # construct their own `splid_dims`.
@@ -1078,6 +1113,7 @@ class MultiTransformer:
                            k_max=self._k_max,
                            kbody_terms=self._kbody_terms,
                            split_dims=self._split_dims,
+                           norm=self._norm,
                            norm_order=self._norm_order,
                            periodic=self._periodic,
                            atomic_forces=self._atomic_forces,
@@ -1235,8 +1271,8 @@ class FixedLenMultiTransformer(MultiTransformer):
   they can be used for training.
   """
 
-  def __init__(self, max_occurs, periodic=False, k_max=3, norm_order=1,
-               include_all_k=True, atomic_forces=False, lj=False):
+  def __init__(self, max_occurs, periodic=False, k_max=3, norm='exp',
+               norm_order=1, include_all_k=True, atomic_forces=False, lj=False):
     """
     Initialization method. 
     
@@ -1246,7 +1282,9 @@ class FixedLenMultiTransformer(MultiTransformer):
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
       k_max: a `int` as the maximum k for the many body expansion scheme.
-      norm_order: a `int` as the normalization order.
+      norm: a `str` specifying the normalization function to use. Defaults to
+        `exp`, `lj` is also supported.
+      norm_order: a `int` as the order for normalizing interatomic distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
         terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
         considered.
@@ -1259,6 +1297,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       atom_types=list(max_occurs.keys()),
       k_max=k_max,
       max_occurs=max_occurs,
+      norm=norm,
       norm_order=norm_order,
       include_all_k=include_all_k,
       periodic=periodic,
@@ -1445,6 +1484,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       "periodic": self._periodic,
       "k_max": self._k_max,
       "max_occurs": max_occurs,
+      "norm": self._norm,
       "norm_order": self._norm_order,
       "initial_one_body_weights": initial_1body_weights,
       "atomic_forces_enabled": self._atomic_forces,

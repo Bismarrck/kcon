@@ -28,6 +28,10 @@ tf.app.flags.DEFINE_integer('num_examples', None,
 tf.app.flags.DEFINE_float('test_size', 0.2,
                           """The proportion of the dataset to include in the 
                           test split""")
+tf.app.flags.DEFINE_string('norm', 'exp',
+                           """Specify the method to normalize interatomic 
+                           distances. Defaults to 'exp'. Alternative choice is 
+                           'lj'.""")
 tf.app.flags.DEFINE_integer("norm_order", 1,
                             """The exponential order for normalizing 
                             distances.""")
@@ -105,6 +109,7 @@ def may_build_dataset(dataset=None, verbose=True):
     max_occurs=max_occurs,
     k_max=k_max,
     periodic=FLAGS.periodic,
+    norm=FLAGS.norm,
     norm_order=FLAGS.norm_order,
     include_all_k=FLAGS.include_all_k,
     atomic_forces=FLAGS.forces,
