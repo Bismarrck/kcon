@@ -91,8 +91,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       # Restores from checkpoint
       saver.restore(sess, model_checkpoint_path)
     else:
-      tf.logging.error('No checkpoint file can be found!')
-      return -1
+      global_step = 0
+      tf.logging.warning("No checkpoint file found! Wait ...")
 
     # Wait until the parsed global step is not zero.
     if (not FLAGS.run_once) and global_step <= 1:
