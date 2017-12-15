@@ -8,6 +8,7 @@ import math
 import time
 import numpy as np
 import tensorflow as tf
+from logging import CRITICAL
 from datetime import datetime
 from kcnn import kcnn_from_dataset
 from constants import VARIABLE_MOVING_AVERAGE_DECAY
@@ -167,6 +168,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       tf.logging.info("%s: minimum       = %10.6f" % (dtime, emin))
       tf.logging.info("%s: maximum       = %10.6f" % (dtime, emax))
       tf.logging.info("%s: score         = %10.6f" % (dtime, score))
+      tf.logging.log(CRITICAL, "{:7d}   {:10.6f}   {:10.6f}".format(
+        global_step, precision, rmse))
 
       if atomic_forces:
         f_precision = mean_absolute_error(f_true, f_pred)
@@ -242,11 +245,12 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
 
 
 def evaluate(eval_dir):
-  """Eval CIFAR-10 for a number of steps."""
+  """ Start the evaluation process. """
 
   set_logging_configs(
     debug=False,
-    logfile=join(eval_dir, FLAGS.logfile)
+    logfile=join(eval_dir, FLAGS.logfile),
+    is_eval=True,
   )
 
   with tf.Graph().as_default() as graph:

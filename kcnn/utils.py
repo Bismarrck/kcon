@@ -16,7 +16,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.contrib.layers import variance_scaling_initializer
 from os import getpid
-from os.path import join
+from os.path import join, dirname
 from sys import platform
 from subprocess import Popen, PIPE
 from sys import version_info
@@ -213,27 +213,34 @@ def get_xargs(pid=None):
     return stdout
 
 
-def set_logging_configs(debug=False, logfile="logfile"):
+def set_logging_configs(debug=False, logfile="logfile", is_eval=False):
   """
-  Set 
+  Config the logging module.
   """
-  if debug:
+  if is_eval:
+    level = logging.INFO
+    handlers = ['normal', 'eval']
+  elif debug:
     level = logging.DEBUG
-    handlers = ['console', 'file']
+    handlers = ['console', 'normal']
   else:
     level = logging.INFO
-    handlers = ['file']
+    handlers = ['normal']
 
   LOGGING_CONFIG = {
     "version": 1,
     "formatters": {
-      # For files
+      # For normal logs
       'detailed': {
         'format': '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
       },
       # For the console
       'console': {
         'format': '[%(levelname)s] %(message)s'
+      },
+      # For the evaluations results
+      'simple': {
+        'format': "%(message)s"
       }
     },
     "handlers": {
@@ -242,11 +249,20 @@ def set_logging_configs(debug=False, logfile="logfile"):
         'level': logging.DEBUG,
         'formatter': 'console',
       },
-      'file': {
+      # Redirect all logs to the file `logfile`.
+      'normal': {
         'class': 'logging.FileHandler',
         'level': logging.INFO,
         'formatter': 'detailed',
         'filename': logfile,
+        'mode': 'a',
+      },
+      # Redirect the simplfied evaluation results to the file SUMMARY.
+      'eval': {
+        'class': 'logging.FileHandler',
+        'level': logging.CRITICAL,
+        'formatter': 'simple',
+        'filename': join(dirname(logfile), 'SUMMARY'),
         'mode': 'a',
       }
     },
