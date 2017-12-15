@@ -254,7 +254,8 @@ def evaluate(eval_dir):
     # Inference the KCNN model for evaluation
     y_calc, y_true, _, f_calc, f_true, _ = kcnn_from_dataset(
       FLAGS.dataset,
-      for_training=FLAGS.eval_training_data
+      for_training=FLAGS.eval_training_data,
+      verbose=False,
     )
 
     # Cast `y_true` to float32 and set the shape of the `y_nn` explicitly.

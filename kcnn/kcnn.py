@@ -337,7 +337,7 @@ def extract_configs(configs, for_training=True):
   params = dict(split_dims=split_dims, kbody_terms=kbody_terms,
                 is_training=for_training, one_body_weights=weights,
                 num_atom_types=num_atom_types, num_kernels=num_kernels,
-                atomic_forces=atomic_forces)
+                atomic_forces=atomic_forces, verbose=True)
   return params
 
 
@@ -358,9 +358,11 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
     y_true: a `float32` Tensor of shape `(-1, )` as the true energy.
     y_weight: a `float32` Tensor of shape `(-1, )` as the weights for computing
       weighted RMSE loss.
-    f_calc:
-    f_true:
-    n_atom:
+    f_calc: a `float32` Tensor of shape `(-1, -1)` as the predicted atomic
+      forces.
+    f_true: a `float32` Tensor of shape `(-1, -1)` as the true atomic forces.
+    n_atom: a tensor of shape `(-1, )` as the total number of atoms for each
+      configuration.
 
   """
   batch = pipeline.next_batch(
@@ -379,7 +381,6 @@ def kcnn_from_dataset(dataset_name, for_training=True, num_epochs=None,
       params[key] = val
     else:
       tf.logging.warning("Unrecognized key={}".format(key))
-
   y_true = batch[BatchIndex.y_true]
   y_weight = batch[BatchIndex.loss_weight]
   f_calc = None
