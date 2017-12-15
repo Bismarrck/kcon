@@ -1275,6 +1275,13 @@ class FixedLenMultiTransformer(MultiTransformer):
     """
     return self._total_dim, comb(self._k_max, 2, exact=True)
 
+  @property
+  def split_dims(self):
+    """
+    Return the fixed `split_dims` for all internal transformers.
+    """
+    return self._split_dims
+
   def _get_fixed_split_dims(self):
     """
     The `split_dims` of all `_Transformer` should be the same.
