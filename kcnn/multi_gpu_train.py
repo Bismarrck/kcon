@@ -424,6 +424,7 @@ def train_with_multiple_gpus():
               (step + 1) == max_steps:
         checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=step)
+        tf.logging.info("{}-{} saved".format(checkpoint_path, step))
 
       if FLAGS.freeze_frequency > 0 and step > 0:
         if step % FLAGS.freeze_frequency == 0 or (step + 1) == max_steps:
