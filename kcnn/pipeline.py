@@ -279,5 +279,10 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     # Setup the batch
     dataset = dataset.batch(batch_size)
 
+    tf.logging.info("The input pipeline is initialized.")
+    tf.logging.info('BATCH_SIZE         = {}'.format(batch_size))
+    tf.logging.info('NUM_PARAELLEL_CASS = {}'.format(num_parallel_calls))
+    tf.logging.info('NUM_EPOCHS         = {}'.format(num_epochs))
+
     iterator = dataset.make_one_shot_iterator()
     return iterator.get_next()
