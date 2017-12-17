@@ -20,6 +20,7 @@ from sklearn.metrics import pairwise_distances
 from tensorflow.python.training.training import Features, Example
 from constants import pyykko, GHOST, LJR
 from utils import get_atoms_from_kbody_term, safe_divide, compute_n_from_cnk
+from utils import Gauss
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -159,7 +160,7 @@ def _get_num_force_entries(n, k_max):
 def exponential_norm(x, unit=1.0, order=1):
   """
   Normalize the inputs `x` with the exponential function:
-    f(r) = exp(-r/L)
+    f(x) = exp(-x / unit)
 
   Args:
     x: Union[float, np.ndarray] as the inputs to scale.
@@ -176,6 +177,29 @@ def exponential_norm(x, unit=1.0, order=1):
     return np.exp(-x)
   else:
     return np.exp(-(x / unit) ** order)
+
+
+def exponential_gauss(x, unit=1.0):
+  """
+  Normalize the inputs `x` with the mixed functions:
+    f(x) = exp(-x / unit),               if x / unit >= 1.0
+    f(x) = gaussian(1.0, 0.2)(x / unit), else
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+
+  Returns:
+    scaled: the scaled unitless inputs.
+
+  """
+  g = Gauss(1.0, 0.2)
+  r = x / unit
+  left = np.where(r < 1.0)[0]
+  y = np.exp(-r)
+  y[left] = g(r[left]) * np.exp(-1.0) / g(1.0)
+  return y
 
 
 def lj_norm(x, unit=1.0):
@@ -232,7 +256,7 @@ class Transformer:
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj` is also supported.
+        `exp`, `lj` and `exp+g` are also supported.
       norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
@@ -308,6 +332,8 @@ class Transformer:
       self._norm_fn = partial(exponential_norm, order=norm_order)
     elif norm.lower() == 'lj':
       self._norm_fn = lj_norm
+    elif norm.lower() == 'exp+g':
+      self._norm_fn = exponential_gauss
     else:
       raise ValueError("Unsupported normalizing function: {}".format(norm))
 
