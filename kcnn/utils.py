@@ -25,6 +25,32 @@ __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
+class Gauss:
+  """
+  A simple implementation of the Gaussian function.
+  """
+
+  def __init__(self, mu, sigma):
+    """
+    Initialization method.
+
+    Args:
+      mu: a `float` as the center of the gaussian.
+      sigma: a `float` as the sigma.
+
+    """
+    self.mu = mu
+    self.sigma = sigma
+    self.beta = 1.0 / (2.0 * sigma**2)
+    self.c = 1.0 / (sigma * np.sqrt(2.0 * np.pi))
+
+  def __call__(self, x):
+    """
+    Compute the values at `x`.
+    """
+    return self.c * np.exp(-self.beta * (x - self.mu)**2)
+
+
 def compute_n_from_cnk(cnk, k):
   """
   Return the correponding N given C(N, k) and k.
