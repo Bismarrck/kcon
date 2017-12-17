@@ -20,6 +20,10 @@ from sklearn.model_selection import train_test_split
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
+
+# TODO: the `ase.db` is too slow for large datasets.
+
+
 """
 A convenient data structure for organizing settings for different xyz files.
 """
