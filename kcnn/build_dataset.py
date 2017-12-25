@@ -132,7 +132,7 @@ def main(_):
   """
   if FLAGS.periodic and (FLAGS.format != 'ase'):
     tf.logging.error(
-      "The xyz format must be `grendel` if `periodic` is True!")
+      "The xyz format must be `ase` if `periodic` is True!")
   else:
     may_build_dataset(verbose=True)
 
