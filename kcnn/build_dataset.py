@@ -30,8 +30,8 @@ tf.app.flags.DEFINE_float('test_size', 0.2,
                           test split""")
 tf.app.flags.DEFINE_string('norm', 'exp',
                            """Specify the method to normalize interatomic 
-                           distances. Defaults to 'exp'. Alternative choice is 
-                           'lj'.""")
+                           distances. Defaults to 'exp'. Alternative choices 
+                           are 'lj' and 'exp+g'.""")
 tf.app.flags.DEFINE_integer("norm_order", 1,
                             """The exponential order for normalizing 
                             distances.""")
