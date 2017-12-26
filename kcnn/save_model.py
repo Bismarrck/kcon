@@ -50,7 +50,8 @@ def _get_transformer_repr(configs):
             "periodic": configs["periodic"],
             "max_occurs": configs["max_occurs"],
             "atomic_forces": configs["atomic_forces_enabled"],
-            "lj": configs.get("lj", False)}
+            "lj": configs.get("lj", False),
+            "cutoff": configs.get("cutoff", None)}
   return json.dumps(params)
 
 

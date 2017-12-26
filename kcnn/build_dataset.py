@@ -42,9 +42,11 @@ tf.app.flags.DEFINE_boolean('lj', False,
 tf.app.flags.DEFINE_float('lr_scaling_factor', 1.0,
                           """The scaling factor for the computed initial 
                           one-body weights.""")
-tf.app.flags.DEFINE_boolean('legacy_lr_algorithm', False,
-                            """Use the legacy LR algorithm to compute the 
-                            initial one-body weights.""")
+tf.app.flags.DEFINE_string('lr_algorithm', 'default',
+                           """Define the algorithm to compute the initial 
+                           one-body weights. Available: default, minimal.""")
+tf.app.flags.DEFINE_float('cutoff', None,
+                          """Defines the cutoff, the unit is r(ab)/L(ab).""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -113,14 +115,15 @@ def may_build_dataset(dataset=None, verbose=True):
     norm_order=FLAGS.norm_order,
     include_all_k=FLAGS.include_all_k,
     atomic_forces=FLAGS.forces,
-    lj=FLAGS.lj
+    lj=FLAGS.lj,
+    cutoff=FLAGS.cutoff,
   )
   clf.transform_and_save(
     database,
     train_file=train_file,
     test_file=test_file,
     lr_factor=FLAGS.lr_scaling_factor,
-    only_minimum_of_stoichiometry=not FLAGS.legacy_lr_algorithm,
+    lr_algorithm=FLAGS.lr_algorithm,
     verbose=True,
     loss_fn=exp_rmse_fn
   )

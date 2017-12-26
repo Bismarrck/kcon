@@ -10,6 +10,7 @@ import numpy as np
 import tensorflow as tf
 import json
 import sys
+import time
 from collections import Counter, namedtuple
 from itertools import combinations, product, repeat, chain
 from functools import partial
@@ -45,7 +46,8 @@ KcnnSample = namedtuple("KcnnSample", (
   "binary_weights",
   "occurs",
   "coefficients",
-  "indexing"
+  "indexing",
+  "compress_stats"
 ))
 
 
@@ -244,7 +246,7 @@ class Transformer:
 
   def __init__(self, species, k_max=3, kbody_terms=None, split_dims=None,
                norm='exp', norm_order=1, periodic=False, atomic_forces=False,
-               lj=False):
+               lj=False, cutoff=None):
     """
     Initialization method.
 
@@ -263,6 +265,7 @@ class Transformer:
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
       lj: a `bool` indicating that this transformer targets on LJ systems.
+      cutoff: a `float` as the cutoff.
 
     """
     if split_dims is not None:
@@ -336,6 +339,8 @@ class Transformer:
       self._norm_fn = exponential_gauss
     else:
       raise ValueError("Unsupported normalizing function: {}".format(norm))
+    self._cutoff = cutoff or np.inf
+    self._cutoff_table = self._get_cutoff_table()
 
   @property
   def species(self):
@@ -444,6 +449,13 @@ class Transformer:
     """
     return self._lj
 
+  @property
+  def cutoff(self):
+    """
+    Return the cutoff.
+    """
+    return self._cutoff
+
   def get_bond_types(self):
     """
     Return the ordered bond types for each k-body term.
@@ -453,6 +465,24 @@ class Transformer:
       atoms = get_atoms_from_kbody_term(kbody_term)
       bonds[kbody_term] = ["-".join(ab) for ab in combinations(atoms, r=2)]
     return bonds
+
+  def _get_cutoff_table(self):
+    """
+    Return the cutoff table.
+    """
+    table = np.zeros((self._real_dim, self._ck2), dtype=np.float32)
+    cutoff = self._cutoff
+    if cutoff < np.inf:
+      thres = self._norm_fn(cutoff)
+    else:
+      thres = 0.0
+    for i, kbody_term in enumerate(self._kbody_terms):
+      istart, istop = self._offsets[i], self._offsets[i + 1]
+      if GHOST in kbody_term:
+        table[istart: istop, 0] = thres
+      else:
+        table[istart: istop, :] = thres
+    return table
 
   @staticmethod
   def _get_num_ghosts(species, many_body_k):
@@ -902,6 +932,34 @@ class Transformer:
 
     return positions
 
+  def compress(self, features):
+    """
+    Apply the soft compressing algorithm. The compression is implemented by
+    adjusting the binary weights.
+
+    Args:
+      features: a `float32` array of shape `self.shape` as the input feature
+        matrix.
+
+    Returns:
+      weights: a `float32` array as the updated binary weights.
+      counter: a `dict` to count the number of kept contribs for each k-body
+        term. This may be an empty `dict` indicating all contribs are kept.
+
+    """
+    if self._cutoff == np.inf:
+      return self._binary_weights, {}
+
+    else:
+      results = np.sum(features >= self._cutoff_table, axis=1, dtype=int)
+      weights = np.ones_like(self._binary_weights)
+      weights[results < 3] = 0.0
+      counter = {}
+      for i, kbody_term in enumerate(self._kbody_terms):
+        istart, istop = self._offsets[i], self._offsets[i + 1]
+        counter[kbody_term] = np.sum(results[istart: istop] == 3)
+      return weights, counter
+
   def transform(self, atoms, features=None):
     """
     Transform the given `ase.Atoms` object to an input feature matrix.
@@ -967,7 +1025,7 @@ class MultiTransformer:
 
   def __init__(self, atom_types, k_max=3, max_occurs=None, norm='exp',
                norm_order=1, include_all_k=True, periodic=False, lj=False,
-               atomic_forces=False):
+               atomic_forces=False, cutoff=None):
     """
     Initialization method.
 
@@ -987,6 +1045,7 @@ class MultiTransformer:
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
       lj: a `bool` indicating that this transformer targets on LJ systems.
+      cutoff: a `float` as the cutoff.
 
     """
 
@@ -1022,6 +1081,7 @@ class MultiTransformer:
     self._atomic_forces = atomic_forces
     self._lj = lj
     self._norm = norm
+    self._cutoff = cutoff
 
     # The global split dims is None so that internal `_Transformer` objects will
     # construct their own `splid_dims`.
@@ -1107,6 +1167,13 @@ class MultiTransformer:
     """
     return self._lj
 
+  @property
+  def cutoff(self):
+    """
+    Return the cutoff.
+    """
+    return self._cutoff
+
   def accept_species(self, species):
     """
     Return True if the given species can be handled.
@@ -1143,7 +1210,8 @@ class MultiTransformer:
                            norm_order=self._norm_order,
                            periodic=self._periodic,
                            atomic_forces=self._atomic_forces,
-                           lj=self._lj)
+                           lj=self._lj,
+                           cutoff=self._cutoff)
     )
     self._transformers[formula] = clf
     return clf
@@ -1191,19 +1259,28 @@ class MultiTransformer:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[:, loc] = float(times)
 
+    weights = np.zeros((ntotal, nrows), dtype=np.float32)
+    compress_stats = {}
+
     for i, atoms in enumerate(trajectory):
       _, coef_, indexing_ = clf.transform(atoms, features=features[i])
       if self._atomic_forces:
         coef[i] = coef_
         indexing[i] = indexing_
+      if self._cutoff is None:
+        weights[i] = clf.binary_weights
+      else:
+        weights[i], stats = clf.compress(features[i])
+        for k, v in stats.items():
+          compress_stats[k] = max(compress_stats.get(k, 0), v)
 
-    weights = np.tile(clf.binary_weights, (ntotal, 1))
     return KcnnSample(features=features,
                       split_dims=split_dims,
                       binary_weights=weights,
                       occurs=occurs,
                       coefficients=coef,
-                      indexing=indexing)
+                      indexing=indexing,
+                      compress_stats=compress_stats)
 
   def transform(self, atoms):
     """
@@ -1233,13 +1310,18 @@ class MultiTransformer:
       if loc < 0:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[0, loc] = float(times)
-    weights = np.array(clf.binary_weights)
+    if self._cutoff is not None:
+      weights, compress_stats = clf.compress(features)
+    else:
+      weights = np.array(clf.binary_weights)
+      compress_stats = {}
     return KcnnSample(features=features,
                       split_dims=split_dims,
                       binary_weights=weights,
                       occurs=occurs,
                       coefficients=coef,
-                      indexing=indexing)
+                      indexing=indexing,
+                      compress_stats=compress_stats)
 
   def compute_atomic_energies(self, species, y_kbody, y_atomic_1body):
     """
@@ -1275,14 +1357,18 @@ class MultiTransformer:
       for i, kbody_term in enumerate(clf.kbody_terms):
         if kbody_term not in clf.kbody_selections:
           continue
+
         # Compute the real `k` for this k-body term by excluding ghost atoms.
         k = len(kbody_term) - kbody_term.count(GHOST)
+
         # For each k-atoms selection, its energy should contrib equally to the
         # selected atoms. In my paper the coef should be `1 / factorial(k)` but
         # since our k-atom selections are all unique so coef here is `1 / k`.
         coef = 1.0 / k
+
         # Locate the starting index
         istart = 0 if i == 0 else int(sum(split_dims[:i]))
+
         # Loop through all k-atoms selections
         for ki, indices in enumerate(clf.kbody_selections[kbody_term]):
           for ai in indices[:k]:
@@ -1298,7 +1384,8 @@ class FixedLenMultiTransformer(MultiTransformer):
   """
 
   def __init__(self, max_occurs, periodic=False, k_max=3, norm='exp',
-               norm_order=1, include_all_k=True, atomic_forces=False, lj=False):
+               norm_order=1, include_all_k=True, atomic_forces=False, lj=False,
+               cutoff=None):
     """
     Initialization method. 
     
@@ -1317,6 +1404,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       atomic_forces: a `bool` indicating whether the atomic forces derivation is
         enabled or not.
       lj: a `bool` indicating that this transformer targets on LJ systems.
+      cutoff: a `float` as the cutoff.
     
     """
     super(FixedLenMultiTransformer, self).__init__(
@@ -1328,7 +1416,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       include_all_k=include_all_k,
       periodic=periodic,
       atomic_forces=atomic_forces,
-      lj=lj
+      lj=lj,
+      cutoff=cutoff
     )
     self._split_dims = self._get_fixed_split_dims()
     self._total_dim = sum(self._split_dims)
@@ -1397,14 +1486,36 @@ class FixedLenMultiTransformer(MultiTransformer):
       return ";".join(["{},{}".format(self._species[j], int(atoms_counts[j]))
                        for j in range(len(self._species))])
 
+    def _log_compression_results(results):
+      """
+      A helper function to log the compression result.
+      """
+      print("The soft compression algorithm is applied with cutoff = "
+            "{:.2f}".format(self._cutoff))
+
+      num_loss_total = 0
+      num_total = self._total_dim
+      for j, kbody_term in enumerate(self._kbody_terms):
+        num_full = self._split_dims[j]
+        num_kept = results.get(kbody_term, 0)
+        num_loss = num_full - num_kept
+        num_loss_total += num_loss
+        print("{:<12s} : {:5d} / {:5d}, compression = {:.2f}%".format(
+          kbody_term, num_loss, num_full, num_loss / num_full * 100))
+      print("Final result : {:5d} / {:5d}, compression = {:.2f}%".format(
+        num_loss_total, num_total, num_loss_total / num_total * 100))
 
     # Setup the loss function.
     loss_fn = loss_fn or _identity
+
+    # Start the timer
+    tic = time.time()
 
     with tf.python_io.TFRecordWriter(filename) as writer:
       if verbose:
         print("Start transforming {} ... ".format(filename))
 
+      compress_stats = {}
       num_real_atom_types = self._num_atom_types - self._num_ghosts
       stoichiometries = {}
       lr = np.zeros((num_examples, self.number_of_atom_types))
@@ -1415,6 +1526,9 @@ class FixedLenMultiTransformer(MultiTransformer):
         species = atoms.get_chemical_symbols()
         y_true = atoms.get_total_energy()
         sample = self.transform(atoms)
+
+        for k, v in sample.compress_stats.items():
+          compress_stats[k] = max(compress_stats.get(k, 0), v)
 
         x = _bytes_feature(sample.features.tostring())
         y = _bytes_feature(np.atleast_2d(-y_true).tostring())
@@ -1453,12 +1567,15 @@ class FixedLenMultiTransformer(MultiTransformer):
           stoichiometries[sch] = i
 
         if verbose and (i + 1) % 100 == 0:
-          sys.stdout.write("\rProgress: {:7d} / {:7d}".format(
-            i + 1, num_examples))
+          sys.stdout.write("\rProgress: {:7d} / {:7d} | Speed = {:6.1f}".format(
+            i + 1, num_examples, (i + 1) / (time.time() - tic)))
 
       if verbose:
         print("")
         print("Transforming {} finished!".format(filename))
+
+        if self._cutoff is not None:
+          _log_compression_results(compress_stats)
 
       if only_minimum_of_stoichiometry:
         selected = np.ix_(list(stoichiometries.values()))
@@ -1515,7 +1632,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       "initial_one_body_weights": initial_1body_weights,
       "atomic_forces_enabled": self._atomic_forces,
       "indexing_shape": [max_size * 3, num_entries],
-      "lj": self._lj
+      "lj": self._lj,
+      "cutoff": self._cutoff
     }
 
     with open(join(dirname(filename),
@@ -1524,8 +1642,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       json.dump(auxiliary_properties, fp=fp, indent=2)
 
   def transform_and_save(self, database, train_file=None, test_file=None,
-                         only_minimum_of_stoichiometry=True, lr_factor=1.0,
-                         loss_fn=None, verbose=True):
+                         lr_algorithm='default', lr_factor=1.0, loss_fn=None,
+                         verbose=True):
     """
     Transform coordinates to input features and save them to tfrecord files
     using `tf.TFRecordWriter`.
@@ -1534,15 +1652,18 @@ class FixedLenMultiTransformer(MultiTransformer):
       database: a `Database` as the parsed results from a xyz file.
       train_file: a `str` as the file for saving training data or None to skip.
       test_file: a `str` as the file for saving testing data or None to skip.
-      only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
-        weights will be computed using only the minimum structure of each
-        stoichiometry.
+      lr_algorithm: a `str` as the algorithm to compute the initial one-body
+        weights. Available options: `default` and `minimal`.
       lr_factor: a `float` as the scaling factor for the computed initial
         one-body weights.
       verbose: a `bool` indicating whether logging the transformation progress.
       loss_fn: a `Callable` for computing the exponential scaled RMSE loss.
 
     """
+    lr_algorithm = lr_algorithm.lower()
+    if lr_algorithm not in ('default', 'minimal'):
+      raise ValueError("Available LR algorithms: default, minimal")
+
     sizes = database.get_atoms_size_distribution()
     max_size = max(sizes)
 
@@ -1576,7 +1697,7 @@ class FixedLenMultiTransformer(MultiTransformer):
           num_examples,
           max_size,
           lr_factor=lr_factor,
-          only_minimum_of_stoichiometry=only_minimum_of_stoichiometry,
+          only_minimum_of_stoichiometry=bool(lr_algorithm == 'minimal'),
           loss_fn=loss_fn,
           verbose=verbose
         )
