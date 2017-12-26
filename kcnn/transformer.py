@@ -198,10 +198,17 @@ def exponential_gauss(x, unit=1.0):
   """
   g = Gauss(1.0, 0.2)
   r = x / unit
-  left = np.where(r < 1.0)[0]
-  y = np.exp(-r)
-  y[left] = g(r[left]) * np.exp(-1.0) / g(1.0)
-  return y
+  scale = np.exp(-1.0) / g(1.0)
+  if hasattr(r, '__getitem__'):
+    left = np.where(r < 1.0)[0]
+    y = np.exp(-r)
+    y[left] = g(r[left]) * scale
+    return y
+  else:
+    if r < 1.0:
+      return g(r) * scale
+    else:
+      return np.exp(-r)
 
 
 def lj_norm(x, unit=1.0):
