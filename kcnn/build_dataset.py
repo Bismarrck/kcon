@@ -8,6 +8,7 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import transformer
+import re
 from functools import partial
 from os.path import join, isfile
 from database import Database
@@ -47,8 +48,15 @@ tf.app.flags.DEFINE_string('lr_algorithm', 'default',
                            one-body weights. Available: default, minimal.""")
 tf.app.flags.DEFINE_float('cutoff', None,
                           """Defines the cutoff, the unit is r(ab)/L(ab).""")
+tf.app.flags.DEFINE_string('tag', None,
+                           """Additional tag added to the dataset files: 
+                           '{dataset}_{tag}-train/test.{tfrecords|json}'""")
 
 FLAGS = tf.app.flags.FLAGS
+
+
+# The regex pattern to filter tfrecords files.
+_file_patt = re.compile("(.*)-(train|test).tfrecords")
 
 
 def exponentially_weighted_loss(x, x0=0.0, beta=1.0):
@@ -58,6 +66,26 @@ def exponentially_weighted_loss(x, x0=0.0, beta=1.0):
   I.e. \\(y = \e^{-\beta \cdot (x - x_0)}\\).
   """
   return np.float32(np.exp(-(x - x0) * beta))
+
+
+def _add_tag(filename, tag):
+  """
+  Add a tag to the dataset file.
+
+  Args:
+    filename: a `str` as the name of a dataset file.
+    tag: a `str` as the addtional tag.
+
+  Returns:
+    filename: the new filename.
+
+  """
+  m = _file_patt.search(filename)
+  if m:
+    return "{dataset}_{tag}-{type}.tfrecords".format(
+      dataset=m.group(1), tag=tag, type=m.group(2))
+  else:
+    return filename
 
 
 def may_build_dataset(dataset=None, verbose=True):
@@ -71,12 +99,17 @@ def may_build_dataset(dataset=None, verbose=True):
 
   """
   train_file, _ = get_filenames(train=True, dataset_name=dataset)
-  test_file, _ = get_filenames(train=False, dataset_name=dataset)
+  valid_file, _ = get_filenames(train=False, dataset_name=dataset)
 
   # Check if the xyz file is accessible.
   xyzfile = join("..", "datasets", "{}.xyz".format(FLAGS.dataset))
   if not isfile(xyzfile):
     raise IOError("The dataset file %s can not be accessed!" % xyzfile)
+
+  # Add the tag if provided.
+  if FLAGS.tag is not None:
+    train_file = _add_tag(train_file, FLAGS.tag)
+    valid_file = _add_tag(valid_file, FLAGS.tag)
 
   # Extract the xyz file and split it into two sets: a training set and a
   # testing set.
@@ -121,7 +154,7 @@ def may_build_dataset(dataset=None, verbose=True):
   clf.transform_and_save(
     database,
     train_file=train_file,
-    test_file=test_file,
+    test_file=valid_file,
     lr_factor=FLAGS.lr_scaling_factor,
     lr_algorithm=FLAGS.lr_algorithm,
     verbose=True,
