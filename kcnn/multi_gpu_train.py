@@ -238,21 +238,33 @@ def restore_previous_checkpoint(sess, global_step):
     global_step: the tensor of the `global_step`.
 
   """
-  start_step = 0
+  start_step = 1
   variable_averages = tf.train.ExponentialMovingAverage(
     constants.VARIABLE_MOVING_AVERAGE_DECAY)
   variables_to_restore = {}
   for var in tf.trainable_variables():
     variables_to_restore[variable_averages.average_name(var)] = var
 
+  # Restore the global step
+  if not FLAGS.restore_checkpoint:
+    variables_to_restore[global_step.name.split(":")[0]] = global_step
   loader = tf.train.Saver(var_list=variables_to_restore)
+
   if FLAGS.restore_checkpoint:
+    # Only restore variables from a checkpoint to start a new training.
+    tf.logging.info(
+      "Initialize variables with {}".format(FLAGS.restore_checkpoint))
     loader.restore(sess, FLAGS.restore_checkpoint)
   else:
+    # Restore variables and the global step to continue the previous training.
     ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
     if ckpt and ckpt.model_checkpoint_path:
       loader.restore(sess, ckpt.model_checkpoint_path)
       start_step = sess.run(global_step)
+      model_step = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
+      if start_step != model_step:
+        tf.logging.warning("The model step {:d} is not equal to the "
+                           "global step {:d}".format(model_step, start_step))
   return start_step
 
 
@@ -383,10 +395,10 @@ def train_with_multiple_gpus():
     sess.run(init)
 
     # Restore the previous checkpoint
-    start_step = 0
+    start_step = 1
     if FLAGS.restore_training or FLAGS.restore_checkpoint:
       start_step = restore_previous_checkpoint(sess, global_step)
-    max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size)
+    max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size) + 1
 
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
