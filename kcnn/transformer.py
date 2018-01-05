@@ -1675,7 +1675,7 @@ class FixedLenMultiTransformer(MultiTransformer):
     max_size = max(sizes)
 
     if test_file:
-      examples = database.examples(for_training=False)
+      examples = database.examples(mode=tf.estimator.ModeKeys.EVAL)
       ids = database.ids_of_testing_examples
       num_examples = len(ids)
       if num_examples > 0:
@@ -1694,7 +1694,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         )
 
     if train_file:
-      examples = database.examples(for_training=True)
+      examples = database.examples(mode=tf.estimator.ModeKeys.TRAIN)
       ids = database.ids_of_training_examples
       num_examples = len(ids)
       if num_examples > 0:

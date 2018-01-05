@@ -9,6 +9,7 @@ import sys
 import time
 import json
 import numpy as np
+from tensorflow.python.estimator.model_fn import ModeKeys
 from ase.atoms import Atom, Atoms
 from ase.db import connect
 from ase.calculators.calculator import Calculator
@@ -252,25 +253,25 @@ class Database:
   A manager class for manipulating the `ase.db.core.Database`.
   """
 
-  def __init__(self, db, random_seed=None, auxiliary=None):
+  def __init__(self, db, auxiliary=None):
     """
     Initialization method.
 
     Args:
       db: a `ase.db.core.Database` object.
-      random_seed: an `int` as the random seed or None to use the default seed.
       auxiliary: an axuiliary `dict` for this database.
 
     """
     self._database = db
-    self._random_state = random_seed or SEED
     self._energy_range = None
-    self._splitted = False
-    self._ids_of_training_examples = None
-    self._ids_of_testing_examples = None
     self._max_occurs = None
     self._natoms_counter = None
     self._auxiliary = auxiliary
+    self._splitted = False
+    self._id_list = {
+      ModeKeys.TRAIN: None,
+      ModeKeys.EVAL: None,
+    }
 
   def __len__(self):
     """
@@ -280,7 +281,7 @@ class Database:
 
   def __getitem__(self, index):
     """
-    Get one or more structures.
+    x.__getitem__(y) <==> x[y]
 
     Args:
       index: an `int` or a list of `int` as the zero-based id(s) to select.
@@ -307,7 +308,7 @@ class Database:
 
       self._database.update(indices, selected=True)
       objects = [
-        self._get_atoms(row) for row in self._database.select(selected=True)]
+        self.get_atoms(row) for row in self._database.select(selected=True)]
       self._database.update(indices, selected=False)
 
     else:
@@ -316,7 +317,7 @@ class Database:
     return objects
 
   @staticmethod
-  def _get_atoms(row):
+  def get_atoms(row):
     """
     Convert the database row to `ase.Atoms` while keeping the info dict.
 
@@ -343,18 +344,14 @@ class Database:
     """
     Return the ids for all training examples.
     """
-    if not self._ids_of_training_examples:
-      self.split()
-    return self._ids_of_training_examples
+    return self._id_list[ModeKeys.TRAIN]
 
   @property
   def ids_of_testing_examples(self):
     """
     Return the ids for all testing examples.
     """
-    if not self._ids_of_training_examples:
-      self.split()
-    return self._ids_of_testing_examples
+    return self._id_list[ModeKeys.EVAL]
 
   @property
   def energy_range(self):
@@ -378,12 +375,15 @@ class Database:
     """
     Return the distribution of the sizes of the `ase.Atoms` structures.
     """
+    if self._natoms_counter is None:
+      self._go_through()
     return self._natoms_counter
 
   def _go_through(self):
     """
-    Go through all database records to determine the energy range, max occurs
-    and the distribution of the sizes of the `ase.Atoms` structures.
+    Go through all records of this database to determine the energy range,
+    max occurs of the chemical symbols and the distribution of the sizes of
+    the `ase.Atoms` structures.
     """
     try:
       self._max_occurs = self._auxiliary['max_occurs']
@@ -391,8 +391,9 @@ class Database:
       self._natoms_counter = {}
       for natoms, n in self._auxiliary['natoms_counter'].items():
         self._natoms_counter[int(natoms)] = n
-    except Exception as excp:
-      print(excp)
+      assert len(self._max_occurs) > 0
+      assert len(self._energy_range) == 2
+    except Exception:
       counter = Counter()
       y_min = np.inf
       y_max = -np.inf
@@ -419,37 +420,30 @@ class Database:
         random sampling.
 
     """
-    print("Splitting...")
-    tic = time.time()
-    random_state = random_state or self._random_state
+    random_state = random_state or SEED
     ids_for_training, ids_for_testing = train_test_split(
-      # Note: `id` starts from 1 not 0!
-      list(range(1, len(self) + 1)), test_size=test_size, random_state=random_state
+      list(range(1, len(self) + 1)),
+      test_size=test_size,
+      random_state=random_state
     )
-    self._database.update(ids_for_training, for_training=True)
-    self._database.update(ids_for_testing, for_training=False)
-    self._random_state = random_state
     self._splitted = True
-    self._ids_of_training_examples = ids_for_training
-    self._ids_of_testing_examples = ids_for_testing
-    print("Done. ({:.3f} seconds)".format(time.time() - tic))
+    self._id_list[ModeKeys.TRAIN] = ids_for_training
+    self._id_list[ModeKeys.EVAL] = ids_for_testing
 
-  def examples(self, for_training=True):
+  def examples(self, mode=ModeKeys.TRAIN):
     """
     A set-like object providing a view on `ase.Atoms` of this database.
 
     Args:
-      for_training: a `bool` indicating whether should we view on training
-        examples or not.
+      mode: the purpose of the examples to fetch.
 
     Yields:
       atoms: an `ase.Atoms` object.
 
     """
-    if not self._splitted:
-      self.split()
-    for row in self._database.select(for_training=for_training):
-      yield self._get_atoms(row)
+    defaults = list(range(1, len(self) + 1))
+    for aid in self._id_list.get(mode, defaults):
+      yield self.get_atoms(self._database.get(id=aid))
 
   @classmethod
   def from_xyz(cls, xyzfile, num_examples, xyz_format='xyz', verbose=True,
