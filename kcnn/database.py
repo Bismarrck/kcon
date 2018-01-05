@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import
 import re
 import sys
 import time
+import json
 import numpy as np
 from ase.atoms import Atom, Atoms
 from ase.db import connect
@@ -57,6 +58,36 @@ _xyz = XyzFormat(
   default_unit=hartree_to_ev,
   parse_forces=False,
 )
+
+
+def _load_auxiliary_dict(dbfile):
+  """
+
+  Args:
+    dbfile:
+
+  Returns:
+    auxdict:
+
+  """
+  auxfile = "{}.aux".format(dbfile)
+  if isfile(auxfile):
+    with open(auxfile) as fp:
+      return dict(json.load(fp))
+  else:
+    return None
+
+
+def _save_auxiliary_dict(dbfile, auxdict):
+  """
+
+  Args:
+    dbfile:
+
+  """
+  auxfile = "{}.aux".format(dbfile)
+  with open(auxfile, 'w') as fp:
+    json.dump(auxdict, fp, indent=2)
 
 
 class ProvidedCalculator(Calculator):
@@ -113,7 +144,8 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
       existed.
 
   Returns:
-    db: an `ase.db.core.Database`.
+    database: an `ase.db.core.Database`.
+    auxdict: a `dict` as the auxiliary dict for this database.
 
   """
   if xyz_format.lower() == 'ase':
@@ -121,12 +153,13 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
   else:
     formatter = _xyz
 
-  database = "{}.db".format(splitext(xyzfile)[0])
-  if isfile(database):
+  dbfile = "{}.db".format(splitext(xyzfile)[0])
+  if isfile(dbfile):
     if restart:
-      remove(database)
+      remove(dbfile)
     else:
-      return connect(name=database)
+      auxdict = _load_auxiliary_dict(dbfile)
+      return connect(name=dbfile), auxdict
 
   unit = unit_to_ev or formatter.default_unit
   parse_forces = formatter.parse_forces
@@ -136,8 +169,12 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
   stage = 0
   atoms = None
   num_examples = num_examples or 0
+  natoms_counter = Counter()
+  y_min = np.inf
+  y_max = -np.inf
+  max_occurs = Counter()
 
-  db = connect(name=database)
+  database = connect(name=dbfile)
   tic = time.time()
   if verbose:
     sys.stdout.write("Extract cartesian coordinates ...\n")
@@ -154,6 +191,7 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
           atoms = Atoms(calculator=ProvidedCalculator())
           if parse_forces:
             atoms.info['provided_forces'] = np.zeros((natoms, 3))
+          natoms_counter[natoms] += 1
           stage += 1
       elif stage == 1:
         m = formatter.energy_patt.search(line)
@@ -169,6 +207,8 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
           else:
             energy = float(m.group(1)) * unit
           atoms.info['provided_energy'] = energy
+          y_min = min(y_min, energy)
+          y_max = max(y_max, energy)
           stage += 1
       elif stage == 2:
         m = formatter.string_patt.search(line)
@@ -181,17 +221,30 @@ def xyz_to_database(xyzfile, num_examples=None, xyz_format='xyz', verbose=True,
           ai += 1
           if ai == natoms:
             atoms.calc.calculate()
-            db.write(atoms)
+            database.write(atoms)
+            counter = Counter(atoms.get_chemical_symbols())
+            for symbol, n in counter.items():
+              max_occurs[symbol] = max(max_occurs[symbol], n)
             ai = 0
             stage = 0
             count += 1
             if verbose and count % 1000 == 0:
               sys.stdout.write(
-                "\rProgress: %7d  /  %7d" % (count, num_examples))
+                "\rProgress: {:7d}  /  {:7d} | Speed = {:.1f}".format(
+                  count, num_examples, count / (time.time() - tic)))
     if verbose:
       print("")
       print("Total time: %.3f s\n" % (time.time() - tic))
-    return db
+
+    # Dump the auxiliary dict.
+    auxdict = {
+      "max_occurs": dict(max_occurs),
+      "y_range": [y_min, y_max],
+      "natoms_counter": dict(natoms_counter)
+    }
+    _save_auxiliary_dict(dbfile, auxdict)
+
+    return database, auxdict
 
 
 class Database:
@@ -199,16 +252,17 @@ class Database:
   A manager class for manipulating the `ase.db.core.Database`.
   """
 
-  def __init__(self, db, random_seed=None):
+  def __init__(self, db, random_seed=None, auxiliary=None):
     """
     Initialization method.
 
     Args:
       db: a `ase.db.core.Database` object.
       random_seed: an `int` as the random seed or None to use the default seed.
+      auxiliary: an axuiliary `dict` for this database.
 
     """
-    self._db = db
+    self._database = db
     self._random_state = random_seed or SEED
     self._energy_range = None
     self._splitted = False
@@ -216,12 +270,13 @@ class Database:
     self._ids_of_testing_examples = None
     self._max_occurs = None
     self._natoms_counter = None
+    self._auxiliary = auxiliary
 
   def __len__(self):
     """
     Return the total number of examples stored in this database.
     """
-    return len(self._db)
+    return len(self._database)
 
   def __getitem__(self, index):
     """
@@ -237,7 +292,7 @@ class Database:
     if isinstance(index, int):
       if index < 1:
         raise ValueError("The minimum id is 1 but not 0!")
-      objects = self._db.get_atoms('id={}'.format(index))
+      objects = self._database.get_atoms('id={}'.format(index))
 
     elif isinstance(index, (list, tuple, np.ndarray, slice)):
 
@@ -250,9 +305,10 @@ class Database:
       if min(indices) < 1:
         raise ValueError("The minimum id is 1 but not 0!")
 
-      self._db.update(indices, selected=True)
-      objects = [self._get_atoms(row) for row in self._db.select(selected=True)]
-      self._db.update(indices, selected=False)
+      self._database.update(indices, selected=True)
+      objects = [
+        self._get_atoms(row) for row in self._database.select(selected=True)]
+      self._database.update(indices, selected=False)
 
     else:
       raise ValueError('The index should be an int or a list of ints!')
@@ -280,7 +336,7 @@ class Database:
     """
     Return the total number of examples stored in this database.
     """
-    return len(self._db)
+    return len(self._database)
 
   @property
   def ids_of_training_examples(self):
@@ -329,19 +385,27 @@ class Database:
     Go through all database records to determine the energy range, max occurs
     and the distribution of the sizes of the `ase.Atoms` structures.
     """
-    counter = Counter()
-    y_min = np.inf
-    y_max = -np.inf
-    max_occurs = {}
-    for row in self._db.select('id<={}'.format(len(self))):
-      y_min = min(row.energy, y_min)
-      y_max = max(row.energy, y_max)
-      for atom, n in Counter(row.symbols).items():
-        max_occurs[atom] = max(max_occurs.get(atom, 0), n)
-      counter[row.natoms] += 1
-    self._max_occurs = max_occurs
-    self._energy_range = (y_min, y_max)
-    self._natoms_counter = counter
+    try:
+      self._max_occurs = self._auxiliary['max_occurs']
+      self._energy_range = self._auxiliary['y_range']
+      self._natoms_counter = {}
+      for natoms, n in self._auxiliary['natoms_counter'].items():
+        self._natoms_counter[int(natoms)] = n
+    except Exception as excp:
+      print(excp)
+      counter = Counter()
+      y_min = np.inf
+      y_max = -np.inf
+      max_occurs = {}
+      for row in self._database.select('id<={}'.format(len(self))):
+        y_min = min(row.energy, y_min)
+        y_max = max(row.energy, y_max)
+        for atom, n in Counter(row.symbols).items():
+          max_occurs[atom] = max(max_occurs.get(atom, 0), n)
+        counter[row.natoms] += 1
+      self._max_occurs = max_occurs
+      self._energy_range = (y_min, y_max)
+      self._natoms_counter = counter
 
   def split(self, test_size=0.2, random_state=None):
     """
@@ -355,19 +419,20 @@ class Database:
         random sampling.
 
     """
+    print("Splitting...")
+    tic = time.time()
     random_state = random_state or self._random_state
     ids_for_training, ids_for_testing = train_test_split(
       # Note: `id` starts from 1 not 0!
-      list(range(1, len(self) + 1)),
-      test_size=test_size,
-      random_state=random_state
+      list(range(1, len(self) + 1)), test_size=test_size, random_state=random_state
     )
-    self._db.update(ids_for_training, for_training=True)
-    self._db.update(ids_for_testing, for_training=False)
+    self._database.update(ids_for_training, for_training=True)
+    self._database.update(ids_for_testing, for_training=False)
     self._random_state = random_state
     self._splitted = True
     self._ids_of_training_examples = ids_for_training
     self._ids_of_testing_examples = ids_for_testing
+    print("Done. ({:.3f} seconds)".format(time.time() - tic))
 
   def examples(self, for_training=True):
     """
@@ -383,7 +448,7 @@ class Database:
     """
     if not self._splitted:
       self.split()
-    for row in self._db.select(for_training=for_training):
+    for row in self._database.select(for_training=for_training):
       yield self._get_atoms(row)
 
   @classmethod
@@ -406,12 +471,15 @@ class Database:
       db: a `Database`.
 
     """
-    return cls(xyz_to_database(xyzfile,
-                               num_examples=num_examples,
-                               xyz_format=xyz_format,
-                               verbose=verbose,
-                               unit_to_ev=unit_to_ev,
-                               restart=restart))
+    database, auxdict = xyz_to_database(
+      xyzfile,
+      num_examples=num_examples,
+      xyz_format=xyz_format,
+      verbose=verbose,
+      unit_to_ev=unit_to_ev,
+      restart=restart
+    )
+    return cls(database, auxiliary=auxdict)
 
   @classmethod
   def from_db(cls, filename):
@@ -422,8 +490,8 @@ class Database:
       filename: a `str` as the file to load.
 
     Returns:
-      db: a `Database`.
+      database: a `Database`.
 
     """
     with connect(filename) as db:
-      return cls(db)
+      return cls(db, auxiliary=_load_auxiliary_dict(filename))
