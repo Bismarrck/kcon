@@ -57,7 +57,7 @@ tf.app.flags.DEFINE_boolean('forces_only', False,
                             flag is set.""")
 
 # Setup the devices.
-tf.app.flags.DEFINE_boolean('log_device_placement', True,
+tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('num_gpus', 1,
                             """How many GPUs to use.""")
@@ -290,7 +290,7 @@ def train_with_multiple_gpus():
 
     # Initialize the input pipeline.
     total_batch_size = FLAGS.batch_size * FLAGS.num_gpus
-    num_examples = pipeline.get_dataset_size(FLAGS.dataset)
+    num_examples = pipeline.get_dataset_size(FLAGS.dataset, for_training=True)
     batch = pipeline.next_batch(for_training=True,
                                 shuffle=True,
                                 dataset_name=FLAGS.dataset,
@@ -403,6 +403,8 @@ def train_with_multiple_gpus():
     # Create the summary writer
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
+    tic = time.time()
+
     for step in range(start_step, max_steps):
       start_time = time.time()
 
@@ -422,10 +424,12 @@ def train_with_multiple_gpus():
         examples_per_sec = num_examples_per_step / duration
         sec_per_batch = duration / FLAGS.num_gpus
         epoch = step * total_batch_size / num_examples
+        sec_per_epoch = (time.time() - tic) / epoch
         format_str = "%s: step %6d, epoch=%7.2f, loss = %10.6f " \
-                     "(%8.1f examples/sec; %8.3f sec/batch)"
+                     "(%8.1f examples/sec; %8.3f sec/batch, %8.3f sec/epoch)"
         tf.logging.info(format_str % (datetime.now(), step, epoch, loss_value,
-                                      examples_per_sec, sec_per_batch))
+                                      examples_per_sec, sec_per_batch,
+                                      sec_per_epoch))
 
       if step % FLAGS.save_frequency == 0:
         summary_str = sess.run(summary_op)

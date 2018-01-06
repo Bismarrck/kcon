@@ -125,6 +125,7 @@ def train_model():
         """
         super(RunHook, self).__init__()
         self._step = -1
+        self._tic = time.time()
         self._start_time = 0
         self._epoch = 0.0
         self._epoch_per_step = FLAGS.batch_size / num_examples
@@ -197,13 +198,14 @@ def train_model():
         if self.should_log():
           examples_per_sec = num_examples_per_step / duration
           sec_per_batch = float(duration)
+          sec_per_epoch = (time.time() - self._tic) / self._epoch
 
           if not self._atomic_forces or FLAGS.forces_only:
             format_str = "step %6d, epoch=%7.2f, loss=%10.6f " \
-                       "(%6.1f examples/sec; %7.3f sec/batch)"
+                       "(%6.1f examples/sec; %8.3f sec/batch, %8.3f sec/epoch)"
             tf.logging.info(
               format_str % (self._step, self._epoch, loss_value,
-                            examples_per_sec, sec_per_batch)
+                            examples_per_sec, sec_per_batch, sec_per_epoch)
             )
           else:
             y_val = run_values.results['y_loss']
@@ -260,7 +262,8 @@ def train_model():
                tf.train.StopAtStepHook(last_step=max_steps)],
         scaffold=scaffold,
         config=tf.ConfigProto(
-          log_device_placement=FLAGS.log_device_placement)) as mon_sess:
+          log_device_placement=FLAGS.log_device_placement,
+          allow_soft_placement=True)) as mon_sess:
 
       while not mon_sess.should_stop():
         try:
