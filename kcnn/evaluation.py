@@ -55,7 +55,7 @@ def get_eval_dir():
 
 
 def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
-              summary_op, eval_training_data=False):
+              n_atom_op, summary_op, eval_training_data=False):
   """
   Run Eval once.
 
@@ -66,6 +66,8 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
     y_nn_op: The Tensor used for fetching neural network predicted energies.
     f_true_op: The Tensor used for fetching true forces.
     f_nn_op: The Tensor used for fetching neural network predicted forces.
+    n_atom_op: The Tensor used for fetching the number of atoms of each
+      structure.
     summary_op: Summary op.
     eval_training_data: a `bool` indicating whether the dataset used is the
       training dataset or not.
@@ -119,6 +121,7 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
 
       y_true = np.zeros((num_evals, ), dtype=np.float32)
       y_pred = np.zeros((num_evals, ), dtype=np.float32)
+      n_atom = np.zeros((num_evals, ), dtype=np.float32)
 
       if atomic_forces:
         num_entries = f_true_op.get_shape().as_list()[1]
@@ -137,9 +140,10 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
         istart = step * FLAGS.batch_size
         istop = min(istart + FLAGS.batch_size, num_evals)
 
-        y_true_, y_pred_ = sess.run([y_true_op, y_nn_op])
+        y_true_, y_pred_, n_atom_ = sess.run([y_true_op, y_nn_op, n_atom_op])
         y_true[istart: istop] = -y_true_
         y_pred[istart: istop] = -y_pred_
+        n_atom[istart: istop] = n_atom_
 
         if atomic_forces:
           f_true_, f_pred_ = sess.run([f_true_op, f_nn_op])
@@ -152,7 +156,11 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
 
       # Compute the common evaluation metrics.
       precision = mean_absolute_error(y_true, y_pred)
+      mae_per_atom = mean_absolute_error(
+        y_true / n_atom, y_pred / n_atom) * 100.0
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+      rmse_per_atom = np.sqrt(
+        mean_squared_error(y_true / n_atom, y_pred / n_atom)) * 100.0
       y_diff = np.abs(y_true - y_pred)
       emax = y_diff.max()
       emin = y_diff.min()
@@ -163,8 +171,10 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       tf.logging.info("%s: type          = %s" % (dtime, eval_type))
       tf.logging.info("%s: step          = %d" % (dtime, global_step))
       tf.logging.info("%s: time          = %.2f" % (dtime, elpased))
-      tf.logging.info("%s: precision     = %10.6f" % (dtime, precision))
+      tf.logging.info("%s: MAE           = %10.6f" % (dtime, precision))
+      tf.logging.info("%s: MAE / atom    = %10.6f meV" % (dtime, mae_per_atom))
       tf.logging.info("%s: RMSE          = %10.6f" % (dtime, rmse))
+      tf.logging.info("%s: RMSE / atom   = %10.6f meV" % (dtime, rmse_per_atom))
       tf.logging.info("%s: minimum       = %10.6f" % (dtime, emin))
       tf.logging.info("%s: maximum       = %10.6f" % (dtime, emax))
       tf.logging.info("%s: score         = %10.6f" % (dtime, score))
@@ -256,7 +266,7 @@ def evaluate(eval_dir):
   with tf.Graph().as_default() as graph:
 
     # Inference the KCNN model for evaluation
-    y_calc, y_true, _, f_calc, f_true, _ = kcnn_from_dataset(
+    y_calc, y_true, _, f_calc, f_true, n_atom = kcnn_from_dataset(
       FLAGS.dataset,
       for_training=FLAGS.eval_training_data,
       verbose=False,
@@ -289,8 +299,8 @@ def evaluate(eval_dir):
 
     while True:
       eval_at_step = eval_once(
-        saver, summary_writer, y_true, y_calc, f_true, f_calc, summary_op,
-        eval_training_data=FLAGS.eval_training_data
+        saver, summary_writer, y_true, y_calc, f_true, f_calc, n_atom,
+        summary_op, eval_training_data=FLAGS.eval_training_data
       )
       if len(evaluated_steps) > 0 and evaluated_steps[-1] != eval_at_step:
         evaluated_steps.clear()
