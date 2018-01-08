@@ -255,7 +255,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
       num_f_components, num_entries = None, None
 
     # Set the number of parallel calls (threads).
-    num_parallel_calls = min(512, max(batch_size, FLAGS.num_parallel_calls))
+    num_parallel_calls = min(batch_size, FLAGS.num_parallel_calls)
 
     # Initialize a basic dataset
     dataset = tf.data.TFRecordDataset([tfrecods_file]).map(
