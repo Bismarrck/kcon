@@ -7,7 +7,6 @@ from __future__ import print_function, absolute_import
 
 import json
 import tensorflow as tf
-from multiprocessing import cpu_count
 from collections import namedtuple
 from functools import partial
 from os import makedirs
@@ -248,6 +247,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
     cnk = shape[0]
     ck2 = shape[1]
     num_atom_types = configs["num_atom_types"]
+    dataset_size = get_dataset_size(dataset_name, for_training=for_training)
 
     if FLAGS.forces:
       num_f_components, num_entries = configs["indexing_shape"]
@@ -255,7 +255,7 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
       num_f_components, num_entries = None, None
 
     # Set the number of parallel calls (threads).
-    num_parallel_calls = min(cpu_count() * 2, FLAGS.num_parallel_calls)
+    num_parallel_calls = min(512, max(batch_size, FLAGS.num_parallel_calls))
 
     # Initialize a basic dataset
     dataset = tf.data.TFRecordDataset([tfrecods_file]).map(
@@ -274,7 +274,8 @@ def next_batch(dataset_name, for_training=True, batch_size=50, num_epochs=None,
 
     # Shuffle it if needed
     if shuffle:
-      dataset = dataset.shuffle(buffer_size=1000 + 3 * batch_size, seed=SEED)
+      min_queue_examples = int(dataset_size * 0.4) + 3 * batch_size
+      dataset = dataset.shuffle(buffer_size=min_queue_examples, seed=SEED)
 
     # Setup the batch
     dataset = dataset.batch(batch_size)
