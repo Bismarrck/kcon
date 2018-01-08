@@ -49,7 +49,7 @@ tf.app.flags.DEFINE_integer('num_epochs', 1000,
                             """The maximum number of training epochs.""")
 tf.app.flags.DEFINE_boolean('restore_training', True,
                             """Restore the previous training if possible.""")
-tf.app.flags.DEFINE_string('restore_checkpoint', None,
+tf.app.flags.DEFINE_string('restore_weights_from', None,
                            """Start a new training using the variables restored
                            from the checkpoint.""")
 tf.app.flags.DEFINE_boolean('forces_only', False,
@@ -241,20 +241,22 @@ def restore_previous_checkpoint(sess, global_step):
   start_step = 1
   variable_averages = tf.train.ExponentialMovingAverage(
     constants.VARIABLE_MOVING_AVERAGE_DECAY)
-  variables_to_restore = {}
-  for var in tf.trainable_variables():
-    variables_to_restore[variable_averages.average_name(var)] = var
 
-  # Restore the global step
-  if not FLAGS.restore_checkpoint:
-    variables_to_restore[global_step.name.split(":")[0]] = global_step
+  # Only restore weights (trainable variabls) from a previous checkpoint to
+  # start a new training.
+  if FLAGS.restore_weights_from:
+    variables_to_restore = {}
+    for var in tf.trainable_variables():
+      variables_to_restore[variable_averages.average_name(var)] = var
+  else:
+    variables_to_restore = variable_averages.variables_to_restore()
   loader = tf.train.Saver(var_list=variables_to_restore)
 
-  if FLAGS.restore_checkpoint:
+  if FLAGS.restore_weights_from:
     # Only restore variables from a checkpoint to start a new training.
     tf.logging.info(
-      "Initialize variables with {}".format(FLAGS.restore_checkpoint))
-    loader.restore(sess, FLAGS.restore_checkpoint)
+      "Initialize variables with {}".format(FLAGS.restore_weights_from))
+    loader.restore(sess, FLAGS.restore_weights_from)
   else:
     # Restore variables and the global step to continue the previous training.
     ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
@@ -396,7 +398,7 @@ def train_with_multiple_gpus():
 
     # Restore the previous checkpoint
     start_step = 1
-    if FLAGS.restore_training or FLAGS.restore_checkpoint:
+    if FLAGS.restore_training or FLAGS.restore_weights_from:
       start_step = restore_previous_checkpoint(sess, global_step)
     max_steps = int(FLAGS.num_epochs * num_examples / total_batch_size) + 1
 
