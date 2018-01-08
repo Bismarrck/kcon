@@ -58,41 +58,32 @@ def get_formula(species):
   return "".join(species)
 
 
-def _compute_lr_weights(coef, y, num_real_atom_types, factor=1.0,
-                        only_minimum_of_stoichiometry=True):
+def _compute_lr_weights(coef, y, num_real_atom_types, factor=1.0):
   """
   Solve the linear equation system of Ax = b.
   
   Args:
     coef: a `float` array of shape `[num_examples, num_atom_types]`.
     y: a `float` array of shape `[num_examples, ]`.
-    num_real_atom_types: an `int` as the number of types of atoms excluding the
+    num_real_atom_types: an `int` as the number of atom types excluding the
       ghost atoms.
     factor: a `float` as a scaling factor for the weights.
-    only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
-      weights will be computed using only the minimum structure of each
-      stoichiometry.
 
   Returns:
     x: a `float` array of shape `[num_atom_types, ]` as the solution.
 
   """
-  rank = np.linalg.matrix_rank(coef)
+  rank = np.linalg.matrix_rank(coef[:, :num_real_atom_types])
   diff = num_real_atom_types - rank
 
-  # The coef matrix is full rank. So the linear equations can be solved.
+  # The coef matrix is full rank. So the linear equation system can be solved.
   if diff == 0:
     x = np.negative(np.dot(np.linalg.pinv(coef), y))
 
   # The rank is 1, so all structures have the same stoichiometry. Then all types
   # of atoms can be treated equally.
   elif rank == 1:
-    x = np.zeros_like(coef[0])
-    if not only_minimum_of_stoichiometry:
-      x[:num_real_atom_types] = np.negative(np.mean(y / coef.sum(axis=1)))
-    else:
-      x[:num_real_atom_types] = np.negative(np.min(y / coef.sum(axis=1)))
-    return x
+    x = np.negative(np.mean(y / coef[:, :num_real_atom_types].sum(axis=1)))
 
   else:
     raise ValueError(
@@ -1055,20 +1046,29 @@ class MultiTransformer:
       cutoff: a `float` as the cutoff.
 
     """
-
-    # Determine the number of ghost atoms (k_max - 2) to add.
-    if include_all_k and k_max >= 3:
-      num_ghosts = k_max - 2
-      if GHOST not in atom_types:
-        atom_types = list(atom_types) + [GHOST] * num_ghosts
+    # Make sure the ghost atom is always the last one!
+    if include_all_k and k_max == 3:
+      num_ghosts = 1
+      atom_types = list(atom_types)
+      if GHOST in atom_types:
+        if atom_types[-1] != GHOST:
+          atom_types.remove(GHOST)
+          atom_types = sorted(atom_types) + [GHOST]
+        else:
+          atom_types = sorted(atom_types[:-1]) + [GHOST]
+      else:
+        atom_types = sorted(atom_types) + [GHOST]
+    elif k_max > 3:
+      raise ValueError("k_max > 3 is not supported!")
     else:
       num_ghosts = 0
+      if GHOST in atom_types:
+        raise ValueError("GHOST is not allowed when k_max == 2!")
 
     # Determine the species and maximum occurs.
     species = []
     max_occurs = {} if max_occurs is None else dict(max_occurs)
-    if num_ghosts > 0:
-      max_occurs[GHOST] = num_ghosts
+    max_occurs[GHOST] = num_ghosts
     for specie in atom_types:
       species.extend(list(repeat(specie, max_occurs.get(specie, k_max))))
       if specie not in max_occurs:
@@ -1076,14 +1076,14 @@ class MultiTransformer:
 
     self._include_all_k = include_all_k
     self._k_max = k_max
-    self._atom_types = list(set(atom_types))
+    self._atom_types = atom_types
+    self._species = species
+    self._num_atom_types = len(atom_types)
+    self._num_ghosts = num_ghosts
     self._kbody_terms = get_kbody_terms_from_species(species, k_max)
     self._transformers = {}
     self._max_occurs = max_occurs
     self._norm_order = norm_order
-    self._species = sorted(list(max_occurs.keys()))
-    self._num_atom_types = len(self._species)
-    self._num_ghosts = num_ghosts
     self._periodic = periodic
     self._atomic_forces = atomic_forces
     self._lj = lj
@@ -1131,6 +1131,13 @@ class MultiTransformer:
     Return the ordered species of this transformer.
     """
     return self._species
+
+  @property
+  def atom_types(self):
+    """
+    Return the supported atom types.
+    """
+    return self._atom_types
 
   @property
   def number_of_atom_types(self):
@@ -1259,11 +1266,11 @@ class MultiTransformer:
       coef = None
       indexing = None
 
-    occurs = np.zeros((ntotal, len(self._species)), dtype=np.float32)
+    occurs = np.zeros((ntotal, self._num_atom_types), dtype=np.float32)
     for specie, times in Counter(species).items():
-      loc = self._species.index(specie)
-      if loc < 0:
-        raise ValueError("The loc of %s is -1!" % specie)
+      loc = self._atom_types.index(specie)
+      if loc < 0 or loc >= self._num_atom_types:
+        raise ValueError("The loc of {:s} is {:d}!".format(specie, loc))
       occurs[:, loc] = float(times)
 
     weights = np.zeros((ntotal, nrows), dtype=np.float32)
@@ -1311,9 +1318,9 @@ class MultiTransformer:
     clf = self._get_transformer(species)
     split_dims = np.asarray(clf.split_dims)
     features, coef, indexing = clf.transform(atoms)
-    occurs = np.zeros((1, len(self._species)), dtype=np.float32)
+    occurs = np.zeros((1, self._num_atom_types), dtype=np.float32)
     for specie, times in Counter(species).items():
-      loc = self._species.index(specie)
+      loc = self._atom_types.index(specie)
       if loc < 0:
         raise ValueError("The loc of %s is -1!" % specie)
       occurs[0, loc] = float(times)
@@ -1381,6 +1388,96 @@ class MultiTransformer:
           for ai in indices[:k]:
             y_atomic[step, ai] += y_kbody[step, istart + ki] * coef
     return y_atomic
+
+
+class OneBodyCalculator:
+  """
+  A helper class to compute the initial one-body weights.
+  """
+
+  def __init__(self, atom_types, num_examples, algorithm='default', factor=1.0,
+               include_perturbations=True):
+    """
+    Initialization method.
+
+    Args:
+      atom_types: a list of `str` as the types of atoms.
+      num_examples: an `int` as the total number of examples.
+      algorithm: a `str` as the algorithm to compute the one-body weights.
+      factor: a `float` as the scaling factor as the one-body weights.
+      include_perturbations: a `bool`. If True, the higher-order perturbations
+        terms will be included in the coefficients matrix as well.
+
+    """
+    self.atom_types = atom_types
+    self.num_atom_types = len(atom_types)
+    if atom_types[-1] == GHOST:
+      self.num_real_atom_types = self.num_atom_types - 1
+    else:
+      self.num_real_atom_types = self.num_atom_types
+    self.minima = {}
+    self.b = np.zeros((num_examples, ))
+    self.algorithm = algorithm.lower()
+    self.factor = factor
+    self.include_perturbations = include_perturbations
+    self.mp2 = self.num_real_atom_types
+    self.mp3 = self.num_real_atom_types + 1
+    if not include_perturbations:
+      self.coef = np.zeros((num_examples, self.num_real_atom_types))
+    else:
+      self.coef = np.zeros((num_examples, self.num_real_atom_types + 2))
+
+  def add(self, index, chemical_symbols, y_true):
+    """
+    Add an example.
+
+    Args:
+      index: an `int` as the index of this sample.
+      chemical_symbols: a `list` of `str` as the chemical symbols of this
+        example.
+      y_true: a `float` as the total energy of this example.
+
+    """
+    counter = Counter(chemical_symbols)
+    for loc, atom in enumerate(self.atom_types[:self.num_real_atom_types]):
+      self.coef[index, loc] = counter[atom]
+    if self.include_perturbations:
+      self.coef[index, self.mp2] = comb(len(chemical_symbols), 2)
+      self.coef[index, self.mp3] = comb(len(chemical_symbols), 3)
+    self.b[index] = y_true
+    sch = self.get_stoichiometry(self.coef[index, :self.num_real_atom_types])
+    if sch not in self.minima or y_true < self.b[self.minima[sch]]:
+      self.minima[sch] = index
+
+  def compute(self):
+    """
+    Compute the one-body weights.
+    """
+    if self.algorithm == 'minimal':
+      # Only select the values from the global minima.
+      selected = np.ix_(list(self.minima.values()))
+      coef = self.coef[selected]
+      b = self.b[selected]
+    else:
+      coef = self.coef
+      b = self.b
+    # The size of `x` is always equal to `self.num_real_atom_types`. We may need
+    # to pad an zero at the end.
+    x = _compute_lr_weights(
+      coef, b,
+      num_real_atom_types=self.num_real_atom_types,
+      factor=self.factor
+    )
+    x = np.resize(x, self.num_atom_types)
+    x[self.num_real_atom_types:] = 0.0
+    return x
+
+  def get_stoichiometry(self, atoms_counts):
+    """
+    A helper function to get the stoichiometry of a structure.
+    """
+    return ";".join(["{},{}".format(self.atom_types[j], int(atoms_counts[j]))
+                     for j in range(self.num_real_atom_types)])
 
 
 class FixedLenMultiTransformer(MultiTransformer):
@@ -1455,9 +1552,27 @@ class FixedLenMultiTransformer(MultiTransformer):
       split_dims.append(np.prod(dims))
     return [int(x) for x in split_dims]
 
+  def _log_compression_results(self, results):
+    """
+    A helper function to log the compression result.
+    """
+    print("The soft compression algorithm is applied with cutoff = "
+          "{:.2f}".format(self._cutoff))
+
+    num_loss_total = 0
+    num_total = self._total_dim
+    for j, kbody_term in enumerate(self._kbody_terms):
+      num_full = self._split_dims[j]
+      num_kept = results.get(kbody_term, 0)
+      num_loss = num_full - num_kept
+      num_loss_total += num_loss
+      print("{:<12s} : {:5d} / {:5d}, compression = {:.2f}%".format(
+        kbody_term, num_loss, num_full, num_loss / num_full * 100))
+    print("Final result : {:5d} / {:5d}, compression = {:.2f}%".format(
+      num_loss_total, num_total, num_loss_total / num_total * 100))
+
   def _transform_and_save(self, filename, examples, num_examples, max_size,
-                          only_minimum_of_stoichiometry=True, lr_factor=1.0,
-                          loss_fn=None, verbose=True):
+                          loss_fn=None, verbose=True, one_body_kwargs=None):
     """
     Transform the given atomic coordinates to input features and save them to
     tfrecord files using `tf.TFRecordWriter`.
@@ -1468,12 +1583,10 @@ class FixedLenMultiTransformer(MultiTransformer):
       num_examples: an `int` as the number of examples.
       max_size: an `int` as the maximum size of all structures. This determines
         the dimension of the forces.
-      only_minimum_of_stoichiometry: a `bool`. If True, the initial one body
-        weights will be computed using only the minimum structure of each
-        stoichiometry.
-      lr_factor: a `float` as a scaling factor for the one-body weights.
       verbose: boolean indicating whether.
       loss_fn: a `Callable` for transforming the calculated raw loss.
+      one_body_kwargs: a `dict` as the key-value args for computing initial
+        one-body weights.
 
     Returns:
       weights: a `float32` array as the weights for linear fit of the energies.
@@ -1486,34 +1599,12 @@ class FixedLenMultiTransformer(MultiTransformer):
       """
       return 1.0
 
-    def _get_stoichiometry(atoms_counts):
-      """
-      A helper function to get the stoichiometry of a structure.
-      """
-      return ";".join(["{},{}".format(self._species[j], int(atoms_counts[j]))
-                       for j in range(len(self._species))])
-
-    def _log_compression_results(results):
-      """
-      A helper function to log the compression result.
-      """
-      print("The soft compression algorithm is applied with cutoff = "
-            "{:.2f}".format(self._cutoff))
-
-      num_loss_total = 0
-      num_total = self._total_dim
-      for j, kbody_term in enumerate(self._kbody_terms):
-        num_full = self._split_dims[j]
-        num_kept = results.get(kbody_term, 0)
-        num_loss = num_full - num_kept
-        num_loss_total += num_loss
-        print("{:<12s} : {:5d} / {:5d}, compression = {:.2f}%".format(
-          kbody_term, num_loss, num_full, num_loss / num_full * 100))
-      print("Final result : {:5d} / {:5d}, compression = {:.2f}%".format(
-        num_loss_total, num_total, num_loss_total / num_total * 100))
-
     # Setup the loss function.
     loss_fn = loss_fn or _identity
+
+    # Setup the one-body weights calculator
+    one_body = OneBodyCalculator(
+      self._atom_types, num_examples, **(one_body_kwargs or {}))
 
     # Start the timer
     tic = time.time()
@@ -1523,19 +1614,12 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Start transforming {} ... ".format(filename))
 
       compress_stats = {}
-      num_real_atom_types = self._num_atom_types - self._num_ghosts
-      stoichiometries = {}
-      lr = np.zeros((num_examples, self.number_of_atom_types))
-      b = np.zeros((num_examples, ))
 
       for i, atoms in enumerate(examples):
 
         species = atoms.get_chemical_symbols()
         y_true = atoms.get_total_energy()
         sample = self.transform(atoms)
-
-        for k, v in sample.compress_stats.items():
-          compress_stats[k] = max(compress_stats.get(k, 0), v)
 
         x = _bytes_feature(sample.features.tostring())
         y = _bytes_feature(np.atleast_2d(-y_true).tostring())
@@ -1564,14 +1648,12 @@ class FixedLenMultiTransformer(MultiTransformer):
                                        'forces': forces}))
         writer.write(example.SerializeToString())
 
-        counter = Counter(species)
-        for loc, atom in enumerate(self._species):
-          lr[i, loc] = counter[atom]
-        b[i] = y_true
+        # Add this example to the one-body database
+        one_body.add(i, species, y_true)
 
-        sch = _get_stoichiometry(lr[i])
-        if sch not in stoichiometries or y_true < b[stoichiometries[sch]]:
-          stoichiometries[sch] = i
+        # Save the compress stats for this example
+        for k, v in sample.compress_stats.items():
+          compress_stats[k] = max(compress_stats.get(k, 0), v)
 
         if verbose and (i + 1) % 100 == 0:
           sys.stdout.write("\rProgress: {:7d} / {:7d} | Speed = {:6.1f}".format(
@@ -1582,18 +1664,9 @@ class FixedLenMultiTransformer(MultiTransformer):
         print("Transforming {} finished!".format(filename))
 
         if self._cutoff is not None:
-          _log_compression_results(compress_stats)
+          self._log_compression_results(compress_stats)
 
-      if only_minimum_of_stoichiometry:
-        selected = np.ix_(list(stoichiometries.values()))
-        lr = lr[selected]
-        b = b[selected]
-
-      return _compute_lr_weights(
-        lr, b, num_real_atom_types,
-        factor=lr_factor,
-        only_minimum_of_stoichiometry=only_minimum_of_stoichiometry
-      )
+      return one_body.compute()
 
   def _save_auxiliary_for_file(self, filename, max_size, lookup_indices=None,
                                initial_1body_weights=None):
@@ -1628,7 +1701,8 @@ class FixedLenMultiTransformer(MultiTransformer):
       "split_dims": self._split_dims,
       "shape": self.shape,
       "lookup_indices": list([int(i) for i in lookup_indices]),
-      "num_atom_types": len(self._species),
+      "atom_types": self._atom_types,
+      "num_atom_types": self._num_atom_types,
       "species": self._species,
       "include_all_k": self._include_all_k,
       "periodic": self._periodic,
@@ -1649,8 +1723,7 @@ class FixedLenMultiTransformer(MultiTransformer):
       json.dump(auxiliary_properties, fp=fp, indent=2)
 
   def transform_and_save(self, database, train_file=None, test_file=None,
-                         lr_algorithm='default', lr_factor=1.0, loss_fn=None,
-                         verbose=True):
+                         loss_fn=None, verbose=True, one_body_kwargs=None):
     """
     Transform coordinates to input features and save them to tfrecord files
     using `tf.TFRecordWriter`.
@@ -1659,25 +1732,19 @@ class FixedLenMultiTransformer(MultiTransformer):
       database: a `Database` as the parsed results from a xyz file.
       train_file: a `str` as the file for saving training data or None to skip.
       test_file: a `str` as the file for saving testing data or None to skip.
-      lr_algorithm: a `str` as the algorithm to compute the initial one-body
-        weights. Available options: `default` and `minimal`.
-      lr_factor: a `float` as the scaling factor for the computed initial
-        one-body weights.
       verbose: a `bool` indicating whether logging the transformation progress.
       loss_fn: a `Callable` for computing the exponential scaled RMSE loss.
+      one_body_kwargs: a `dict` as the configs for the initial one-body weigts
+        calculator.
 
     """
-    lr_algorithm = lr_algorithm.lower()
-    if lr_algorithm not in ('default', 'minimal'):
-      raise ValueError("Available LR algorithms: default, minimal")
-
     sizes = database.get_atoms_size_distribution()
     max_size = max(sizes)
 
     if test_file:
       examples = database.examples(mode=tf.estimator.ModeKeys.EVAL)
-      ids = database.ids_of_testing_examples
-      num_examples = len(ids)
+      id_list = database.ids_of_testing_examples
+      num_examples = len(id_list)
       if num_examples > 0:
         self._transform_and_save(
           test_file,
@@ -1690,27 +1757,26 @@ class FixedLenMultiTransformer(MultiTransformer):
         self._save_auxiliary_for_file(
           test_file,
           max_size=max_size,
-          lookup_indices=ids
+          lookup_indices=id_list
         )
 
     if train_file:
       examples = database.examples(mode=tf.estimator.ModeKeys.TRAIN)
-      ids = database.ids_of_training_examples
-      num_examples = len(ids)
+      id_list = database.ids_of_training_examples
+      num_examples = len(id_list)
       if num_examples > 0:
         weights = self._transform_and_save(
           train_file,
           examples,
           num_examples,
           max_size,
-          lr_factor=lr_factor,
-          only_minimum_of_stoichiometry=bool(lr_algorithm == 'minimal'),
           loss_fn=loss_fn,
-          verbose=verbose
+          verbose=verbose,
+          one_body_kwargs=one_body_kwargs or {}
         )
         self._save_auxiliary_for_file(
           train_file,
           max_size=max_size,
           initial_1body_weights=weights,
-          lookup_indices=ids
+          lookup_indices=id_list
         )

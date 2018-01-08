@@ -41,7 +41,7 @@ def _get_transformer_repr(configs):
       a `MultiTransformer`.
 
   """
-  atom_types = configs["species"]
+  atom_types = configs["atom_types"]
   params = {"atom_types": [atom for atom in atom_types if atom != GHOST],
             "k_max": configs["k_max"],
             "norm": configs.get('norm', 'exp'),

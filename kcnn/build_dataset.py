@@ -155,8 +155,9 @@ def may_build_dataset(dataset=None, verbose=True):
     database,
     train_file=train_file,
     test_file=valid_file,
-    lr_factor=FLAGS.lr_scaling_factor,
-    lr_algorithm=FLAGS.lr_algorithm,
+    one_body_kwargs={'algorithm': FLAGS.lr_algorithm,
+                     'factor': FLAGS.lr_scaling_factor,
+                     'include_perturbations': True},
     verbose=True,
     loss_fn=exp_rmse_fn
   )
