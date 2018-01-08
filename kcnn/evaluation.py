@@ -157,10 +157,10 @@ def eval_once(saver, summary_writer, y_true_op, y_nn_op, f_true_op, f_nn_op,
       # Compute the common evaluation metrics.
       precision = mean_absolute_error(y_true, y_pred)
       mae_per_atom = mean_absolute_error(
-        y_true / n_atom, y_pred / n_atom) * 100.0
+        y_true / n_atom, y_pred / n_atom) * 1000.0
       rmse = np.sqrt(mean_squared_error(y_true, y_pred))
       rmse_per_atom = np.sqrt(
-        mean_squared_error(y_true / n_atom, y_pred / n_atom)) * 100.0
+        mean_squared_error(y_true / n_atom, y_pred / n_atom)) * 1000.0
       y_diff = np.abs(y_true - y_pred)
       emax = y_diff.max()
       emin = y_diff.min()
