@@ -160,6 +160,19 @@ class TransformerTest(tf.test.TestCase):
     self.assertAlmostEqual(np.sum(cco), 0.0, delta=epsilon)
 
 
+class MultiTransformerTest(tf.test.TestCase):
+
+  def test_atom_types(self):
+    clf = transformer.MultiTransformer(["C", "H", "Zn"])
+    self.assertListEqual(clf.atom_types, ["C", "H", "Zn", "X"])
+
+    clf = transformer.MultiTransformer(["C", "H", "Zn", "X"])
+    self.assertListEqual(clf.atom_types, ["C", "H", "Zn", "X"])
+
+    clf = transformer.MultiTransformer(["C", "X", "H", "Zn"])
+    self.assertListEqual(clf.atom_types, ["C", "H", "Zn", "X"])
+
+
 class FixedLenMultiTransformerTest(tf.test.TestCase):
   """
   Test the class `FixedLenMultiTransforme`.
