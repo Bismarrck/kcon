@@ -117,11 +117,17 @@ def may_build_dataset(dataset=None, verbose=True):
     raise ValueError("Currently only ASE-generated xyz files are supported if "
                      "forces training is enabled.")
 
+  # Set the unit to 1.0 when building LJ datasets.
+  if FLAGS.lj:
+    unit = 1.0
+  else:
+    unit = FLAGS.unit
+
   database = Database.from_xyz(xyzfile,
                                num_examples=FLAGS.num_examples,
                                verbose=verbose,
                                xyz_format=FLAGS.format,
-                               unit_to_ev=FLAGS.unit)
+                               unit_to_ev=unit)
   database.split(test_size=min(max(FLAGS.test_size, 0.0), 1.0))
 
   # The maximum supported `k` is 5.
