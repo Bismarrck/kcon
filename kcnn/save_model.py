@@ -8,7 +8,7 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import json
 import pipeline
-from os.path import join
+from os.path import join, dirname
 from kcnn import kcnn
 from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
@@ -22,6 +22,8 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string("checkpoint_dir", "./events",
                            """The directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string('checkpoint', None,
+                           """Specify the checkpoint to freeze.""")
 tf.app.flags.DEFINE_string("aux_nodes", None,
                            """Comma separated string as the names of the 
                            auxiliary nodes to expose.""")
@@ -161,26 +163,30 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
   """
   graph = _inference(dataset, conv_sizes)
 
-  with tf.Session(graph=graph) as sess:
+  with tf.Session(graph=graph,
+                  config=tf.ConfigProto(allow_soft_placement=True)) as sess:
 
     # Restore the `moving averaged` model variables from the latest checkpoint.
     tf.global_variables_initializer().run()
-    ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
 
-    if ckpt and ckpt.model_checkpoint_path:
-      variable_averages = tf.train.ExponentialMovingAverage(
-        VARIABLE_MOVING_AVERAGE_DECAY)
-      variables_to_restore = variable_averages.variables_to_restore()
-      saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
-      saver.restore(sess, ckpt.model_checkpoint_path)
-      global_step = int(
-        ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
-      if verbose:
-        print("Restore the latest checkpoint: {}".format(
-          ckpt.model_checkpoint_path))
-
+    if FLAGS.checkpoint:
+      checkpoint = FLAGS.checkpoint
+      checkpoint_dir = dirname(checkpoint)
     else:
-      raise IOError("Failed to restore the latest checkpoint!")
+      ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+      if ckpt and ckpt.model_checkpoint_path:
+        checkpoint = ckpt.model_checkpoint_path
+      else:
+        raise IOError("Failed to restore the latest checkpoint!")
+
+    variable_averages = tf.train.ExponentialMovingAverage(
+      VARIABLE_MOVING_AVERAGE_DECAY)
+    variables_to_restore = variable_averages.variables_to_restore()
+    saver = tf.train.Saver(var_list=variables_to_restore, max_to_keep=1)
+    saver.restore(sess, checkpoint)
+    global_step = int(checkpoint.split('/')[-1].split('-')[-1])
+    if verbose:
+      print("Restore the checkpoint: {}".format(checkpoint))
 
     # Make the directory for saving exported models
     freeze_dir = join(checkpoint_dir, "freeze")
