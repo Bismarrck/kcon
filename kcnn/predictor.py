@@ -65,7 +65,7 @@ class KcnnPredictor:
 
     self._initialize_tensors()
     self._y_atomic_1body = self._get_y_atomic_1body(
-      self._transformer.species
+      self._transformer.atom_types
     )
 
   @property
