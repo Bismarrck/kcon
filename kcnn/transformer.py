@@ -1373,7 +1373,8 @@ class MultiTransformer:
           continue
 
         # Compute the real `k` for this k-body term by excluding ghost atoms.
-        k = len(kbody_term) - kbody_term.count(GHOST)
+        symbols = get_atoms_from_kbody_term(kbody_term)
+        k = len(symbols) - symbols.count(GHOST)
 
         # For each k-atoms selection, its energy should contrib equally to the
         # selected atoms. In my paper the coef should be `1 / factorial(k)` but
