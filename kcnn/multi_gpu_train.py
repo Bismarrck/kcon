@@ -17,7 +17,7 @@ from constants import LOSS_MOVING_AVERAGE_DECAY
 from kcnn import extract_configs, BatchIndex
 from kcnn import kcnn as inference
 from save_model import save_model
-from utils import set_logging_configs, save_training_flags
+from utils import set_logging_configs, save_training_flags, get_k_from_var
 from summary_utils import add_total_norm_summaries
 
 __author__ = 'Xin Chen'
@@ -55,6 +55,8 @@ tf.app.flags.DEFINE_string('restore_weights_from', None,
 tf.app.flags.DEFINE_boolean('forces_only', False,
                             """Only optimize force-related variables if this 
                             flag is set.""")
+tf.app.flags.DEFINE_boolean('restore_2body_only', False,
+                            """Only restore 2body variables.""")
 
 # Setup the devices.
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
@@ -247,6 +249,8 @@ def restore_previous_checkpoint(sess, global_step):
   if FLAGS.restore_weights_from:
     variables_to_restore = {}
     for var in tf.trainable_variables():
+      if FLAGS.restore_2body_only and get_k_from_var(var) != 2:
+        continue
       variables_to_restore[variable_averages.average_name(var)] = var
   else:
     variables_to_restore = variable_averages.variables_to_restore()
@@ -377,7 +381,7 @@ def train_with_multiple_gpus():
       train_op = tf.group(apply_gradient_op, variables_averages_op)
 
     # Save the training flags
-    save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
+    save_training_flags(FLAGS.train_dir, FLAGS.flag_values_dict())
 
     # Create a saver.
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
@@ -415,6 +419,9 @@ def train_with_multiple_gpus():
       except tf.errors.OutOfRangeError:
         tf.logging.info(
           "Stop this training after {} epochs.".format(FLAGS.num_epochs))
+        checkpoint_path = join(FLAGS.train_dir, 'model.ckpt')
+        saver.save(sess, checkpoint_path, global_step=step)
+        tf.logging.info("{}-{} saved".format(checkpoint_path, step))
         break
 
       duration = time.time() - start_time
