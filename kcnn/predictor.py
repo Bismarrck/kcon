@@ -7,33 +7,43 @@ from __future__ import print_function, absolute_import
 import numpy as np
 import tensorflow as tf
 import json
+from collections import Counter
 from ase import Atoms
 from ase.io.trajectory import Trajectory
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import importer
 from constants import GHOST
 from save_model import get_tensors_to_restore
-from transformer import MultiTransformer
+from transformer import MultiTransformer, FixedLenMultiTransformer
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
 
-def restore_transformer(graph, session):
+def restore_transformer(graph, session, fixed=False):
   """
   Restore a `MultiTransformer` from the freezed graph.
 
   Args:
     graph: a `tf.Graph`.
     session: a `tf.Session` to execute ops.
+    fixed: a `bool`. If True, a `FixedLenMultiTransformer` will be restored.
+      Otherwise a `MultiTransformer` will be restored.
 
   Returns:
-    clf: a `MultiTransformer` restored from the graph.
+    clf: a `MultiTransformer` or a `FixedLenMultiTransformer`.
 
   """
   tensor = graph.get_tensor_by_name("transformer/json:0")
   params = dict(json.loads(session.run(tensor).decode()))
-  return MultiTransformer(**params)
+  if not fixed:
+    return MultiTransformer(**{k: v for k, v in params.items()
+                               if k != "species"})
+  else:
+    max_occurs = Counter(params["species"])
+    kwargs = {k: v for k, v in params.items()
+              if k not in ("species", "atom_types", "max_occurs")}
+    return FixedLenMultiTransformer(max_occurs, **kwargs)
 
 
 class KcnnPredictor:
@@ -41,12 +51,14 @@ class KcnnPredictor:
   An energy predictor based on the deep neural network of 'KCNN'.
   """
 
-  def __init__(self, graph_model_path):
+  def __init__(self, graph_model_path, fixed=False):
     """
     Initialization method.
 
     Args:
       graph_model_path: a `str` as the freezed graph model to load.
+      fixed: a `bool`. If True, a `FixedLenMultiTransformer` will be restored.
+        Otherwise a `MultiTransformer` will be restored.
 
     """
 
@@ -60,7 +72,7 @@ class KcnnPredictor:
 
     self._graph = graph
     self._sess = tf.Session(graph=graph)
-    self._transformer = restore_transformer(self._graph, self._sess)
+    self._transformer = restore_transformer(self._graph, self._sess, fixed)
     assert isinstance(self._transformer, MultiTransformer)
 
     self._initialize_tensors()

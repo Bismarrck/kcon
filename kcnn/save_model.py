@@ -53,7 +53,8 @@ def _get_transformer_repr(configs):
             "max_occurs": configs["max_occurs"],
             "atomic_forces": configs["atomic_forces_enabled"],
             "lj": configs.get("lj", False),
-            "cutoff": configs.get("cutoff", None)}
+            "cutoff": configs.get("cutoff", None),
+            "species": configs["species"]}
   return json.dumps(params)
 
 

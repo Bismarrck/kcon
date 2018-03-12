@@ -28,7 +28,7 @@ __email__ = 'Bismarrck@me.com'
 
 
 # TODO: fix the multi-counting problem when the number of ghost atoms >= 2.
-
+# TODO: implement `compute_atomic_energies` for `FixedLenMultiTransformer`.
 
 FLAGS = tf.app.flags.FLAGS
 
