@@ -13,10 +13,13 @@ from kcnn import kcnn_from_dataset
 from save_model import save_model
 from os.path import join
 from tensorflow.python.client.timeline import Timeline
-from utils import set_logging_configs, save_training_flags
+from utils import set_logging_configs, save_training_flags, get_k_from_var
 
 __author__ = 'Xin Chen'
 __email__ = "chenxin13@mails.tsinghua.edu.cn"
+
+
+# FIXME: fix the saver problem of restoring 2body variables only.
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -52,6 +55,8 @@ tf.app.flags.DEFINE_boolean('alter_train_op', False,
                             set.""")
 tf.app.flags.DEFINE_boolean('amp', False,
                             """Use the Amp total loss function.""")
+tf.app.flags.DEFINE_boolean('restore_2body_only', False,
+                            """Only restore 2body variables.""")
 
 
 def train_model():
@@ -110,7 +115,10 @@ def train_model():
       train_op = kcnn.get_joint_loss_train_op(total_loss, global_step)
 
     # Save the training flags
-    save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
+    if tf.__version__ >= "1.6.0":
+      save_training_flags(FLAGS.train_dir, FLAGS.flag_values_dict())
+    else:
+      save_training_flags(FLAGS.train_dir, dict(FLAGS.__dict__["__flags"]))
 
     # Get the total number of training examples
     num_examples = pipeline.get_dataset_size(FLAGS.dataset)
@@ -223,8 +231,18 @@ def train_model():
 
     run_meta = tf.RunMetadata()
     run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+
+    if FLAGS.restore_2body_only:
+      var_list = []
+      for var in tf.global_variables():
+        vk = get_k_from_var(var)
+        if vk == -1 or vk == 2:
+          var_list.append(var)
+    else:
+      var_list = tf.global_variables()
+
     scaffold = tf.train.Scaffold(
-      saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep))
+      saver=tf.train.Saver(max_to_keep=FLAGS.max_to_keep, var_list=var_list))
 
     # noinspection PyMissingOrEmptyDocstring
     class TimelineHook(tf.train.SessionRunHook):
