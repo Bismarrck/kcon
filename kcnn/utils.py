@@ -112,6 +112,26 @@ def get_atoms_from_kbody_term(kbody_term):
   return atoms
 
 
+def get_k_from_var(var):
+  """
+  Get the associated `k` for the given variable.
+
+  Args:
+    var: a `tf.Variable`.
+
+  Returns:
+    k: an `int`.
+
+  """
+  name = var.op.name
+  elements = name.split("/")
+  if len(elements) >= 4 and elements[0] == 'kCON':
+    symbols = get_atoms_from_kbody_term(elements[1])
+    return len(symbols) - symbols.count("X")
+  else:
+    return -1
+
+
 def lrelu(x, alpha=0.01, name=None):
   """
   The leaky relu activation function.
