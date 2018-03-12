@@ -6,7 +6,6 @@ from __future__ import print_function, absolute_import
 
 import numpy as np
 import tensorflow as tf
-from scipy.misc import comb
 from tensorflow.contrib.framework import arg_scope
 from tensorflow.contrib.layers import batch_norm, layer_norm
 from tensorflow.contrib.layers import conv2d, flatten
@@ -23,7 +22,7 @@ __email__ = 'Bismarrck@me.com'
 BATCH_NORM_DECAY_FACTOR = 0.999
 
 
-def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
+def _inference_kbody_cnn(inputs, kbody_term, is_training, verbose=True,
                          reuse=False, normalizer='bias', activation_fn=lrelu,
                          weights_initializer=None, num_kernels=None,
                          trainable=True):
@@ -33,7 +32,6 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   Args:
     inputs: a `[-1, 1, -1, C(k, 2)]` Tensor as the inputs for this interaction.
     kbody_term: a `str` as the name of this k-body atomic interaction.
-    ck2: a `int` as the value of C(k,2).
     is_training: a `bool` type placeholder tensor indicating whether this
       inference is for training or not.
     reuse: a `bool` indicating whether we should reuse the variables or not.
@@ -57,11 +55,6 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
   num_kernels = num_kernels or (40, 50, 60, 40)
   kernel_size = 1
   dtype = tf.float32
-
-  # Explicitly set the shape of the input tensor. There are two flexible axis in
-  # this tensor: axis=0 represents the batch size and axis=2 is determined by
-  # the number of atoms.
-  inputs.set_shape([None, 1, None, ck2])
 
   # Setup the initializers and normalization function.
   weights_initializer = weights_initializer or initializers.xavier_initializer(
@@ -275,8 +268,8 @@ def _split_inputs(inputs, split_dims):
 
 
 def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
-                     kbody_terms, is_training, max_k=3, reuse=False,
-                     verbose=True, num_kernels=None, activation_fn=lrelu,
+                     kbody_terms, is_training, reuse=False, verbose=True,
+                     num_kernels=None, activation_fn=lrelu,
                      normalizer='bias', weights_initializer=None,
                      one_body_weights=None, trainable_one_body=True,
                      trainable_k_max=3, summary=True):
@@ -295,7 +288,6 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     kbody_terms: a `List[str]` as the names of the k-body terms.
     is_training: a `bool` type placeholder indicating whether this inference is
       for training or not.
-    max_k: a `int` as the
     reuse: a `bool` indicating whether we should reuse variables or not.
     verbose: boolean indicating whether the layers shall be printed or not.
     num_kernels: a `Tuple[int]` as the number of kernels of the convolution
@@ -327,7 +319,6 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     # Split the input feature matrix into several parts. Each part represents a
     # certain atomic interaction. The number of parts is equal to the number of
     # k-body terms.
-    num_cols = int(comb(max_k, 2, exact=True))
     splited_inputs = _split_inputs(inputs, split_dims)
 
     # Inference the convolution network for each k-body interaction
@@ -347,7 +338,6 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
           _inference_kbody_cnn(
             inputs=conv,
             kbody_term=kbody_terms[i],
-            ck2=num_cols,
             activation_fn=activation_fn,
             reuse=reuse,
             normalizer=normalizer,
