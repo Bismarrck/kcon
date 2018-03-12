@@ -18,17 +18,9 @@ from utils import lrelu
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
 
-# TODO: test the resnet block
-
 
 # The decay for batch normalization
 BATCH_NORM_DECAY_FACTOR = 0.999
-
-
-def _kbody_resnet(inputs, kbody_term, ck2, is_training, verbose=True,
-                  reuse=False, num_blocks=2, weights_initializer=None,
-                  num_kernels=None):
-  pass
 
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
