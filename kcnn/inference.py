@@ -12,8 +12,8 @@ from tensorflow.contrib.layers import batch_norm, layer_norm
 from tensorflow.contrib.layers import conv2d, flatten
 from tensorflow.contrib.layers.python.layers import initializers
 from tensorflow.python.ops import init_ops
-from constants import KcnnGraphKeys, SEED
-from utils import lrelu
+from constants import KcnnGraphKeys, SEED, GHOST
+from utils import lrelu, get_atoms_from_kbody_term
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -25,7 +25,8 @@ BATCH_NORM_DECAY_FACTOR = 0.999
 
 def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                          reuse=False, normalizer='bias', activation_fn=lrelu,
-                         weights_initializer=None, num_kernels=None):
+                         weights_initializer=None, num_kernels=None,
+                         trainable=True):
   """
   Infer the k-body term of `KCNN`.
 
@@ -41,6 +42,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
     activation_fn: a `Callable` as the activation function for each conv layer.
     weights_initializer: a `Callable` as the function to intialize weights.
     num_kernels: a `List[int]` as the number of kernels.
+    trainable: a `bool` indicating whether we should train the variables or not.
     verbose: a `bool`. If Ture, the shapes of the layers will be printed.
 
   Returns:
@@ -101,6 +103,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                         biases_initializer=biases_initializer,
                         num_outputs=num_kernels,
                         activation_fn=None,
+                        trainable=trainable,
                         scope="1x1Conv{:d}".format(i + 1))
         if normalizer_fn is not None:
           inputs = normalizer_fn(inputs, **normalizer_params)
@@ -113,6 +116,7 @@ def _inference_kbody_cnn(inputs, kbody_term, ck2, is_training, verbose=True,
                      num_outputs=1,
                      biases_initializer=None,
                      activation_fn=None,
+                     trainable=trainable,
                      scope="k-Body")
     if verbose:
       print_activations(outputs)
@@ -275,7 +279,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
                      verbose=True, num_kernels=None, activation_fn=lrelu,
                      normalizer='bias', weights_initializer=None,
                      one_body_weights=None, trainable_one_body=True,
-                     summary=True):
+                     trainable_k_max=3, summary=True):
   """
   Inference the kCON energy model.
 
@@ -304,6 +308,8 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
       initial weights of the one-body kernel.
     trainable_one_body: a `bool` indicating whether the one body parameters are
       trainable or not.
+    trainable_k_max: an `int`. All k-body terms (2 <= k <= trainable_k_max) will
+      be trained.
     summary: a `bool` indicating whether we should add summaries for
       tensors or not.
 
@@ -328,6 +334,15 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     y_contribs = []
     for i, conv in enumerate(splited_inputs):
       with tf.variable_scope(kbody_terms[i]):
+
+        # Determine the number of GHOST atoms in this k-body term.
+        symbols = get_atoms_from_kbody_term(kbody_terms[i])
+        k = len(symbols) - symbols.count(GHOST)
+        trainable = bool(k <= trainable_k_max)
+
+        if k == 2:
+          conv = conv[..., 0:1]
+
         y_contribs.append(
           _inference_kbody_cnn(
             inputs=conv,
@@ -339,6 +354,7 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
             weights_initializer=weights_initializer,
             is_training=is_training,
             num_kernels=num_kernels,
+            trainable=trainable,
             verbose=verbose)
         )
 

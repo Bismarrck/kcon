@@ -37,6 +37,8 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
+tf.app.flags.DEFINE_float("trainable_k_max", 3,
+                          """Set the trainable k_max.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.01,
@@ -254,6 +256,8 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
     weights_initializer = msra_initializer(seed=SEED)
 
   trainable = not FLAGS.fixed_one_body
+  trainable_k_max = FLAGS.trainable_k_max
+
   if FLAGS.normalizer.lower() == 'none':
     normalizer = None
   else:
@@ -284,6 +288,7 @@ def kcnn(inputs, occurs, weights, split_dims=(), num_atom_types=None,
       one_body_weights=one_body_weights,
       verbose=verbose,
       trainable_one_body=trainable,
+      trainable_k_max=trainable_k_max,
       summary=add_summary,
     )
 
