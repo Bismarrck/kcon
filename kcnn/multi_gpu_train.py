@@ -13,6 +13,7 @@ import kcnn
 import pipeline
 from datetime import datetime
 from os.path import join
+from os import getpid
 from constants import LOSS_MOVING_AVERAGE_DECAY
 from kcnn import extract_configs, BatchIndex
 from kcnn import kcnn as inference
@@ -282,6 +283,9 @@ def train_with_multiple_gpus():
     debug=FLAGS.debug,
     logfile=join(FLAGS.train_dir, FLAGS.logfile)
   )
+
+  # Output the process id
+  tf.logging.info("~pid={}".format(getpid()))
 
   with tf.Graph().as_default(), tf.device('/cpu:0'):
 
