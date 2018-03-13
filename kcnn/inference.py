@@ -326,27 +326,38 @@ def inference_energy(inputs, occurs, weights, split_dims, num_atom_types,
     for i, conv in enumerate(splited_inputs):
       with tf.variable_scope(kbody_terms[i]):
 
-        # Determine the number of GHOST atoms in this k-body term.
+        # Get the number of GHOST atoms in this k-body term so that we can
+        # determine if this k-body CNN should be trained.
         symbols = get_atoms_from_kbody_term(kbody_terms[i])
         k = len(symbols) - symbols.count(GHOST)
         trainable = bool(k <= trainable_k_max)
 
+        # For 2-body terms only the 1st column of the last dimension is needed.
         if k == 2:
           conv = conv[..., 0:1]
 
-        y_contribs.append(
-          _inference_kbody_cnn(
-            inputs=conv,
-            kbody_term=kbody_terms[i],
-            activation_fn=activation_fn,
-            reuse=reuse,
-            normalizer=normalizer,
-            weights_initializer=weights_initializer,
-            is_training=is_training,
-            num_kernels=num_kernels,
-            trainable=trainable,
-            verbose=verbose)
+        # A gate tensor should be added so that non-trainable CNNs will not give
+        # energy contributions.
+        if trainable:
+          gate = tf.constant(1.0, dtype=tf.float32, name='gate_on')
+        else:
+          gate = tf.constant(0.0, dtype=tf.float32, name="gate_off")
+
+        # Do the inference
+        y_contrib = _inference_kbody_cnn(
+          inputs=conv,
+          kbody_term=kbody_terms[i],
+          activation_fn=activation_fn,
+          reuse=reuse,
+          normalizer=normalizer,
+          weights_initializer=weights_initializer,
+          is_training=is_training,
+          num_kernels=num_kernels,
+          trainable=trainable,
+          verbose=verbose
         )
+        y_gated = tf.multiply(y_contrib, gate, name='y_gated')
+        y_contribs.append(y_gated)
 
     # Concat the k-body contribs from all k-body terms. The new tensor has the
     # shape of `[-1, 1, D, 1]`.
