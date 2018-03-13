@@ -37,8 +37,8 @@ tf.app.flags.DEFINE_string('initial_one_body_weights', None,
                            weights. Defaults to `ones_initialier`.""")
 tf.app.flags.DEFINE_boolean('fixed_one_body', False,
                             """Make the one-body weights fixed.""")
-tf.app.flags.DEFINE_float("trainable_k_max", 3,
-                          """Set the trainable k_max.""")
+tf.app.flags.DEFINE_integer("trainable_k_max", 3,
+                            """Set the trainable k_max.""")
 tf.app.flags.DEFINE_string('activation_fn', "lrelu",
                            """Set the activation function for conv layers.""")
 tf.app.flags.DEFINE_float('alpha', 0.01,
