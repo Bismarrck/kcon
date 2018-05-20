@@ -17,6 +17,7 @@ from summary_utils import add_total_norm_summaries, add_variable_summaries
 from inference import inference_energy, inference_forces
 from utils import lrelu, selu, reduce_l2_norm
 from utils import selu_initializer, msra_initializer
+from amsgrad import AmsGrad
 
 __author__ = 'Xin Chen'
 __email__ = 'Bismarrck@me.com'
@@ -46,7 +47,7 @@ tf.app.flags.DEFINE_float('alpha', 0.01,
 tf.app.flags.DEFINE_string('normalizer', 'bias',
                            """Set the normalizer: 'bias'(default), 'batch_norm', 
                            'layer_norm' or 'None'. """)
-tf.app.flags.DEFINE_string('initializer', 'msra',
+tf.app.flags.DEFINE_string('initializer', 'xvaier',
                            """Set the weights initialization method: msra or 
                            xvaier""")
 
@@ -154,8 +155,11 @@ def get_optimizer(learning_rate):
       learning_rate=learning_rate,
       decay=FLAGS.rmsprop_decay,
       momentum=FLAGS.rmsprop_momentum)
+  elif FLAGS.optimizer == 'amsgrad':
+    return AmsGrad(learning_rate=learning_rate, beta1=FLAGS.beta1)
   else:
-    raise ValueError("Supported SGD optimizers: adam, nadam, adadelta, rmsprop")
+    raise ValueError(
+      "Supported SGD optimizers: adam, nadam, adadelta, rmsprop, amsgrad")
 
 
 def get_activation_fn(name='lrelu'):
