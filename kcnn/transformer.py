@@ -223,6 +223,24 @@ def lj_norm(x, unit=1.0):
   return np.clip(-(y ** 2 - 2.0 * y), 0.0, 1.0)
 
 
+def morse(x, unit=1.0, order=1):
+  """
+  Normalize the inputs `x` with the Morse function.
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+    order: a `float` or an `int`.
+
+  Returns:
+    scaled: the scaled unitless inputs.
+
+  """
+  alpha = -1.0 * float(order)
+  return (1.0 - np.exp(alpha * (x - unit)))**2
+
+
 def _bytes_feature(value):
   """
   Convert the `value` to Protobuf bytes.
@@ -256,7 +274,7 @@ class Transformer:
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj` and `exp+g` are also supported.
+        `exp`, `lj`, `exp+g` and `morse` are also supported.
       norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
@@ -335,6 +353,8 @@ class Transformer:
       self._norm_fn = lj_norm
     elif norm.lower() == 'exp+g':
       self._norm_fn = exponential_gauss
+    elif norm.lower() == 'morse':
+      self._norm_fn = partial(morse, order=norm_order)
     else:
       raise ValueError("Unsupported normalizing function: {}".format(norm))
     self._cutoff = cutoff or np.inf
@@ -1033,8 +1053,9 @@ class MultiTransformer:
       max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
         If an atom is explicitly specied, it can appear infinity times.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj` is also supported.
-      norm_order: a `int` as the order for normalizing interatomic distances.
+        `exp`, `lj`, `exp+g` and `morse` are also supported.
+      norm_order: an `int` or a `float` as the order for normalizing interatomic
+        distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
         terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
         considered.
@@ -1502,8 +1523,9 @@ class FixedLenMultiTransformer(MultiTransformer):
         periodic structures or not.
       k_max: a `int` as the maximum k for the many body expansion scheme.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj` is also supported.
-      norm_order: a `int` as the order for normalizing interatomic distances.
+        `exp`, `lj`, `exp+g` and `morse` are also supported.
+      norm_order: an `int` or a `float` as the order for normalizing interatomic
+        distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
         terms where k = 1, ..., k_max. If False, only k = 1 and k = k_max are
         considered.
