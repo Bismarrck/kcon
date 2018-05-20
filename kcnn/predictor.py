@@ -143,7 +143,7 @@ class KcnnPredictor:
       Currently the atomic forces are not supported!
 
     """
-    return False
+    return self._transformer.atomic_forces_enabled
 
   @property
   def transformer(self):
@@ -173,7 +173,8 @@ class KcnnPredictor:
     Initialize the tensors.
     """
     tensors = {}
-    for name, tensor_name in get_tensors_to_restore().items():
+    forces = self.atomic_forces
+    for name, tensor_name in get_tensors_to_restore(forces=forces).items():
       tensors[name] = self._graph.get_tensor_by_name(tensor_name)
 
     # The operators
