@@ -1257,7 +1257,7 @@ class MultiTransformer:
     features = np.zeros((ntotal, nrows, ncols), dtype=np.float32)
 
     if self._atomic_forces:
-      coef = np.zeros_like(features, dtype=np.float32)
+      coef = np.zeros_like((ntotal, nrows, ncols * 6), dtype=np.float32)
       num_force_components = 3 * len(species)
       num_entries = nrows * ncols * 6 // num_force_components
       indexing = np.zeros((ntotal, num_force_components, num_entries),
@@ -1279,6 +1279,7 @@ class MultiTransformer:
     for i, atoms in enumerate(trajectory):
       _, coef_, indexing_ = clf.transform(atoms, features=features[i])
       if self._atomic_forces:
+        # TODO: fix the bug
         coef[i] = coef_
         indexing[i] = indexing_
       if self._cutoff is None:
