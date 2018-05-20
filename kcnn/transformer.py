@@ -166,6 +166,7 @@ def exponential_norm(x, unit=1.0, order=1):
     scaled: the scaled unitless inputs.
 
   """
+  order = int(order)
   if order == 0:
     return np.exp(-x)
   else:
@@ -238,7 +239,7 @@ def morse(x, unit=1.0, order=1):
 
   """
   alpha = -1.0 * float(order)
-  return (1.0 - np.exp(alpha * (x - unit)))**2
+  return (1.0 - np.exp(alpha * (x - unit)))**2 - np.exp(-1.0)
 
 
 def _bytes_feature(value):
