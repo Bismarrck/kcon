@@ -8,8 +8,8 @@ from __future__ import print_function, absolute_import
 import tensorflow as tf
 import json
 import pipeline
+import kcnn
 from os.path import join, dirname
-from kcnn import kcnn
 from constants import GHOST, VARIABLE_MOVING_AVERAGE_DECAY
 from tensorflow.python.framework import graph_io
 from tensorflow.python.tools import freeze_graph
@@ -74,7 +74,7 @@ def _get_output_node_names(forces=False):
   return ",".join(tensors)
 
 
-def get_tensors_to_restore():
+def get_tensors_to_restore(forces=False):
   """
   Return a dict of (name, tensor_name) that should be restored from an exported
   model file.
@@ -84,7 +84,7 @@ def get_tensors_to_restore():
 
   """
   return {"{}".format(name): "{}:0".format(name)
-          for name in _get_output_node_names().split(",")}
+          for name in _get_output_node_names(forces=forces).split(",")}
 
 
 def _inference(dataset_name, conv_sizes):
@@ -135,11 +135,11 @@ def _inference(dataset_name, conv_sizes):
         coef_ = None
         indexing_ = None
 
-    kcnn(inputs_, occurs_, weights_, is_training=is_training_,
-         split_dims=split_dims_, num_atom_types=num_atom_types,
-         kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False,
-         atomic_forces=atomic_forces, coefficients=coef_, indexing=indexing_,
-         add_summary=False)
+    kcnn.kcnn(inputs_, occurs_, weights_, is_training=is_training_,
+              split_dims=split_dims_, num_atom_types=num_atom_types,
+              kbody_terms=kbody_terms, num_kernels=num_kernels, verbose=False,
+              atomic_forces=atomic_forces, coefficients=coef_,
+              indexing=indexing_, add_summary=False)
 
   return graph
 
@@ -209,7 +209,7 @@ def save_model(checkpoint_dir, dataset, conv_sizes, verbose=True,
     graph_io.write_graph(graph, freeze_dir, name=graph_name)
 
     # Setup the configs and freeze the current graph
-    output_node_names = _get_output_node_names()
+    output_node_names = _get_output_node_names(forces=FLAGS.forces)
     auxiliary_outputs = auxiliary_outputs or []
     if len(auxiliary_outputs) > 0:
       auxiliary_node_names = ",".join(auxiliary_outputs)
