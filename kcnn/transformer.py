@@ -269,6 +269,7 @@ def morse(x, unit=1.0, order=1):
   return (1.0 - np.exp(alpha * (x - unit)))**2 - np.exp(-1.0)
 
 
+# noinspection PyUnusedLocal
 def morse_prime(x, unit=1.0, order=1, z=None):
   """
   The derivative of the `morse` function.
@@ -284,7 +285,6 @@ def morse_prime(x, unit=1.0, order=1, z=None):
     g: the gradient.
 
   """
-  assert z is None
   alpha = -1.0 * float(order)
   g = np.exp(alpha * (x - unit))
   return 2.0 * g * alpha * (g - 1.0)
