@@ -173,6 +173,33 @@ def exponential_norm(x, unit=1.0, order=1):
     return np.exp(-(x / unit) ** order)
 
 
+def exponential_norm_prime(x, unit=1.0, order=1, z=None):
+  """
+  The derivative of the exponential norm function.
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+    order: a `int` as the exponential order. If `order` is 0, the inputs will
+      not be scaled by `factor`.
+    z: the pre-computed value of `exponential_norm(x, unit, order)`.
+
+  Returns:
+    g: the gradient.
+
+  """
+  order = int(order)
+  if z is None:
+    z = exponential_norm(x, unit=unit, order=order)
+  if order == 0:
+    return -z
+  if order == 1:
+    return -z / unit
+  else:
+    return z * (-order * x**(order - 1) / unit**order)
+
+
 def exponential_gauss(x, unit=1.0):
   """
   Normalize the inputs `x` with the mixed functions:
@@ -240,6 +267,27 @@ def morse(x, unit=1.0, order=1):
   """
   alpha = -1.0 * float(order)
   return (1.0 - np.exp(alpha * (x - unit)))**2 - np.exp(-1.0)
+
+
+def morse_prime(x, unit=1.0, order=1, z=None):
+  """
+  The derivative of the `morse` function.
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+    order: a `float` or an `int`.
+    z: a dummy variable.
+
+  Returns:
+    g: the gradient.
+
+  """
+  assert z is None
+  alpha = -1.0 * float(order)
+  g = np.exp(alpha * (x - unit))
+  return 2.0 * g * alpha * (g - 1.0)
 
 
 def _bytes_feature(value):
@@ -348,14 +396,19 @@ class Transformer:
     self._num_f_components = 3 * self._num_real
     self._num_entries = _get_num_force_entries(self._num_real, self._k_max)
     self._norm = norm
+    self._norm_order = norm_order
     if norm.lower() == 'exp':
       self._norm_fn = partial(exponential_norm, order=norm_order)
+      self._norm_prime_fn = partial(exponential_norm_prime, order=norm_order)
     elif norm.lower() == 'lj':
       self._norm_fn = lj_norm
+      self._norm_prime_fn = None
     elif norm.lower() == 'exp+g':
       self._norm_fn = exponential_gauss
+      self._norm_prime_fn = None
     elif norm.lower() == 'morse':
       self._norm_fn = partial(morse, order=norm_order)
+      self._norm_prime_fn = partial(morse_prime, order=norm_order)
     else:
       raise ValueError("Unsupported normalizing function: {}".format(norm))
     self._cutoff = cutoff or np.inf
@@ -705,13 +758,12 @@ class Transformer:
 
     return dists, delta
 
-  def _assign(self, dists, delta, features=None):
+  def _initialize_features(self, dists, delta, features=None):
     """
-    Assign the normalized distances to the input feature matrix and build the
-    auxiliary matrices.
+    Initialize the input feature matrix and build the auxiliary matrices.
 
     Args:
-      dists: a `float32` array of shape `[N**2, ]` as the scaled flatten
+      dists: a `float32` array of shape `[N**2, ]` as the raw flatten
         interatomic distances matrix.
       delta: a `float32` array of shape `[N**2, 3]`.
       features: a 2D `float32` array or None as the location into which the
@@ -720,6 +772,8 @@ class Transformer:
     Returns:
       features: a `float32` array of shape `self.shape` as the input feature
         matrix.
+      rr: a `float32` array of shape `self.shape` as the corresponding
+        interatomic distances to `features`.
       cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
@@ -734,13 +788,18 @@ class Transformer:
     if self._atomic_forces:
       cr = np.zeros_like(features)
       dr = np.zeros((self._real_dim, self._ck2 * 6))
+      rr = np.zeros_like(features)
     else:
       cr = None
       dr = None
+      rr = None
 
     half = self._ck2 * 3
     step = self._ck2
     zero = 0
+
+    # Transform the raw interatomic distances
+    norm_dists = self._norm_fn(dists, unit=self._cmatrix.flatten())
 
     for i, kbody_term in enumerate(self._kbody_terms):
       if kbody_term not in self._mapping:
@@ -754,23 +813,26 @@ class Transformer:
       istep = min(self._offsets[i + 1] - istart, mapping.shape[1])
       istop = istart + istep
       for k in range(self._ck2):
-        features[istart: istop, k] = dists[mapping[k]]
+        features[istart: istop, k] = norm_dists[mapping[k]]
         if self._atomic_forces:
           cr[istart: istop, k] = self._cmatrix[mapping[k]]
+          rr[istart: istop, k] = dists[mapping[k]]
           # x = 0, y = 1, z = 2
           for j in range(3):
             dr[istart: istop, j * step + k + zero] = +delta[mapping[k], j]
             dr[istart: istop, j * step + k + half] = -delta[mapping[k], j]
 
-    return features, cr, dr
+    return features, rr, cr, dr
 
-  def _conditionally_sort(self, features, cr, dr):
+  def _conditionally_sort(self, features, rr, cr, dr):
     """
     Apply the conditional sorting algorithm.
 
     Args:
       features: a `float32` array of shape `self.shape` as the input feature
         matrix.
+      rr: a `float32` array of shape `self.shape` as the corresponding
+        interatomic distances to `features`.
       cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
@@ -779,6 +841,8 @@ class Transformer:
     Returns:
       features: a `float32` array of shape `self.shape` as the input feature
         matrix.
+      rr: a `float32` array of shape `self.shape` as the corresponding
+        interatomic distances to `features`.
       cr: a `float32` array of shape `self.shape` as the covalent radii for
         corresponding entries.
       dr: a `floar32` array of shape `[self.shape[0], 6 * self.shape[1]]` as the
@@ -831,6 +895,10 @@ class Transformer:
           cr[istart: istop, ix] = cond_sort(
             cr[istart: istop, ix], orders, shape)
 
+          # Sort the interatomic distances
+          rr[istart: istop, ix] = cond_sort(
+            rr[istart: istop, ix], orders, shape)
+
           # Sort the indices
           for axis in range(2):
             array = indexing[istart: istop, :, axis]
@@ -845,34 +913,35 @@ class Transformer:
             array[:, ix] = cond_sort(array[:, ix], orders, shape)
             dr[istart: istop, cstart: cstop] = array
 
-    return features, cr, dr, indexing
+    return features, rr, cr, dr, indexing
 
-  def _get_coef_matrix(self, z, l, d6):
+
+  def _get_coef_matrix(self, z, r, l, d6):
     """
-    Return the tiled coefficients matrix with the following equation:
-
-    C = np.tile((z * d) / (l**2 * log(z)), (1, 6))
+    Return the tiled coefficients matrix `dE/dz * dz/d{px,py,pz}`.
 
     Args:
       z: a `float32` array of shape `self.shape` as the input feature matrix.
+      r: a `float32` array of shape `self.shape` as the interatomic distances
+        corresponding to `z`.
       l: a `float32` array of shape `self.shape` as the covalent radii matrix.
       d6: a `float32` array of shape `[self.shape[0], self.shape[1] * 6]` as the
         differences of the coordinates.
 
     Returns:
       coef: a `float32` array as the coefficients matrix. The shape of `coef` is
-        the same with input `d`.
+        the same with input `d6`.
 
     """
     if self._atomic_forces:
-      # There will be zeros in `z`. Here we make sure every entry is no smaller
-      # than e^-6.
-      logz6 = np.tile(np.log(z.clip(min=_safe_log)), (1, 6))
-      z6 = np.tile(z, (1, 6))
-      l6 = np.tile(l**2, (1, 6))
-      coef = safe_divide(z6 * d6, l6 * logz6)
-      # There will be zeros in `l`. Here we convert all NaNs to zeros.
+      if self._norm_prime_fn is None:
+        raise ValueError("The normalization function `{}` does not support "
+                         "predicting forces yet!".format(self._norm))
+      g = self._norm_prime_fn(r, unit=l, z=z)
+      r6 = np.tile(r, (1, 6))
+      coef = np.tile(g, (1, 6)) * safe_divide(d6, r6)
       return np.nan_to_num(coef)
+
     else:
       return None
 
@@ -1009,21 +1078,19 @@ class Transformer:
       pbc=atoms.get_pbc()
     )
 
-    # Normalize the interatomic distances with the exponential function so that
-    # shorter bonds have larger normalized weights.
+    # Initialize the input feature matrix and auxiliary matrices.
     dists = dists.flatten()
     if delta is not None:
       delta = delta.reshape((-1, 3))
-    norm_dists = self._norm_fn(dists, unit=self._cmatrix.flatten())
-
-    # Assign the normalized distances to the input feature matrix.
-    features, cr, dr = self._assign(norm_dists, delta, features=features)
+    features, rr, cr, dr = self._initialize_features(
+      dists, delta, features=features)
 
     # Apply the conditional sorting algorithm
-    features, cr, dr, indexing = self._conditionally_sort(features, cr, dr)
+    features, rr, cr, dr, indexing = self._conditionally_sort(
+      features, rr, cr, dr)
 
     # Get coefficients matrix for computing atomic forces.
-    coef = self._get_coef_matrix(features, cr, dr)
+    coef = self._get_coef_matrix(features, rr, cr, dr)
 
     # Transform the conditionally sorted indexing matrix.
     indexing = self._transform_indexing_matrix(indexing)
