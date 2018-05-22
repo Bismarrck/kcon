@@ -198,9 +198,8 @@ def inference_forces(y_total, inputs, coefficients, indexing, summary=True):
     # components.
     tiled = tf.tile(dydz, (1, 1, 6), "tiled")
 
-    # Do the element-wise multiplication. Now we get dy/dz * dz/dr * dr/df.
-    # Here `f` represents arbitrary force compoenent. `g` has the shape of
-    # `[-1, D, 6 * C(k, 2)]`.
+    # Do the element-wise multiplication. Now we get dE/dz * dz/dr * dr/d{x,y,z}
+    # `g` has the shape of `[-1, D, 6 * C(k, 2)]`.
     g = tf.multiply(tiled, coefficients, name="g")
 
     # Now we should re-order all entries of `g`. Flatten it so that its shape
