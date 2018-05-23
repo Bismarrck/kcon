@@ -147,7 +147,7 @@ def get_optimizer(learning_rate):
       learning_rate=learning_rate, beta1=FLAGS.beta1)
   elif FLAGS.optimizer == 'nadam':
     return NadamOptimizer(learning_rate=learning_rate, beta1=FLAGS.beta1)
-  elif FLAGS.optimzier == 'adadelta':
+  elif FLAGS.optimizer == 'adadelta':
     return tf.train.AdadeltaOptimizer(
       learning_rate=learning_rate, rho=FLAGS.rho)
   elif FLAGS.optimizer == 'rmsprop':
