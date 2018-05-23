@@ -251,7 +251,7 @@ def lj_norm(x, unit=1.0):
   return np.clip(-(y ** 2 - 2.0 * y), 0.0, 1.0)
 
 
-def morse(x, unit=1.0, order=1):
+def morse_norm(x, unit=1.0, order=1):
   """
   Normalize the inputs `x` with the Morse function.
 
@@ -270,7 +270,7 @@ def morse(x, unit=1.0, order=1):
 
 
 # noinspection PyUnusedLocal
-def morse_prime(x, unit=1.0, order=1, z=None):
+def morse_norm_prime(x, unit=1.0, order=1, z=None):
   """
   The derivative of the `morse` function.
 
@@ -288,6 +288,44 @@ def morse_prime(x, unit=1.0, order=1, z=None):
   alpha = -1.0 * float(order)
   g = np.exp(alpha * (x - unit))
   return 2.0 * g * alpha * (g - 1.0)
+
+
+# noinspection PyUnusedLocal
+def inverse_norm(x, unit=1.0, order=1):
+  """
+  The simple inverse function: z(x) = 1.0 / x
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a dummy variable.
+    order: a dummy variable.
+
+  Returns:
+    z: the inversed inputs.
+
+  """
+  return 1.0 / x
+
+
+# noinspection PyUnusedLocal
+def inverse_norm_prime(x, unit=1.0, order=1, z=None):
+  """
+  The derivative of the `inverse_norm` function.
+
+  Args:
+    x: Union[float, np.ndarray] as the inputs to scale.
+    unit: a `float` or an array with the same shape of `inputs` as the scaling
+      factor(s).
+    order: a `float` or an `int`.
+    z: a dummy variable.
+
+  Returns:
+    g: the gradient.
+
+  """
+  if z is None:
+    z = inverse_norm(x)
+  return -z**2
 
 
 def _bytes_feature(value):
@@ -323,7 +361,7 @@ class Transformer:
         is given, the `kbody_terms` must also be set and their lengths should be
         equal.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj`, `exp+g` and `morse` are also supported.
+        `exp`, `lj`, `exp+g`, 'inv' and `morse` are also supported.
       norm_order: a `int` as the order for normalizing interatomic distances.
       periodic: a `bool` indicating whether this transformer is used for 
         periodic structures or not.
@@ -407,8 +445,11 @@ class Transformer:
       self._norm_fn = exponential_gauss
       self._norm_prime_fn = None
     elif norm.lower() == 'morse':
-      self._norm_fn = partial(morse, order=norm_order)
-      self._norm_prime_fn = partial(morse_prime, order=norm_order)
+      self._norm_fn = partial(morse_norm, order=norm_order)
+      self._norm_prime_fn = partial(morse_norm_prime, order=norm_order)
+    elif norm.lower() == 'inv':
+      self._norm_fn = inverse_norm
+      self._norm_prime_fn = inverse_norm_prime
     else:
       raise ValueError("Unsupported normalizing function: {}".format(norm))
     self._cutoff = cutoff or np.inf
@@ -1121,7 +1162,7 @@ class MultiTransformer:
       max_occurs: a `Dict[str, int]` as the maximum appearances for a specie. 
         If an atom is explicitly specied, it can appear infinity times.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj`, `exp+g` and `morse` are also supported.
+        `exp`, `lj`, `exp+g`, 'inv' and `morse` are also supported.
       norm_order: an `int` or a `float` as the order for normalizing interatomic
         distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
@@ -1591,7 +1632,7 @@ class FixedLenMultiTransformer(MultiTransformer):
         periodic structures or not.
       k_max: a `int` as the maximum k for the many body expansion scheme.
       norm: a `str` specifying the normalization function to use. Defaults to
-        `exp`, `lj`, `exp+g` and `morse` are also supported.
+        `exp`, `lj`, `exp+g`, 'inv' and `morse` are also supported.
       norm_order: an `int` or a `float` as the order for normalizing interatomic
         distances.
       include_all_k: a `bool` indicating whether we shall include all k-body
