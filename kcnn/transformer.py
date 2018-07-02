@@ -1871,8 +1871,8 @@ class FixedLenMultiTransformer(MultiTransformer):
         calculator.
 
     """
-    sizes = database.get_atoms_size_distribution()
-    max_size = max(sizes)
+    #fix a bug by Jinzhe Zeng
+    max_size = len(self._species) - self._num_ghosts
 
     if test_file:
       examples = database.examples(mode=tf.estimator.ModeKeys.EVAL)
