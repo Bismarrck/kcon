@@ -194,7 +194,7 @@ class KcnnPredictor:
     # Tensors for predicting atomic forces
     if self._transformer.atomic_forces_enabled:
       self._placeholder_coefficients = tensors["placeholders/coefficients"]
-      self._placeholder_indexing = ["placeholders/indexing"]
+      self._placeholder_indexing = tensors["placeholders/indexing"]
       self._operator_f_nn = tensors["kCON/Forces/forces"]
     else:
       self._placeholder_coefficients = None
