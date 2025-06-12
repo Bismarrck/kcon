@@ -260,6 +260,11 @@ class KcnnPredictor:
                  self._placeholder_occurs: occurs,
                  self._placeholder_weights: weights,
                  self._placeholder_split_dims: split_dims}
+    if self._transformer.atomic_forces_enabled:
+        coefficients = transformed.coefficients.reshape((ntotal, -1, ck2 * 6))
+        indexing = transformed.indexing.reshape((ntotal, 3*(len(self._transformer._species)-self._transformer._num_ghosts), -1))
+        feed_dict[self._placeholder_coefficients] = coefficients
+        feed_dict[self._placeholder_indexing] = indexing
     return species, feed_dict
 
   def predict_total_energy(self, atoms_or_trajectory):
@@ -337,3 +342,18 @@ class KcnnPredictor:
         "The tensor {} can not be found in the graph!".format(name))
     else:
       return self.sess.run(tensor, feed_dict=feed_dict)
+
+  def predict_forces(self, atoms_or_trajectory):
+    """
+    Make predictions of atomic forces. All input structures must have the same
+    kind of atomic species.
+     Args:
+      atoms_or_trajectory: an `ase.Atoms` or an `ase.io.TrajectoryReader` or a
+        list of `ase.Atoms` with the same stoichiometry.
+     Returns:
+      f_atomics: a `float32` array of shape `[num_examples, num_atoms * 3]`
+        as the predicted atomic forces.
+    """
+    _, feed_dict = self.get_feed_dict(atoms_or_trajectory)
+    f_atomics = self._sess.run(self._operator_f_nn, feed_dict=feed_dict)
+    return f_atomics
